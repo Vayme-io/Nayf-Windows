@@ -1,0 +1,211 @@
+<Window
+    x:Class="NayfWindows.CompanionPanelWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Nayf">
+
+    <Grid Width="340">
+        <Grid.Background>
+            <SolidColorBrush Color="#F01C1C1E"/>
+        </Grid.Background>
+
+        <StackPanel Padding="20,16,20,20" Spacing="16">
+
+            <!-- Header row: Nayf logo + title + quit button -->
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                    <!-- Blue circle logo -->
+                    <Ellipse Width="28" Height="28">
+                        <Ellipse.Fill>
+                            <RadialGradientBrush>
+                                <GradientStop Color="#FF007AFF" Offset="0"/>
+                                <GradientStop Color="#FF0055CC" Offset="1"/>
+                            </RadialGradientBrush>
+                        </Ellipse.Fill>
+                    </Ellipse>
+                    <TextBlock Text="Nayf"
+                               Foreground="White"
+                               FontSize="17"
+                               FontWeight="SemiBold"
+                               FontFamily="Segoe UI Variable"
+                               VerticalAlignment="Center"/>
+                </StackPanel>
+
+                <Button x:Name="QuitButton"
+                        Grid.Column="1"
+                        Content="Quit"
+                        Foreground="#8E8E93"
+                        FontSize="12"
+                        Click="QuitButton_Click"
+                        Style="{StaticResource DefaultButtonStyle}"
+                        Background="Transparent"
+                        BorderBrush="Transparent"/>
+            </Grid>
+
+            <!-- Separator -->
+            <Rectangle Height="1" Fill="#3A3A3C" Opacity="0.5"/>
+
+            <!-- Voice state indicator -->
+            <Border CornerRadius="12"
+                    Padding="14,12,14,12">
+                <Border.Background>
+                    <SolidColorBrush Color="#2C2C2E"/>
+                </Border.Background>
+
+                <StackPanel Spacing="8">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+
+                        <TextBlock x:Name="VoiceStateLabel"
+                                   Text="Press Ctrl+Alt to speak"
+                                   Foreground="White"
+                                   FontSize="14"
+                                   FontWeight="Medium"
+                                   FontFamily="Segoe UI Variable"
+                                   VerticalAlignment="Center"/>
+
+                        <!-- Animated state indicator dot -->
+                        <Ellipse x:Name="StateIndicatorDot"
+                                 Grid.Column="1"
+                                 Width="8" Height="8"
+                                 Fill="#34C759"
+                                 VerticalAlignment="Center"/>
+                    </Grid>
+
+                    <!-- Last transcript (what the user said) -->
+                    <TextBlock x:Name="LastTranscriptText"
+                               Text=""
+                               Foreground="#8E8E93"
+                               FontSize="12"
+                               FontFamily="Segoe UI Variable"
+                               TextWrapping="Wrap"
+                               MaxLines="2"
+                               TextTrimming="CharacterEllipsis"
+                               Visibility="Collapsed"/>
+                </StackPanel>
+            </Border>
+
+            <!-- Streaming response text (latest AI response) -->
+            <Border x:Name="ResponseContainer"
+                    CornerRadius="12"
+                    Padding="14,12,14,12"
+                    Visibility="Collapsed">
+                <Border.Background>
+                    <SolidColorBrush Color="#1E1E20"/>
+                </Border.Background>
+                <Border.BorderBrush>
+                    <SolidColorBrush Color="#3A3A3C"/>
+                </Border.BorderBrush>
+                <Border.BorderThickness>
+                    <Thickness>0.5</Thickness>
+                </Border.BorderThickness>
+
+                <TextBlock x:Name="ResponseDisplayText"
+                           TextWrapping="Wrap"
+                           Foreground="White"
+                           FontSize="13"
+                           FontFamily="Segoe UI Variable"
+                           LineHeight="19"
+                           MaxLines="8"
+                           TextTrimming="CharacterEllipsis"/>
+            </Border>
+
+            <!-- Agent task steps — visible when running an agentic loop -->
+            <Border x:Name="AgentTaskContainer"
+                    CornerRadius="12"
+                    Padding="14,12,14,12"
+                    Visibility="Collapsed">
+                <Border.Background>
+                    <SolidColorBrush Color="#1C1C1E"/>
+                </Border.Background>
+                <Border.BorderBrush>
+                    <SolidColorBrush Color="#3A3A3C"/>
+                </Border.BorderBrush>
+                <Border.BorderThickness>
+                    <Thickness>0.5</Thickness>
+                </Border.BorderThickness>
+
+                <StackPanel Spacing="8">
+                    <TextBlock Text="Working…"
+                               Foreground="#8E8E93"
+                               FontSize="11"
+                               FontFamily="Segoe UI Variable"
+                               FontWeight="SemiBold"
+                               CharacterSpacing="80"/>
+                    <ListView x:Name="AgentStepsList"
+                              SelectionMode="None"
+                              IsItemClickEnabled="False"
+                              Background="Transparent">
+                        <ListView.ItemContainerStyle>
+                            <Style TargetType="ListViewItem">
+                                <Setter Property="Padding" Value="0,2,0,2"/>
+                                <Setter Property="Background" Value="Transparent"/>
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                            </Style>
+                        </ListView.ItemContainerStyle>
+                    </ListView>
+                </StackPanel>
+            </Border>
+
+            <!-- Separator -->
+            <Rectangle Height="1" Fill="#3A3A3C" Opacity="0.5"/>
+
+            <!-- Model selector -->
+            <StackPanel Spacing="8">
+                <TextBlock Text="MODEL"
+                           Foreground="#8E8E93"
+                           FontSize="11"
+                           FontFamily="Segoe UI Variable"
+                           FontWeight="SemiBold"
+                           CharacterSpacing="80"/>
+
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <RadioButton x:Name="SonnetRadio"
+                                 Content="Sonnet 4.6"
+                                 IsChecked="True"
+                                 Foreground="White"
+                                 FontFamily="Segoe UI Variable"
+                                 Click="ModelRadio_Click"
+                                 Tag="claude-sonnet-4-6"/>
+                    <RadioButton x:Name="OpusRadio"
+                                 Content="Opus 4.6"
+                                 Foreground="White"
+                                 FontFamily="Segoe UI Variable"
+                                 Click="ModelRadio_Click"
+                                 Tag="claude-opus-4-6"/>
+                </StackPanel>
+            </StackPanel>
+
+            <!-- Clear history button -->
+            <Button x:Name="ClearHistoryButton"
+                    Content="Clear Conversation"
+                    HorizontalAlignment="Stretch"
+                    Click="ClearHistoryButton_Click"
+                    Foreground="#8E8E93"
+                    FontSize="13"
+                    FontFamily="Segoe UI Variable">
+                <Button.Background>
+                    <SolidColorBrush Color="#2C2C2E"/>
+                </Button.Background>
+            </Button>
+
+            <!-- Separator -->
+            <Rectangle Height="1" Fill="#3A3A3C" Opacity="0.5"/>
+
+            <!-- Footer: keyboard shortcut hint -->
+            <TextBlock Text="Ctrl + Alt — push to talk"
+                       Foreground="#48484A"
+                       FontSize="11"
+                       FontFamily="Segoe UI Variable"
+                       HorizontalAlignment="Center"/>
+        </StackPanel>
+    </Grid>
+</Window>

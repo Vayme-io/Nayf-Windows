@@ -1,0 +1,10 @@
+﻿<Window
+    x:Class="NayfWindows.OverlayWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="NayfOverlayShell">
+    <!-- This window is never shown. The actual overlay is rendered by
+         NativeOverlayWindow using Win32 UpdateLayeredWindow. -->
+    <Grid/>
+</Window>
+

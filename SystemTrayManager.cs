@@ -112,32 +112,71 @@ public sealed class SystemTrayManager : IDisposable
         NativeMethods.Shell_NotifyIcon(NativeMethods.NIM_SETVERSION, ref _notifyIconData);
     }
 
+    private const uint WM_COMMAND = 0x0111;
+    private const uint MENU_ID_QUIT = 1001;
+    private const uint MENU_ID_OPEN = 1002;
+
     private IntPtr TrayWindowProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam)
     {
         if (msg == TrayCallbackMessage)
         {
-            // With NOTIFYICON_VERSION_4, lParam contains the notification event
             uint notifyEvent = (uint)(lParam.ToInt64() & 0xFFFF);
+            int iconX = (int)(wParam.ToInt64() & 0xFFFF);
+            int iconY = (int)((wParam.ToInt64() >> 16) & 0xFFFF);
 
             if (notifyEvent == NativeMethods.WM_LBUTTONUP ||
                 notifyEvent == NativeMethods.NIN_SELECT ||
                 notifyEvent == NativeMethods.NIN_KEYSELECT)
             {
-                // Get the icon rect from the x,y packed in wParam
-                int iconX = (int)(wParam.ToInt64() & 0xFFFF);
-                int iconY = (int)((wParam.ToInt64() >> 16) & 0xFFFF);
                 _trayIconRect = new NativeMethods.RECT
                 {
                     Left = iconX - 8, Top = iconY - 8,
                     Right = iconX + 8, Bottom = iconY + 8
                 };
-
                 TogglePanel();
             }
+            else if (notifyEvent == NativeMethods.WM_RBUTTONUP)
+            {
+                // Use GetCursorPos for reliable coordinates on multi-monitor setups
+                if (NativeMethods.GetCursorPos(out var cursorPt))
+                    ShowContextMenu(cursorPt.X, cursorPt.Y);
+                else
+                    ShowContextMenu(iconX, iconY);
+            }
+        }
+        else if (msg == WM_COMMAND)
+        {
+            uint menuId = (uint)(wParam.ToInt64() & 0xFFFF);
+            if (menuId == MENU_ID_QUIT)
+                _onQuit();
+            else if (menuId == MENU_ID_OPEN)
+                TogglePanel();
         }
 
         return NativeMethods.DefWindowProc(hWnd, msg, wParam, lParam);
     }
+
+    private void ShowContextMenu(int x, int y)
+    {
+        IntPtr hMenu = CreatePopupMenu();
+        AppendMenu(hMenu, 0x0000 /* MF_STRING */, MENU_ID_OPEN, "Open Nayf");
+        AppendMenu(hMenu, 0x0800 /* MF_SEPARATOR */, 0, null);
+        AppendMenu(hMenu, 0x0000 /* MF_STRING */, MENU_ID_QUIT, "Quit");
+
+        // Required before TrackPopupMenu so it dismisses correctly
+        NativeMethods.SetForegroundWindow(_messageWindowHandle);
+        TrackPopupMenu(hMenu, 0x0100 /* TPM_RIGHTALIGN */ | 0x0020 /* TPM_BOTTOMALIGN */,
+            x, y, 0, _messageWindowHandle, IntPtr.Zero);
+        DestroyMenu(hMenu);
+    }
+
+    [DllImport("user32.dll")] private static extern IntPtr CreatePopupMenu();
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern bool AppendMenu(IntPtr hMenu, uint uFlags, uint uIDNewItem, string? lpNewItem);
+    [DllImport("user32.dll")]
+    private static extern bool TrackPopupMenu(IntPtr hMenu, uint uFlags, int x, int y,
+        int nReserved, IntPtr hWnd, IntPtr prcRect);
+    [DllImport("user32.dll")] private static extern bool DestroyMenu(IntPtr hMenu);
 
     private void TogglePanel()
     {

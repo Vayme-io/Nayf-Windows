@@ -7,6 +7,8 @@
     <AssemblyName>NayfWindows</AssemblyName>
     <UseWinUI>true</UseWinUI>
     <WindowsPackageType>None</WindowsPackageType>
+    <!-- Tell the SDK our entry point is in Program.cs, not auto-generated -->
+    <DefineConstants>DISABLE_XAML_GENERATED_MAIN</DefineConstants>
     <Platforms>x64</Platforms>
     <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
     <Nullable>enable</Nullable>

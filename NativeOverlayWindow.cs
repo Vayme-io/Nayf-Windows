@@ -31,6 +31,11 @@ public sealed class NativeOverlayWindow : IDisposable
     // Matches Mac's DS.Colors.overlayCursorBlue (#3380FF)
     private static readonly Color CursorBlue = Color.FromArgb(0x33, 0x80, 0xFF);
 
+    // First-launch "hey! I'm Nayf" welcome bubble — matches Mac's
+    // OverlayWindow welcome sequence timing.
+    private const string WelcomeMessage = "hey! I'm Nayf";
+    private readonly DateTimeOffset _startTime = DateTimeOffset.UtcNow;
+
     private IntPtr _hwnd = IntPtr.Zero;
     private Thread? _messageThread;
     private NativeMethods.WndProc? _wndProcDelegate;
@@ -137,9 +142,11 @@ public sealed class NativeOverlayWindow : IDisposable
         // ── 1. Spring-smooth toward the real mouse position ───────────────────
         if (NativeMethods.GetCursorPos(out var pt))
         {
-            // Tighter spring (0.35) = snappier tracking, less perceived lag
+            // Tighter spring (0.35) = snappier tracking, less perceived lag.
+            // Offset to the right so the buddy doesn't sit directly on the cursor.
             const float spring = 0.35f;
-            _buddyX += (pt.X - _buddyX) * spring;
+            const float cursorOffsetX = 30f;
+            _buddyX += (pt.X + cursorOffsetX - _buddyX) * spring;
             _buddyY += (pt.Y - _buddyY) * spring;
         }
 
@@ -163,12 +170,20 @@ public sealed class NativeOverlayWindow : IDisposable
         // Mac's asymmetric EMA (fast attack while listening, slow decay otherwise).
         UpdateVoiceIntensity(state);
 
+        // ── Welcome sequence timeline — matches Mac's OverlayWindow ───────────
+        // t∈[0,2.0]s: cursor fades in (easeIn). t=2.0s: welcome bubble starts.
+        double elapsed = (DateTimeOffset.UtcNow - _startTime).TotalSeconds;
+        double cursorT = Math.Clamp(elapsed / 2.0, 0.0, 1.0);
+        float cursorOpacity = (float)(cursorT * cursorT);
+
         // The breathing circle cursor cross-fades out while processing,
         // replaced by the spinner — matches Mac's BlueCursorView.
         if (state == CompanionVoiceState.Processing)
-            DrawSpinner(g, ANCHOR_X, ANCHOR_Y);
+            DrawSpinner(g, ANCHOR_X, ANCHOR_Y, cursorOpacity);
         else
-            DrawCursor(g, ANCHOR_X, ANCHOR_Y, _smoothedVoiceIntensity);
+            DrawCursor(g, ANCHOR_X, ANCHOR_Y, _smoothedVoiceIntensity, cursorOpacity);
+
+        DrawWelcomeBubble(g, ANCHOR_X, ANCHOR_Y, elapsed);
 
         if (state == CompanionVoiceState.Responding)
         {
@@ -217,20 +232,22 @@ public sealed class NativeOverlayWindow : IDisposable
     /// An outer blurred glow ring breathes with voice intensity, and a solid
     /// inner circle (with its own glow halo) grows gently with it.
     /// </summary>
-    private static void DrawCursor(Graphics g, float x, float y, float voiceIntensity)
+    private static void DrawCursor(Graphics g, float x, float y, float voiceIntensity, float opacity)
     {
+        if (opacity <= 0f) return;
+
         // Outer glow ring
         float outerRadius = (16 + voiceIntensity * 28) / 2f + 4 + voiceIntensity * 4;
-        int outerAlpha = (int)((0.25f + voiceIntensity * 0.45f) * 255f);
+        int outerAlpha = (int)((0.25f + voiceIntensity * 0.45f) * 255f * opacity);
         DrawGlow(g, x, y, outerRadius, outerAlpha);
 
         // Glow halo behind the solid inner circle (SwiftUI shadow equivalent)
         float shadowRadius = 8 + voiceIntensity * 12;
-        DrawGlow(g, x, y, shadowRadius, 200);
+        DrawGlow(g, x, y, shadowRadius, (int)(200 * opacity));
 
         // Solid inner circle
         float innerDiameter = 10 + voiceIntensity * 3;
-        using var fill = new SolidBrush(CursorBlue);
+        using var fill = new SolidBrush(Color.FromArgb((int)(255 * opacity), CursorBlue));
         g.FillEllipse(fill, x - innerDiameter / 2, y - innerDiameter / 2, innerDiameter, innerDiameter);
     }
 
@@ -252,12 +269,14 @@ public sealed class NativeOverlayWindow : IDisposable
     /// Rotating arc spinner shown while processing — matches Mac's
     /// BlueCursorSpinnerView (a trimmed circle with an angular gradient stroke).
     /// </summary>
-    private static void DrawSpinner(Graphics g, float x, float y)
+    private static void DrawSpinner(Graphics g, float x, float y, float opacity)
     {
+        if (opacity <= 0f) return;
+
         const float diameter = 14f;
         const float sweepDegrees = 252f; // 0.7 of a full circle (trim 0.15-0.85)
 
-        DrawGlow(g, x, y, diameter / 2 + 6, 150);
+        DrawGlow(g, x, y, diameter / 2 + 6, (int)(150 * opacity));
 
         float rotation = (DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() % 800) / 800f * 360f;
 
@@ -267,7 +286,7 @@ public sealed class NativeOverlayWindow : IDisposable
             float t = (float)i / segments;
             float startAngle = rotation - 90f + t * sweepDegrees;
             float sweep = sweepDegrees / segments + 0.5f;
-            int alpha = (int)(t * 255f);
+            int alpha = (int)(t * 255f * opacity);
             using var pen = new Pen(Color.FromArgb(alpha, CursorBlue), 2.5f)
             {
                 StartCap = LineCap.Round,
@@ -275,6 +294,72 @@ public sealed class NativeOverlayWindow : IDisposable
             };
             g.DrawArc(pen, x - diameter / 2, y - diameter / 2, diameter, diameter, startAngle, sweep);
         }
+    }
+
+    /// <summary>
+    /// First-launch "hey! I'm Nayf" welcome bubble — matches Mac's
+    /// OverlayWindow welcome sequence: bubble fades in at t=2.0s, types out
+    /// one character every 0.03s, holds for 2s, then fades out by t=4.95s.
+    /// </summary>
+    private static void DrawWelcomeBubble(Graphics g, float anchorX, float anchorY, double elapsed)
+    {
+        const double bubbleStart    = 2.0;
+        const double fadeInDuration = 0.4;
+        const double charInterval   = 0.03;
+        const double holdDuration   = 2.0;
+        const double fadeOutDuration = 0.5;
+
+        double t = elapsed - bubbleStart;
+        if (t < 0) return;
+
+        double typingDuration = WelcomeMessage.Length * charInterval;
+        double end = typingDuration + holdDuration + fadeOutDuration;
+        if (t > end) return;
+
+        float bubbleOpacity;
+        if (t < fadeInDuration)
+        {
+            double f = t / fadeInDuration;
+            bubbleOpacity = (float)(f * f);
+        }
+        else if (t < typingDuration + holdDuration)
+        {
+            bubbleOpacity = 1f;
+        }
+        else
+        {
+            double f = (t - (typingDuration + holdDuration)) / fadeOutDuration;
+            bubbleOpacity = (float)((1 - f) * (1 - f));
+        }
+
+        int charsToShow = t < typingDuration
+            ? (int)(t / charInterval)
+            : WelcomeMessage.Length;
+        charsToShow = Math.Clamp(charsToShow, 0, WelcomeMessage.Length);
+        if (charsToShow <= 0 || bubbleOpacity <= 0f) return;
+
+        string text = WelcomeMessage.Substring(0, charsToShow);
+
+        using var font = new Font("Segoe UI", 11f, FontStyle.Regular, GraphicsUnit.Point);
+        var sz = g.MeasureString(text, font);
+        float bw = sz.Width + 16;
+        float bh = sz.Height + 8;
+
+        // Bubble's left edge sits 10pt right of the cursor, vertically
+        // centered 18pt below it — matches Mac's placement.
+        float x = anchorX + 10;
+        float y = anchorY + 18 - bh / 2;
+
+        for (int i = 3; i >= 1; i--)
+        {
+            using var glow = new SolidBrush(Color.FromArgb((int)(35 * bubbleOpacity), CursorBlue));
+            g.FillRoundedRect(glow, x - i * 2, y - i * 2, bw + i * 4, bh + i * 4, 6 + i * 2);
+        }
+
+        using var bg = new SolidBrush(Color.FromArgb((int)(255 * bubbleOpacity), CursorBlue));
+        g.FillRoundedRect(bg, x, y, bw, bh, 6);
+        using var tb = new SolidBrush(Color.FromArgb((int)(255 * bubbleOpacity), Color.White));
+        g.DrawString(text, font, tb, x + 8, y + 4);
     }
 
     private static void DrawResponseBubble(Graphics g, float x, float y, string text)

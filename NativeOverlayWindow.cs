@@ -24,9 +24,12 @@ public sealed class NativeOverlayWindow : IDisposable
     // Small bitmap dimensions — big enough for cursor + response bubble
     private const int BW = 520;
     private const int BH = 300;
-    // Where the cursor tip sits inside the bitmap
-    private const int ANCHOR_X = 24;
+    // Where the cursor sits inside the bitmap
+    private const int ANCHOR_X = 32;
     private const int ANCHOR_Y = 150;
+
+    // Matches Mac's DS.Colors.overlayCursorBlue (#3380FF)
+    private static readonly Color CursorBlue = Color.FromArgb(0x33, 0x80, 0xFF);
 
     private IntPtr _hwnd = IntPtr.Zero;
     private Thread? _messageThread;
@@ -36,9 +39,12 @@ public sealed class NativeOverlayWindow : IDisposable
     private float _buddyX;
     private float _buddyY;
 
+    // Exponentially-smoothed voice intensity (0-1) driving the cursor's
+    // breathing glow during Listening — matches Mac's asymmetric EMA.
+    private float _smoothedVoiceIntensity;
+
     private System.Threading.Timer? _renderTimer;
     private System.Threading.Timer? _topmostTimer;
-    private readonly Random _rng = new();
 
     private const int WS_EX_LAYERED     = 0x00080000;
     private const int WS_EX_TRANSPARENT = 0x00000020;
@@ -153,22 +159,22 @@ public sealed class NativeOverlayWindow : IDisposable
 
         var state = _companionManager.VoiceState;
 
-        // Cursor is always drawn at the anchor point inside the bitmap
-        DrawCursor(g, ANCHOR_X, ANCHOR_Y, state);
+        // Smooth the raw audio power level toward a 0-1 intensity, matching
+        // Mac's asymmetric EMA (fast attack while listening, slow decay otherwise).
+        UpdateVoiceIntensity(state);
 
-        switch (state)
+        // The breathing circle cursor cross-fades out while processing,
+        // replaced by the spinner — matches Mac's BlueCursorView.
+        if (state == CompanionVoiceState.Processing)
+            DrawSpinner(g, ANCHOR_X, ANCHOR_Y);
+        else
+            DrawCursor(g, ANCHOR_X, ANCHOR_Y, _smoothedVoiceIntensity);
+
+        if (state == CompanionVoiceState.Responding)
         {
-            case CompanionVoiceState.Listening:
-                DrawWaveform(g, ANCHOR_X + 25, ANCHOR_Y - 30, _companionManager.AudioPowerLevel);
-                break;
-            case CompanionVoiceState.Processing:
-                DrawProcessingDots(g, ANCHOR_X + 22, ANCHOR_Y - 30);
-                break;
-            case CompanionVoiceState.Responding:
-                var text = _companionManager.StreamingResponseText;
-                if (!string.IsNullOrEmpty(text))
-                    DrawResponseBubble(g, ANCHOR_X + 28, ANCHOR_Y - 55, text);
-                break;
+            var text = _companionManager.StreamingResponseText;
+            if (!string.IsNullOrEmpty(text))
+                DrawResponseBubble(g, ANCHOR_X + 28, ANCHOR_Y - 55, text);
         }
 
         // Pointing sonar — convert absolute screen coords to bitmap-local coords
@@ -190,37 +196,84 @@ public sealed class NativeOverlayWindow : IDisposable
 
     // ── Drawing helpers ───────────────────────────────────────────────────────
 
-    private static void DrawCursor(Graphics g, float x, float y, CompanionVoiceState state)
+    /// <summary>
+    /// Smooths the raw audio power level toward a target intensity using an
+    /// asymmetric EMA — fast attack while listening, slow decay otherwise.
+    /// Mirrors Mac's BlueCursorView onChange/voiceState handlers.
+    /// </summary>
+    private void UpdateVoiceIntensity(CompanionVoiceState state)
     {
-        int glowAlpha = state == CompanionVoiceState.Idle ? 40 : 80;
-        using var glow = new SolidBrush(Color.FromArgb(glowAlpha, 0, 122, 255));
-        g.FillEllipse(glow, x - 14, y - 14, 32, 32);
+        float target = state == CompanionVoiceState.Listening
+            ? Math.Min(MathF.Pow(Math.Max(_companionManager.AudioPowerLevel * 3f, 0f), 0.5f), 1f)
+            : 0f;
 
-        var pts = new PointF[] { new(x, y), new(x + 18, y + 8), new(x, y + 18) };
-        using var fill = new SolidBrush(Color.FromArgb(230, 0, 122, 255));
-        g.FillPolygon(fill, pts);
-        using var outline = new Pen(Color.FromArgb(80, 255, 255, 255), 0.8f);
-        g.DrawPolygon(outline, pts);
+        bool isRising = target > _smoothedVoiceIntensity;
+        float factor = isRising ? 0.4f : 0.07f;
+        _smoothedVoiceIntensity += (target - _smoothedVoiceIntensity) * factor;
     }
 
-    private void DrawWaveform(Graphics g, float x, float y, float power)
+    /// <summary>
+    /// The blue glowing circle cursor — matches Mac's BlueCursorView circle.
+    /// An outer blurred glow ring breathes with voice intensity, and a solid
+    /// inner circle (with its own glow halo) grows gently with it.
+    /// </summary>
+    private static void DrawCursor(Graphics g, float x, float y, float voiceIntensity)
     {
-        float[] heights = [4, 8, 14, 8, 4];
-        for (int i = 0; i < heights.Length; i++)
-        {
-            float h = heights[i] + power * 16 + (float)(_rng.NextDouble() * 6 * power);
-            using var b = new SolidBrush(Color.FromArgb(220, 0, 122, 255));
-            g.FillRoundedRect(b, x + i * 6, y - h / 2, 3, h, 2);
-        }
+        // Outer glow ring
+        float outerRadius = (16 + voiceIntensity * 28) / 2f + 4 + voiceIntensity * 4;
+        int outerAlpha = (int)((0.25f + voiceIntensity * 0.45f) * 255f);
+        DrawGlow(g, x, y, outerRadius, outerAlpha);
+
+        // Glow halo behind the solid inner circle (SwiftUI shadow equivalent)
+        float shadowRadius = 8 + voiceIntensity * 12;
+        DrawGlow(g, x, y, shadowRadius, 200);
+
+        // Solid inner circle
+        float innerDiameter = 10 + voiceIntensity * 3;
+        using var fill = new SolidBrush(CursorBlue);
+        g.FillEllipse(fill, x - innerDiameter / 2, y - innerDiameter / 2, innerDiameter, innerDiameter);
     }
 
-    private static void DrawProcessingDots(Graphics g, float x, float y)
+    /// <summary>Soft radial glow used to approximate SwiftUI's blur/shadow modifiers.</summary>
+    private static void DrawGlow(Graphics g, float cx, float cy, float radius, int alpha)
     {
-        int active = (int)(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 400 % 3);
-        for (int i = 0; i < 3; i++)
+        if (radius <= 0.5f) return;
+        using var path = new GraphicsPath();
+        path.AddEllipse(cx - radius, cy - radius, radius * 2, radius * 2);
+        using var brush = new PathGradientBrush(path)
         {
-            using var b = new SolidBrush(Color.FromArgb(i == active ? 220 : 80, 0, 122, 255));
-            g.FillEllipse(b, x + i * 9, y, 6, 6);
+            CenterColor = Color.FromArgb(Math.Clamp(alpha, 0, 255), CursorBlue),
+            SurroundColors = new[] { Color.FromArgb(0, CursorBlue) }
+        };
+        g.FillPath(brush, path);
+    }
+
+    /// <summary>
+    /// Rotating arc spinner shown while processing — matches Mac's
+    /// BlueCursorSpinnerView (a trimmed circle with an angular gradient stroke).
+    /// </summary>
+    private static void DrawSpinner(Graphics g, float x, float y)
+    {
+        const float diameter = 14f;
+        const float sweepDegrees = 252f; // 0.7 of a full circle (trim 0.15-0.85)
+
+        DrawGlow(g, x, y, diameter / 2 + 6, 150);
+
+        float rotation = (DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() % 800) / 800f * 360f;
+
+        const int segments = 48;
+        for (int i = 0; i < segments; i++)
+        {
+            float t = (float)i / segments;
+            float startAngle = rotation - 90f + t * sweepDegrees;
+            float sweep = sweepDegrees / segments + 0.5f;
+            int alpha = (int)(t * 255f);
+            using var pen = new Pen(Color.FromArgb(alpha, CursorBlue), 2.5f)
+            {
+                StartCap = LineCap.Round,
+                EndCap = LineCap.Round
+            };
+            g.DrawArc(pen, x - diameter / 2, y - diameter / 2, diameter, diameter, startAngle, sweep);
         }
     }
 
@@ -240,22 +293,42 @@ public sealed class NativeOverlayWindow : IDisposable
         g.DrawString(text, font, tb, new RectangleF(x + 12, y + 9, bw - 24, bh - 18));
     }
 
+    /// <summary>
+    /// Speech bubble shown when the buddy points at a UI element — matches
+    /// Mac's navigation bubble (cornerRadius 6, white text, blue glow shadow).
+    /// </summary>
     private static void DrawPointingBubble(Graphics g, float x, float y, string label)
     {
-        using var font = new Font("Segoe UI", 11f, FontStyle.Bold, GraphicsUnit.Point);
+        using var font = new Font("Segoe UI", 11f, FontStyle.Regular, GraphicsUnit.Point);
         var sz = g.MeasureString(label, font);
-        using var bg = new SolidBrush(Color.FromArgb(200, 0, 90, 200));
-        g.FillRoundedRect(bg, x, y, sz.Width + 20, sz.Height + 12, 8);
+        float bw = sz.Width + 16;
+        float bh = sz.Height + 8;
+
+        // Soft glow halo behind the bubble (SwiftUI shadow equivalent)
+        for (int i = 3; i >= 1; i--)
+        {
+            using var glow = new SolidBrush(Color.FromArgb(35, CursorBlue));
+            g.FillRoundedRect(glow, x - i * 2, y - i * 2, bw + i * 4, bh + i * 4, 6 + i * 2);
+        }
+
+        using var bg = new SolidBrush(CursorBlue);
+        g.FillRoundedRect(bg, x, y, bw, bh, 6);
         using var tb = new SolidBrush(Color.White);
-        g.DrawString(label, font, tb, x + 10, y + 6);
+        g.DrawString(label, font, tb, x + 8, y + 4);
     }
 
+    /// <summary>
+    /// Pulsing sonar ring around a pointed-at element — matches Mac's
+    /// 1.4s ease-out expansion from 8pt to 44pt with opacity decaying 0.7→0.
+    /// </summary>
     private static void DrawSonarRing(Graphics g, float cx, float cy)
     {
-        float phase  = (DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() % 1200) / 1200f;
-        float radius = 10 + phase * 30;
-        int   alpha  = (int)((1f - phase) * 160);
-        using var pen = new Pen(Color.FromArgb(alpha, 0, 122, 255), 2);
+        const float cycleMs = 1400f;
+        float phase = (DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() % (long)cycleMs) / cycleMs;
+        float easeOut = 1f - (1f - phase) * (1f - phase);
+        float radius = 8 + easeOut * 36; // 8pt -> 44pt
+        int alpha = (int)(0.7f * (1f - phase) * 255f);
+        using var pen = new Pen(Color.FromArgb(alpha, CursorBlue), 1.5f);
         g.DrawEllipse(pen, cx - radius, cy - radius, radius * 2, radius * 2);
     }
 

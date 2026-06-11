@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Runtime.InteropServices;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
@@ -26,8 +27,9 @@ public sealed partial class AnchorWindow : Window
         appWindow.Resize(new Windows.Graphics.SizeInt32(1, 1));
         appWindow.Move(new Windows.Graphics.PointInt32(-32000, -32000));
 
-        // No taskbar button, no Alt+Tab entry
-        appWindow.IsShownInSwitchers = false;
+        // Show a taskbar button (and Alt+Tab entry) using the Nayf icon
+        appWindow.IsShownInSwitchers = true;
+        appWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "NayfIcon.ico"));
 
         // Remove title bar and border
         var presenter = OverlappedPresenter.Create();
@@ -36,11 +38,6 @@ public sealed partial class AnchorWindow : Window
         presenter.IsResizable = false;
         presenter.SetBorderAndTitleBar(hasBorder: false, hasTitleBar: false);
         appWindow.SetPresenter(presenter);
-
-        // Hide from taskbar via Win32 extended styles
-        var exStyle = NativeMethods.GetWindowLong(hwnd, NativeMethods.GWL_EXSTYLE);
-        NativeMethods.SetWindowLong(hwnd, NativeMethods.GWL_EXSTYLE,
-            exStyle | NativeMethods.WS_EX_TOOLWINDOW | NativeMethods.WS_EX_NOACTIVATE);
 
         // Block the close button so the user can't accidentally shut down the app
         Closed += (_, e) => e.Handled = true;

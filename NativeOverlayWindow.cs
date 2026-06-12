@@ -48,6 +48,32 @@ public sealed class NativeOverlayWindow : IDisposable
     // breathing glow during Listening — matches Mac's asymmetric EMA.
     private float _smoothedVoiceIntensity;
 
+    // ── Buddy navigation (flying to point at detected UI elements) ────────────
+    // Matches Mac's BuddyNavigationMode / animateBezierFlightArc.
+    private enum BuddyMode { FollowingCursor, Navigating, Pointing }
+    private BuddyMode _buddyMode = BuddyMode.FollowingCursor;
+
+    // The detected-element position we're currently navigating to / pointing
+    // at, so we don't re-trigger a flight every frame for the same target.
+    private System.Drawing.PointF? _activeTarget;
+
+    // Bezier flight state (absolute screen coords)
+    private float _flightStartX, _flightStartY;
+    private float _flightControlX, _flightControlY;
+    private float _flightEndX, _flightEndY;
+    private DateTimeOffset _flightStartTime;
+    private double _flightDurationSeconds;
+    private bool _isReturningFlight;
+    private System.Drawing.PointF _cursorPosWhenFlightStarted;
+
+    // Scale pulse applied to the cursor during flight — grows to ~1.3x at the
+    // arc's midpoint and shrinks back to 1.0x on landing.
+    private float _buddyFlightScale = 1f;
+
+    // How long the buddy holds at the target before flying back.
+    private DateTimeOffset _pointingStartTime;
+    private const double PointingDwellSeconds = 4.0;
+
     private System.Threading.Timer? _renderTimer;
     private System.Threading.Timer? _topmostTimer;
 
@@ -139,16 +165,9 @@ public sealed class NativeOverlayWindow : IDisposable
     {
         if (_hwnd == IntPtr.Zero) return;
 
-        // ── 1. Spring-smooth toward the real mouse position ───────────────────
-        if (NativeMethods.GetCursorPos(out var pt))
-        {
-            // Tighter spring (0.35) = snappier tracking, less perceived lag.
-            // Offset to the right so the buddy doesn't sit directly on the cursor.
-            const float spring = 0.35f;
-            const float cursorOffsetX = 30f;
-            _buddyX += (pt.X + cursorOffsetX - _buddyX) * spring;
-            _buddyY += (pt.Y - _buddyY) * spring;
-        }
+        // ── 1. Position the buddy — follow the cursor, or fly to/from a
+        //      detected UI element — matches Mac's BuddyNavigationMode. ───────
+        UpdateBuddyPosition();
 
         // ── 2. Move the window so the anchor sits on the buddy position ───────
         int wx = (int)(_buddyX - ANCHOR_X);
@@ -181,7 +200,7 @@ public sealed class NativeOverlayWindow : IDisposable
         if (state == CompanionVoiceState.Processing)
             DrawSpinner(g, ANCHOR_X, ANCHOR_Y, cursorOpacity);
         else
-            DrawCursor(g, ANCHOR_X, ANCHOR_Y, _smoothedVoiceIntensity, cursorOpacity);
+            DrawCursor(g, ANCHOR_X, ANCHOR_Y, _smoothedVoiceIntensity, cursorOpacity, _buddyFlightScale);
 
         DrawWelcomeBubble(g, ANCHOR_X, ANCHOR_Y, elapsed);
 
@@ -192,21 +211,178 @@ public sealed class NativeOverlayWindow : IDisposable
                 DrawResponseBubble(g, ANCHOR_X + 28, ANCHOR_Y - 55, text);
         }
 
-        // Pointing sonar — convert absolute screen coords to bitmap-local coords
-        var pos = _companionManager.DetectedElementPosition;
-        if (pos.HasValue)
+        // While pointing at a detected element, the buddy itself has flown
+        // there — draw the sonar ring and speech bubble around its anchor.
+        if (_buddyMode == BuddyMode.Pointing)
         {
-            float lx = pos.Value.X - wx;
-            float ly = pos.Value.Y - wy;
-            if (lx >= 0 && lx < BW && ly >= 0 && ly < BH)
-            {
-                DrawSonarRing(g, lx, ly);
-                DrawPointingBubble(g, lx + 16, ly - 36,
-                    _companionManager.DetectedElementBubbleText ?? "Here");
-            }
+            DrawSonarRing(g, ANCHOR_X, ANCHOR_Y);
+            DrawPointingBubble(g, ANCHOR_X + 16, ANCHOR_Y - 36,
+                _companionManager.DetectedElementBubbleText ?? "Here");
         }
 
         ApplyLayeredWindow(bitmap, wx, wy);
+    }
+
+    // ── Buddy navigation ─────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Updates the buddy's absolute screen position for this frame —
+    /// spring-following the cursor, flying out to a detected element, or
+    /// holding while pointing at it. Matches Mac's BuddyNavigationMode.
+    /// </summary>
+    private void UpdateBuddyPosition()
+    {
+        switch (_buddyMode)
+        {
+            case BuddyMode.FollowingCursor:
+                var target = _companionManager.DetectedElementPosition;
+                if (target.HasValue && target != _activeTarget)
+                {
+                    StartNavigatingToElement(target.Value);
+                }
+                else if (NativeMethods.GetCursorPos(out var pt))
+                {
+                    // Tighter spring (0.35) = snappier tracking, less perceived lag.
+                    // Offset to the right so the buddy doesn't sit directly on the cursor.
+                    const float spring = 0.35f;
+                    const float cursorOffsetX = 30f;
+                    _buddyX += (pt.X + cursorOffsetX - _buddyX) * spring;
+                    _buddyY += (pt.Y - _buddyY) * spring;
+                }
+                break;
+
+            case BuddyMode.Navigating:
+                UpdateFlight();
+                break;
+
+            case BuddyMode.Pointing:
+                // During the forward dwell, cursor movement doesn't interrupt —
+                // the buddy completes its full point-and-hold before flying back.
+                if ((DateTimeOffset.UtcNow - _pointingStartTime).TotalSeconds >= PointingDwellSeconds)
+                    StartFlyingBackToCursor();
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Starts animating the buddy toward a detected UI element — matches Mac's
+    /// startNavigatingToElement. Offsets the target so the buddy lands beside
+    /// the element rather than directly on top of it.
+    /// </summary>
+    private void StartNavigatingToElement(System.Drawing.PointF target)
+    {
+        _activeTarget = target;
+        BeginFlight(target.X + 8, target.Y + 12, isReturning: false);
+    }
+
+    /// <summary>
+    /// Flies the buddy back to the current cursor position after pointing is
+    /// done — matches Mac's startFlyingBackToCursor.
+    /// </summary>
+    private void StartFlyingBackToCursor()
+    {
+        if (!NativeMethods.GetCursorPos(out var pt))
+        {
+            _buddyMode = BuddyMode.FollowingCursor;
+            _activeTarget = null;
+            _companionManager.ClearDetectedElementLocation();
+            return;
+        }
+
+        const float cursorOffsetX = 30f;
+        BeginFlight(pt.X + cursorOffsetX, pt.Y, isReturning: true);
+    }
+
+    /// <summary>
+    /// Sets up a quadratic-bezier flight from the buddy's current position to
+    /// (endX, endY), with a parabolic arc and duration scaled by distance —
+    /// matches Mac's animateBezierFlightArc (clamped 0.6s–1.4s).
+    /// </summary>
+    private void BeginFlight(float endX, float endY, bool isReturning)
+    {
+        _flightStartX = _buddyX;
+        _flightStartY = _buddyY;
+        _flightEndX = endX;
+        _flightEndY = endY;
+
+        float dx = _flightEndX - _flightStartX;
+        float dy = _flightEndY - _flightStartY;
+        float distance = MathF.Sqrt(dx * dx + dy * dy);
+        _flightDurationSeconds = Math.Clamp(distance / 800.0, 0.6, 1.4);
+
+        float midX = (_flightStartX + _flightEndX) / 2f;
+        float midY = (_flightStartY + _flightEndY) / 2f;
+        float arcHeight = Math.Min(distance * 0.2f, 80f);
+        _flightControlX = midX;
+        _flightControlY = midY - arcHeight;
+
+        if (NativeMethods.GetCursorPos(out var pt))
+            _cursorPosWhenFlightStarted = new System.Drawing.PointF(pt.X, pt.Y);
+
+        _flightStartTime = DateTimeOffset.UtcNow;
+        _isReturningFlight = isReturning;
+        _buddyMode = BuddyMode.Navigating;
+    }
+
+    /// <summary>
+    /// Advances the in-progress bezier flight by one frame — moves the buddy
+    /// along the arc, pulses its scale, and transitions to the next mode on
+    /// arrival. During the return flight, a large cursor movement cancels the
+    /// flight and snaps straight back to following — matches Mac's
+    /// cancelNavigationAndResumeFollowing.
+    /// </summary>
+    private void UpdateFlight()
+    {
+        if (_isReturningFlight && NativeMethods.GetCursorPos(out var pt))
+        {
+            float movedDx = pt.X - _cursorPosWhenFlightStarted.X;
+            float movedDy = pt.Y - _cursorPosWhenFlightStarted.Y;
+            if (MathF.Sqrt(movedDx * movedDx + movedDy * movedDy) > 100f)
+            {
+                _buddyFlightScale = 1f;
+                _buddyMode = BuddyMode.FollowingCursor;
+                _activeTarget = null;
+                _companionManager.ClearDetectedElementLocation();
+                return;
+            }
+        }
+
+        double linear = Math.Clamp(
+            (DateTimeOffset.UtcNow - _flightStartTime).TotalSeconds / _flightDurationSeconds, 0.0, 1.0);
+
+        // Smoothstep ease-in-out: 3t² - 2t³
+        double t = linear * linear * (3.0 - 2.0 * linear);
+        float oneMinusT = (float)(1.0 - t);
+
+        // Quadratic bezier: B(t) = (1-t)²·P0 + 2(1-t)t·P1 + t²·P2
+        _buddyX = oneMinusT * oneMinusT * _flightStartX
+                + 2f * oneMinusT * (float)t * _flightControlX
+                + (float)(t * t) * _flightEndX;
+        _buddyY = oneMinusT * oneMinusT * _flightStartY
+                + 2f * oneMinusT * (float)t * _flightControlY
+                + (float)(t * t) * _flightEndY;
+
+        // Scale pulse: peaks at ~1.3x at the arc's midpoint, lands at 1.0x.
+        _buddyFlightScale = 1f + (float)Math.Sin(linear * Math.PI) * 0.3f;
+
+        if (linear >= 1.0)
+        {
+            _buddyX = _flightEndX;
+            _buddyY = _flightEndY;
+            _buddyFlightScale = 1f;
+
+            if (_isReturningFlight)
+            {
+                _buddyMode = BuddyMode.FollowingCursor;
+                _activeTarget = null;
+                _companionManager.ClearDetectedElementLocation();
+            }
+            else
+            {
+                _buddyMode = BuddyMode.Pointing;
+                _pointingStartTime = DateTimeOffset.UtcNow;
+            }
+        }
     }
 
     // ── Drawing helpers ───────────────────────────────────────────────────────
@@ -232,21 +408,21 @@ public sealed class NativeOverlayWindow : IDisposable
     /// An outer blurred glow ring breathes with voice intensity, and a solid
     /// inner circle (with its own glow halo) grows gently with it.
     /// </summary>
-    private static void DrawCursor(Graphics g, float x, float y, float voiceIntensity, float opacity)
+    private static void DrawCursor(Graphics g, float x, float y, float voiceIntensity, float opacity, float scale = 1f)
     {
         if (opacity <= 0f) return;
 
         // Outer glow ring
-        float outerRadius = (16 + voiceIntensity * 28) / 2f + 4 + voiceIntensity * 4;
+        float outerRadius = ((16 + voiceIntensity * 28) / 2f + 4 + voiceIntensity * 4) * scale;
         int outerAlpha = (int)((0.25f + voiceIntensity * 0.45f) * 255f * opacity);
         DrawGlow(g, x, y, outerRadius, outerAlpha);
 
         // Glow halo behind the solid inner circle (SwiftUI shadow equivalent)
-        float shadowRadius = 8 + voiceIntensity * 12;
+        float shadowRadius = (8 + voiceIntensity * 12) * scale;
         DrawGlow(g, x, y, shadowRadius, (int)(200 * opacity));
 
         // Solid inner circle
-        float innerDiameter = 10 + voiceIntensity * 3;
+        float innerDiameter = (10 + voiceIntensity * 3) * scale;
         using var fill = new SolidBrush(Color.FromArgb((int)(255 * opacity), CursorBlue));
         g.FillEllipse(fill, x - innerDiameter / 2, y - innerDiameter / 2, innerDiameter, innerDiameter);
     }

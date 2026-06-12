@@ -83,6 +83,26 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
         private set { _detectedElementBubbleText = value; OnPropertyChanged(); }
     }
 
+    // True when Windows refused to start speech recognition because the user
+    // hasn't enabled "Online speech recognition" in the privacy settings yet.
+    // Drives a banner in the companion panel that links straight to that page.
+    private bool _microphonePermissionNeeded;
+    public bool MicrophonePermissionNeeded
+    {
+        get => _microphonePermissionNeeded;
+        private set
+        {
+            if (_microphonePermissionNeeded == value) return;
+            _microphonePermissionNeeded = value;
+            OnPropertyChanged();
+
+            if (value)
+                StartMicPermissionPolling();
+            else
+                StopMicPermissionPolling();
+        }
+    }
+
     // MARK: - Dependencies
 
     private readonly ClaudeAPI _claudeAPI;
@@ -98,6 +118,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
     private readonly List<ConversationTurn> _conversationHistory = new();
     private CancellationTokenSource? _currentResponseCts;
     private CancellationTokenSource? _watchdogCts;
+    private CancellationTokenSource? _micPermissionPollCts;
 
     // MARK: - System prompt
 
@@ -159,6 +180,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
 
     private async void OnPushToTalkPressed()
     {
+        Logger.Log("CompanionManager", $"OnPushToTalkPressed, VoiceState={VoiceState}");
         if (VoiceState != CompanionVoiceState.Idle) return;
 
         SetVoiceState(CompanionVoiceState.Listening);
@@ -170,16 +192,28 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
         {
             await _buddyDictationManager.StartRecordingAsync();
             StartWatchdog();
+            MicrophonePermissionNeeded = false;
+            Logger.Log("CompanionManager", "Recording started");
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"[CompanionManager] Failed to start recording: {ex.Message}");
+            Logger.Log("CompanionManager", $"Failed to start recording: {ex}");
+
+            // HRESULT 0x80045509 — "speech privacy policy was not accepted" —
+            // means the user hasn't turned on Online speech recognition yet.
+            if (ex is System.Runtime.InteropServices.COMException comEx &&
+                (uint)comEx.HResult == 0x80045509)
+            {
+                MicrophonePermissionNeeded = true;
+            }
+
             SetVoiceState(CompanionVoiceState.Idle);
         }
     }
 
     private async void OnPushToTalkReleased()
     {
+        Logger.Log("CompanionManager", $"OnPushToTalkReleased, VoiceState={VoiceState}");
         if (VoiceState != CompanionVoiceState.Listening) return;
 
         SetVoiceState(CompanionVoiceState.Processing);
@@ -189,10 +223,11 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
         try
         {
             transcript = await _buddyDictationManager.StopRecordingAndGetTranscriptAsync();
+            Logger.Log("CompanionManager", $"Transcript: {transcript}");
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"[CompanionManager] Transcription failed: {ex.Message}");
+            Logger.Log("CompanionManager", $"Transcription failed: {ex}");
             SetVoiceState(CompanionVoiceState.Idle);
             return;
         }
@@ -284,6 +319,19 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
         }
     }
 
+    /// <summary>
+    /// Clears the detected-element pointing target once the overlay buddy has
+    /// finished navigating to it, flown back, and resumed following the cursor.
+    /// </summary>
+    public void ClearDetectedElementLocation()
+    {
+        UpdateOnUI(() =>
+        {
+            DetectedElementPosition = null;
+            DetectedElementBubbleText = null;
+        });
+    }
+
     /// <summary>Clears the conversation history for a fresh session.</summary>
     public void ClearConversationHistory()
     {
@@ -315,6 +363,61 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
         _watchdogCts = null;
     }
 
+    /// <summary>
+    /// While the mic-permission banner is shown, periodically checks whether the
+    /// user has accepted the "Online speech recognition" privacy policy and
+    /// clears the banner automatically once they have — no need to retry Ctrl+Alt.
+    /// </summary>
+    private void StartMicPermissionPolling()
+    {
+        _micPermissionPollCts?.Cancel();
+        var cts = new CancellationTokenSource();
+        _micPermissionPollCts = cts;
+        var ct = cts.Token;
+
+        _ = Task.Run(async () =>
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(1), ct);
+                }
+                catch (TaskCanceledException)
+                {
+                    break;
+                }
+
+                if (IsOnlineSpeechRecognitionAccepted())
+                {
+                    UpdateOnUI(() => MicrophonePermissionNeeded = false);
+                    break;
+                }
+            }
+        }, ct);
+    }
+
+    private void StopMicPermissionPolling()
+    {
+        _micPermissionPollCts?.Cancel();
+        _micPermissionPollCts = null;
+    }
+
+    private static bool IsOnlineSpeechRecognitionAccepted()
+    {
+        try
+        {
+            var value = Microsoft.Win32.Registry.GetValue(
+                @"HKEY_CURRENT_USER\SOFTWARE\Microsoft\Speech_OneCore\Settings\OnlineSpeechPrivacy",
+                "HasAccepted", 0);
+            return value is int accepted && accepted == 1;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private void SetVoiceState(CompanionVoiceState state)
     {
         VoiceState = state;
@@ -340,5 +443,6 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
         _elevenLabsTTSClient.Dispose();
         _currentResponseCts?.Cancel();
         _watchdogCts?.Cancel();
+        _micPermissionPollCts?.Cancel();
     }
 }

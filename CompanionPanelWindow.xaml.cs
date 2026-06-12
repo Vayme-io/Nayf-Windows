@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using Microsoft.UI;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
@@ -71,6 +72,9 @@ public sealed partial class CompanionPanelWindow : Window
                 case nameof(CompanionManager.StreamingResponseText):
                     UpdateResponseText(_companionManager.StreamingResponseText);
                     break;
+                case nameof(CompanionManager.MicrophonePermissionNeeded):
+                    UpdateMicPermissionBanner(_companionManager.MicrophonePermissionNeeded);
+                    break;
             }
         };
     }
@@ -114,6 +118,11 @@ public sealed partial class CompanionPanelWindow : Window
         }
     }
 
+    private void UpdateMicPermissionBanner(bool needed)
+    {
+        MicPermissionBanner.Visibility = needed ? Visibility.Visible : Visibility.Collapsed;
+    }
+
     /// <summary>
     /// Shows the panel positioned above the tray icon. Mirrors MenuBarPanelManager's
     /// showPanel() which positions the panel below the menu bar icon on Mac.
@@ -122,7 +131,22 @@ public sealed partial class CompanionPanelWindow : Window
     public void ShowNearTray(NativeMethods.RECT trayRect)
     {
         if (_isVisible) { HidePanel(); return; }
+        ShowPanelAt(trayRect);
+    }
 
+    /// <summary>
+    /// Shows the panel above the tray icon if it isn't already visible, without
+    /// toggling it closed. Used to surface the panel automatically (e.g. when
+    /// the microphone permission banner needs the user's attention).
+    /// </summary>
+    public void EnsureVisibleNearTray(NativeMethods.RECT trayRect)
+    {
+        if (_isVisible) return;
+        ShowPanelAt(trayRect);
+    }
+
+    private void ShowPanelAt(NativeMethods.RECT trayRect)
+    {
         var hwnd = WindowNative.GetWindowHandle(this);
         var appWindow = AppWindow.GetFromWindowId(Microsoft.UI.Win32Interop.GetWindowIdFromWindow(hwnd));
 
@@ -207,5 +231,10 @@ public sealed partial class CompanionPanelWindow : Window
     private void ClearHistoryButton_Click(object sender, RoutedEventArgs e)
     {
         _companionManager.ClearConversationHistory();
+    }
+
+    private void OpenSpeechSettingsButton_Click(object sender, RoutedEventArgs e)
+    {
+        Process.Start(new ProcessStartInfo("ms-settings:privacy-speech") { UseShellExecute = true });
     }
 }

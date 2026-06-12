@@ -56,6 +56,17 @@ public partial class App : Application
             _companionPanelWindow = new CompanionPanelWindow(_companionManager);
             Log("Step", "PanelWindow created");
 
+            // Auto-show the panel when the user needs to enable speech
+            // recognition, so the banner with the settings link is visible.
+            _companionManager.PropertyChanged += (_, e) =>
+            {
+                if (e.PropertyName == nameof(CompanionManager.MicrophonePermissionNeeded) &&
+                    _companionManager.MicrophonePermissionNeeded)
+                {
+                    _companionPanelWindow?.EnsureVisibleNearTray(_systemTrayManager?.GetTrayIconRect() ?? default);
+                }
+            };
+
             _systemTrayManager = new SystemTrayManager(
                 onShowPanel: ShowCompanionPanel,
                 onHidePanel: HideCompanionPanel,

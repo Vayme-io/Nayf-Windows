@@ -42,7 +42,11 @@ public sealed class GlobalPushToTalkMonitor : IDisposable
         if (_hookHandle == IntPtr.Zero)
         {
             var error = Marshal.GetLastWin32Error();
-            System.Diagnostics.Debug.WriteLine($"[GlobalPTT] Failed to install keyboard hook: {error}");
+            Logger.Log("GlobalPTT", $"Failed to install keyboard hook, error={error}");
+        }
+        else
+        {
+            Logger.Log("GlobalPTT", "Keyboard hook installed");
         }
     }
 
@@ -62,11 +66,18 @@ public sealed class GlobalPushToTalkMonitor : IDisposable
             bool isKeyDown = (wParam == (IntPtr)NativeMethods.WM_KEYDOWN || wParam == (IntPtr)NativeMethods.WM_SYSKEYDOWN);
             bool isKeyUp = (wParam == (IntPtr)NativeMethods.WM_KEYUP || wParam == (IntPtr)NativeMethods.WM_SYSKEYUP);
 
-            if (kbStruct.vkCode == NativeMethods.VK_CONTROL)
+            // WH_KEYBOARD_LL reports the left/right-specific virtual key codes
+            // (VK_LCONTROL/VK_RCONTROL, VK_LMENU/VK_RMENU), not the generic
+            // VK_CONTROL/VK_MENU — check both forms.
+            if (kbStruct.vkCode == NativeMethods.VK_CONTROL ||
+                kbStruct.vkCode == NativeMethods.VK_LCONTROL ||
+                kbStruct.vkCode == NativeMethods.VK_RCONTROL)
             {
                 _isCtrlDown = isKeyDown;
             }
-            else if (kbStruct.vkCode == NativeMethods.VK_MENU) // Alt
+            else if (kbStruct.vkCode == NativeMethods.VK_MENU ||
+                     kbStruct.vkCode == NativeMethods.VK_LMENU ||
+                     kbStruct.vkCode == NativeMethods.VK_RMENU) // Alt
             {
                 _isAltDown = isKeyDown;
             }
@@ -76,11 +87,13 @@ public sealed class GlobalPushToTalkMonitor : IDisposable
             if (pttComboDown && !_isPttActive)
             {
                 _isPttActive = true;
+                Logger.Log("GlobalPTT", "Combo pressed");
                 _dispatcherQueue.TryEnqueue(() => PushToTalkPressed?.Invoke());
             }
             else if (!pttComboDown && _isPttActive)
             {
                 _isPttActive = false;
+                Logger.Log("GlobalPTT", "Combo released");
                 _dispatcherQueue.TryEnqueue(() => PushToTalkReleased?.Invoke());
             }
         }

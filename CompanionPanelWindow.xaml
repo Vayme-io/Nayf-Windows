@@ -93,6 +93,42 @@
                 </StackPanel>
             </Border>
 
+            <!-- Microphone permission banner — shown when Windows hasn't
+                 enabled "Online speech recognition" yet -->
+            <Border x:Name="MicPermissionBanner"
+                    CornerRadius="12"
+                    Padding="14,12,14,12"
+                    Visibility="Collapsed">
+                <Border.Background>
+                    <SolidColorBrush Color="#3A2A00"/>
+                </Border.Background>
+                <Border.BorderBrush>
+                    <SolidColorBrush Color="#FF9F0A"/>
+                </Border.BorderBrush>
+                <Border.BorderThickness>
+                    <Thickness>0.5</Thickness>
+                </Border.BorderThickness>
+
+                <StackPanel Spacing="10">
+                    <TextBlock Text="Nayf needs speech recognition turned on to hear you."
+                               Foreground="White"
+                               FontSize="13"
+                               FontFamily="Segoe UI Variable"
+                               TextWrapping="Wrap"/>
+                    <Button x:Name="OpenSpeechSettingsButton"
+                            Content="Open Speech Settings"
+                            HorizontalAlignment="Stretch"
+                            Click="OpenSpeechSettingsButton_Click"
+                            Foreground="White"
+                            FontSize="13"
+                            FontFamily="Segoe UI Variable">
+                        <Button.Background>
+                            <SolidColorBrush Color="#FF9F0A"/>
+                        </Button.Background>
+                    </Button>
+                </StackPanel>
+            </Border>
+
             <!-- Streaming response text (latest AI response) -->
             <Border x:Name="ResponseContainer"
                     CornerRadius="12"

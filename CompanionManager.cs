@@ -109,6 +109,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
     private readonly ElevenLabsTTSClient _elevenLabsTTSClient;
     private readonly BuddyDictationManager _buddyDictationManager;
     private readonly GlobalPushToTalkMonitor _pushToTalkMonitor;
+    private readonly AuthManager _authManager;
     public readonly NayfAgentManager AgentManager;
 
     private readonly DispatcherQueue _dispatcherQueue;
@@ -141,9 +142,10 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
         You're running on Windows. Use Windows-specific knowledge for paths, apps, etc.
         """;
 
-    public CompanionManager()
+    public CompanionManager(AuthManager authManager)
     {
         _dispatcherQueue = DispatcherQueue.GetForCurrentThread();
+        _authManager = authManager;
 
         _claudeAPI = new ClaudeAPI(NayfConfig.ChatEndpoint);
         _elevenLabsTTSClient = new ElevenLabsTTSClient(NayfConfig.TTSEndpoint);
@@ -165,10 +167,22 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
         _buddyDictationManager.PartialTranscriptUpdated += text =>
             UpdateOnUI(() => LastTranscript = text);
 
+        // Keep the "thinking" spinner up until audio actually starts — only
+        // then flip to Responding (cursor animates with the voice).
+        _elevenLabsTTSClient.PlaybackStarted += () =>
+            UpdateOnUI(() =>
+            {
+                if (VoiceState == CompanionVoiceState.Processing)
+                    SetVoiceState(CompanionVoiceState.Responding);
+            });
+
         _elevenLabsTTSClient.PlaybackStopped += () =>
             UpdateOnUI(() =>
             {
-                if (VoiceState == CompanionVoiceState.Responding)
+                // Reset from either state — Processing covers the case where TTS
+                // failed before any audio played, so we never get stuck spinning.
+                if (VoiceState == CompanionVoiceState.Responding ||
+                    VoiceState == CompanionVoiceState.Processing)
                     SetVoiceState(CompanionVoiceState.Idle);
             });
     }
@@ -253,25 +267,40 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
         try
         {
             screenshots = await ScreenCaptureUtility.CaptureAllScreensAsync();
+            Logger.Log("CompanionManager", $"Captured {screenshots?.Count ?? 0} screenshot(s)");
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"[CompanionManager] Screen capture failed: {ex.Message}");
+            Logger.Log("CompanionManager", $"Screen capture failed: {ex.Message}");
         }
 
-        SetVoiceState(CompanionVoiceState.Responding);
+        // Stay in Processing (the spinner) through the screenshot upload and
+        // Claude's response — we only switch to Responding once TTS audio
+        // actually begins, so the user always sees that something is happening.
         StreamingResponseText = "";
+
+        // Fetch a fresh Supabase JWT so the proxy can verify identity + credits.
+        var authToken = await _authManager.CurrentAccessTokenAsync();
+        if (authToken == null)
+        {
+            Logger.Log("CompanionManager", "No auth token — user not signed in");
+            SetVoiceState(CompanionVoiceState.Idle);
+            return;
+        }
 
         try
         {
+            Logger.Log("CompanionManager", "Sending to Claude…");
             var responseText = await _claudeAPI.StreamResponseAsync(
                 transcript,
                 _conversationHistory,
                 screenshots,
                 delta => UpdateOnUI(() => StreamingResponseText += delta),
                 BuildSystemPrompt(),
-                null,
+                authToken,
                 ct);
+
+            Logger.Log("CompanionManager", $"Claude responded ({responseText.Length} chars)");
 
             if (ct.IsCancellationRequested) return;
 
@@ -285,16 +314,26 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
 
             // Speak the response (strip POINT tags from TTS)
             var ttsText = System.Text.RegularExpressions.Regex.Replace(
-                responseText, @"\[POINT:[^\]]+\]", "");
-            _ = _elevenLabsTTSClient.SpeakAsync(ttsText, ct);
+                responseText, @"\[POINT:[^\]]+\]", "").Trim();
+            if (string.IsNullOrEmpty(ttsText))
+            {
+                // Nothing to speak (e.g. response was only a POINT tag) — done.
+                SetVoiceState(CompanionVoiceState.Idle);
+            }
+            else
+            {
+                Logger.Log("CompanionManager", "Starting TTS playback");
+                _ = _elevenLabsTTSClient.SpeakAsync(ttsText, authToken, ct);
+            }
         }
         catch (OperationCanceledException)
         {
             // User spoke again — normal cancellation
+            Logger.Log("CompanionManager", "Response cancelled");
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"[CompanionManager] Claude error: {ex.Message}");
+            Logger.Log("CompanionManager", $"Claude/TTS error: {ex}");
             SetVoiceState(CompanionVoiceState.Idle);
         }
     }

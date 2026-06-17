@@ -69,9 +69,6 @@ public sealed class BuddyDictationManager : IDisposable
 
         StopMicrophonePowerMonitor();
 
-        // Give the recognizer a moment to finalize the last utterance
-        await Task.Delay(300);
-
         if (_speechProvider != null)
         {
             await _speechProvider.EndSessionAsync();

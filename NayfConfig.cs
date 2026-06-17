@@ -17,6 +17,14 @@ public static class NayfConfig
     public const string CreditsEndpoint = $"{WorkerBaseURL}/credits";
     public const string WebSearchEndpoint = $"{WorkerBaseURL}/search";
 
+    /// <summary>
+    /// Supabase project used for authentication. The proxy verifies the user's
+    /// JWT (issued by this project) and checks their credit balance before
+    /// serving chat/TTS requests. Matches the Mac app's NayfConfig.
+    /// </summary>
+    public const string SupabaseURL = "https://vpigrsijmusymnjeuhsh.supabase.co";
+    public const string SupabaseAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZwaWdyc2lqbXVzeW1uamV1aHNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk2NjA2ODksImV4cCI6MjA5NTIzNjY4OX0.keRzkBuv4QqfA6VDwJcznpEQbUR4ZsRmwHKJTeTzl74";
+
     /// <summary>Default Claude model used for conversations.</summary>
     public const string DefaultModel = "claude-sonnet-4-6";
 

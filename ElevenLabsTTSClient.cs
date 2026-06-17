@@ -36,22 +36,31 @@ public sealed class ElevenLabsTTSClient : IDisposable
     /// Converts <paramref name="text"/> to speech and plays it immediately.
     /// Cancels any currently playing audio first.
     /// </summary>
-    public async Task SpeakAsync(string text, CancellationToken cancellationToken = default)
+    public async Task SpeakAsync(string text, string? authorizationToken = null,
+        CancellationToken cancellationToken = default)
     {
         StopPlayback();
 
         try
         {
-            var audioBytes = await FetchAudioAsync(text, cancellationToken);
+            var audioBytes = await FetchAudioAsync(text, authorizationToken, cancellationToken);
+            if (audioBytes.Length == 0)
+            {
+                // No audio came back — let the state machine recover.
+                PlaybackStopped?.Invoke();
+                return;
+            }
             PlayAudio(audioBytes, cancellationToken);
         }
         catch (OperationCanceledException)
         {
-            // Normal cancellation — no action needed
+            // Normal cancellation — a new turn will manage state.
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"[ElevenLabs] TTS error: {ex.Message}");
+            Logger.Log("ElevenLabs", $"TTS error: {ex.Message}");
+            // Fire stopped so the caller doesn't stay stuck on the spinner.
+            PlaybackStopped?.Invoke();
         }
     }
 
@@ -67,11 +76,15 @@ public sealed class ElevenLabsTTSClient : IDisposable
         _mp3Reader = null;
     }
 
-    private async Task<byte[]> FetchAudioAsync(string text, CancellationToken cancellationToken)
+    private async Task<byte[]> FetchAudioAsync(string text, string? authorizationToken,
+        CancellationToken cancellationToken)
     {
         var requestBody = JsonSerializer.Serialize(new { text, model_id = "eleven_flash_v2_5" });
         using var content = new StringContent(requestBody, Encoding.UTF8, "application/json");
         using var request = new HttpRequestMessage(HttpMethod.Post, _proxyUrl) { Content = content };
+
+        if (authorizationToken != null)
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", authorizationToken);
 
         using var response = await _httpClient.SendAsync(
             request, HttpCompletionOption.ResponseContentRead, cancellationToken);

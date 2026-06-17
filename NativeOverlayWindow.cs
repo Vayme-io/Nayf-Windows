@@ -204,12 +204,8 @@ public sealed class NativeOverlayWindow : IDisposable
 
         DrawWelcomeBubble(g, ANCHOR_X, ANCHOR_Y, elapsed);
 
-        if (state == CompanionVoiceState.Responding)
-        {
-            var text = _companionManager.StreamingResponseText;
-            if (!string.IsNullOrEmpty(text))
-                DrawResponseBubble(g, ANCHOR_X + 28, ANCHOR_Y - 55, text);
-        }
+        // The streamed response text is shown in the companion panel (and spoken
+        // via TTS) — the overlay deliberately doesn't draw it near the cursor.
 
         // While pointing at a detected element, the buddy itself has flown
         // there — draw the sonar ring and speech bubble around its anchor.
@@ -536,22 +532,6 @@ public sealed class NativeOverlayWindow : IDisposable
         g.FillRoundedRect(bg, x, y, bw, bh, 6);
         using var tb = new SolidBrush(Color.FromArgb((int)(255 * bubbleOpacity), Color.White));
         g.DrawString(text, font, tb, x + 8, y + 4);
-    }
-
-    private static void DrawResponseBubble(Graphics g, float x, float y, string text)
-    {
-        const int maxW = 340;
-        using var font = new Font("Segoe UI", 12f, FontStyle.Regular, GraphicsUnit.Point);
-        var sz = g.MeasureString(text, font, maxW);
-        float bw = Math.Min(sz.Width + 24, maxW + 24);
-        float bh = sz.Height + 18;
-        if (y < 0) y = 4;
-        using var bg = new SolidBrush(Color.FromArgb(220, 28, 28, 30));
-        g.FillRoundedRect(bg, x, y, bw, bh, 10);
-        using var border = new Pen(Color.FromArgb(80, 58, 58, 60), 0.8f);
-        g.DrawRoundedRect(border, x, y, bw, bh, 10);
-        using var tb = new SolidBrush(Color.White);
-        g.DrawString(text, font, tb, new RectangleF(x + 12, y + 9, bw - 24, bh - 18));
     }
 
     /// <summary>

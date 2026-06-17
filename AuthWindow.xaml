@@ -1,0 +1,110 @@
+<Window
+    x:Class="NayfWindows.AuthWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Sign in to Nayf">
+
+    <Grid Width="360" Padding="32,28,32,28">
+        <Grid.Background>
+            <SolidColorBrush Color="#FF1C1C1E"/>
+        </Grid.Background>
+
+        <StackPanel Spacing="18">
+
+            <!-- Logo + title -->
+            <StackPanel Orientation="Horizontal" Spacing="12" HorizontalAlignment="Center">
+                <Ellipse Width="32" Height="32">
+                    <Ellipse.Fill>
+                        <RadialGradientBrush>
+                            <GradientStop Color="#FF007AFF" Offset="0"/>
+                            <GradientStop Color="#FF0055CC" Offset="1"/>
+                        </RadialGradientBrush>
+                    </Ellipse.Fill>
+                </Ellipse>
+                <TextBlock Text="Nayf"
+                           Foreground="White"
+                           FontSize="22"
+                           FontWeight="SemiBold"
+                           FontFamily="Segoe UI Variable"
+                           VerticalAlignment="Center"/>
+            </StackPanel>
+
+            <TextBlock x:Name="SubtitleText"
+                       Text="Sign in to continue"
+                       Foreground="#8E8E93"
+                       FontSize="13"
+                       FontFamily="Segoe UI Variable"
+                       HorizontalAlignment="Center"/>
+
+            <!-- Email -->
+            <StackPanel Spacing="6">
+                <TextBlock Text="EMAIL"
+                           Foreground="#8E8E93"
+                           FontSize="11"
+                           FontWeight="SemiBold"
+                           CharacterSpacing="80"
+                           FontFamily="Segoe UI Variable"/>
+                <TextBox x:Name="EmailBox"
+                         PlaceholderText="you@example.com"
+                         FontSize="14"/>
+            </StackPanel>
+
+            <!-- Password -->
+            <StackPanel Spacing="6">
+                <TextBlock Text="PASSWORD"
+                           Foreground="#8E8E93"
+                           FontSize="11"
+                           FontWeight="SemiBold"
+                           CharacterSpacing="80"
+                           FontFamily="Segoe UI Variable"/>
+                <PasswordBox x:Name="PasswordBox"
+                             PlaceholderText="••••••••"
+                             FontSize="14"/>
+            </StackPanel>
+
+            <!-- Error / info message -->
+            <TextBlock x:Name="MessageText"
+                       Text=""
+                       Foreground="#FF453A"
+                       FontSize="12"
+                       FontFamily="Segoe UI Variable"
+                       TextWrapping="Wrap"
+                       Visibility="Collapsed"/>
+
+            <!-- Primary action -->
+            <Button x:Name="SubmitButton"
+                    Content="Sign In"
+                    HorizontalAlignment="Stretch"
+                    Height="40"
+                    Click="SubmitButton_Click"
+                    Foreground="White"
+                    FontSize="14"
+                    FontWeight="SemiBold"
+                    FontFamily="Segoe UI Variable">
+                <Button.Background>
+                    <SolidColorBrush Color="#FF007AFF"/>
+                </Button.Background>
+            </Button>
+
+            <!-- Mode toggle -->
+            <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
+                <TextBlock x:Name="ToggleHintText"
+                           Text="Don't have an account?"
+                           Foreground="#8E8E93"
+                           FontSize="12"
+                           FontFamily="Segoe UI Variable"
+                           VerticalAlignment="Center"/>
+                <HyperlinkButton x:Name="ToggleModeButton"
+                                 Content="Create one"
+                                 FontSize="12"
+                                 Padding="0"
+                                 Click="ToggleModeButton_Click"/>
+            </StackPanel>
+
+            <ProgressRing x:Name="LoadingRing"
+                          IsActive="False"
+                          Width="22" Height="22"
+                          HorizontalAlignment="Center"/>
+        </StackPanel>
+    </Grid>
+</Window>

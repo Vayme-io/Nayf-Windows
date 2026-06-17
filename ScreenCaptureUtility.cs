@@ -33,6 +33,8 @@ public static class ScreenCaptureUtility
                 try
                 {
                     var imageData = CaptureScreenRegion(rect.Left, rect.Top, rect.Width, rect.Height);
+                    Logger.Log("ScreenCapture",
+                        $"Screen {i + 1}: {rect.Width}x{rect.Height} -> {imageData.Length / 1024} KB");
                     results.Add(new CapturedScreenshot(
                         ImageData: imageData,
                         ScreenIndex: i,
@@ -41,7 +43,7 @@ public static class ScreenCaptureUtility
                 }
                 catch (Exception ex)
                 {
-                    System.Diagnostics.Debug.WriteLine($"[ScreenCapture] Failed to capture monitor {i}: {ex.Message}");
+                    Logger.Log("ScreenCapture", $"Failed to capture monitor {i}: {ex.Message}");
                 }
             }
 
@@ -60,35 +62,75 @@ public static class ScreenCaptureUtility
         });
     }
 
+    // Claude downscales any image whose longest edge exceeds ~1568px, so
+    // capturing larger than this just wastes upload bandwidth and latency.
+    private const int MaxImageEdge = 1568;
+    private const long JpegQuality = 70L;
+
     private static byte[] CaptureScreenRegion(int x, int y, int width, int height)
     {
         IntPtr desktopDC = NativeMethods.GetDC(IntPtr.Zero);
         try
         {
             using var bitmap = new Bitmap(width, height, PixelFormat.Format32bppArgb);
-            using var graphics = Graphics.FromImage(bitmap);
-            IntPtr bitmapDC = graphics.GetHdc();
+            using (var graphics = Graphics.FromImage(bitmap))
+            {
+                IntPtr bitmapDC = graphics.GetHdc();
+                try
+                {
+                    BitBlt(bitmapDC, 0, 0, width, height, desktopDC, x, y, SRCCOPY);
+                }
+                finally
+                {
+                    graphics.ReleaseHdc(bitmapDC);
+                }
+            }
+
+            // Downscale so the longest edge is at most MaxImageEdge before encoding.
+            Bitmap? scaled = null;
+            var toEncode = bitmap;
+            if (Math.Max(width, height) > MaxImageEdge)
+            {
+                scaled = ScaleToMaxEdge(bitmap, MaxImageEdge);
+                toEncode = scaled;
+            }
+
             try
             {
-                BitBlt(bitmapDC, 0, 0, width, height, desktopDC, x, y, SRCCOPY);
+                using var ms = new MemoryStream();
+                var jpegEncoder = GetJpegEncoder();
+                var encoderParams = new EncoderParameters(1);
+                encoderParams.Param[0] = new EncoderParameter(Encoder.Quality, JpegQuality);
+                toEncode.Save(ms, jpegEncoder, encoderParams);
+                return ms.ToArray();
             }
             finally
             {
-                graphics.ReleaseHdc(bitmapDC);
+                scaled?.Dispose();
             }
-
-            // Encode as JPEG at 85% quality — same approach as the Mac version
-            using var ms = new MemoryStream();
-            var jpegEncoder = GetJpegEncoder();
-            var encoderParams = new EncoderParameters(1);
-            encoderParams.Param[0] = new EncoderParameter(Encoder.Quality, 85L);
-            bitmap.Save(ms, jpegEncoder, encoderParams);
-            return ms.ToArray();
         }
         finally
         {
             NativeMethods.ReleaseDC(IntPtr.Zero, desktopDC);
         }
+    }
+
+    /// <summary>
+    /// Returns a new bitmap scaled so its longest edge is at most
+    /// <paramref name="maxEdge"/> px, preserving aspect ratio.
+    /// </summary>
+    private static Bitmap ScaleToMaxEdge(Bitmap source, int maxEdge)
+    {
+        double scale = (double)maxEdge / Math.Max(source.Width, source.Height);
+        int newW = Math.Max(1, (int)Math.Round(source.Width * scale));
+        int newH = Math.Max(1, (int)Math.Round(source.Height * scale));
+
+        var dest = new Bitmap(newW, newH, PixelFormat.Format32bppArgb);
+        using var g = Graphics.FromImage(dest);
+        g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+        g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
+        g.DrawImage(source, 0, 0, newW, newH);
+        return dest;
     }
 
     private static List<NativeMethods.RECT> GetAllMonitorRects()

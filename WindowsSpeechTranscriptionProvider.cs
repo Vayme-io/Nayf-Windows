@@ -19,6 +19,7 @@ public sealed class WindowsSpeechTranscriptionProvider : IDisposable
 
     private SpeechRecognizer? _recognizer;
     private bool _isSessionActive = false;
+    private TaskCompletionSource<bool>? _firstResultTcs;
 
     /// <summary>
     /// Initializes the speech recognizer and starts a continuous recognition session.
@@ -41,6 +42,7 @@ public sealed class WindowsSpeechTranscriptionProvider : IDisposable
                 "Make sure Windows Speech Recognition is enabled in Settings → Time & Language → Speech.");
         }
 
+        _firstResultTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         _recognizer.ContinuousRecognitionSession.ResultGenerated += OnResultGenerated;
         _recognizer.ContinuousRecognitionSession.Completed += OnSessionCompleted;
 
@@ -59,13 +61,19 @@ public sealed class WindowsSpeechTranscriptionProvider : IDisposable
         if (!_isSessionActive || _recognizer == null) return;
         _isSessionActive = false;
 
+        // Wait up to 2.5 s for the recognizer to deliver at least one result
+        // before stopping — online recognition can take 1-2 s to respond, and
+        // calling StopAsync immediately discards any in-flight result.
+        if (_firstResultTcs != null)
+            await Task.WhenAny(_firstResultTcs.Task, Task.Delay(2500));
+
         try
         {
             await _recognizer.ContinuousRecognitionSession.StopAsync();
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"[WindowsSpeech] Stop error: {ex.Message}");
+            Logger.Log("WindowsSpeech", $"Stop error: {ex.Message}");
         }
     }
 
@@ -89,6 +97,8 @@ public sealed class WindowsSpeechTranscriptionProvider : IDisposable
             // Low confidence → show as partial/hypothesis
             PartialTranscriptReceived?.Invoke(text);
         }
+
+        _firstResultTcs?.TrySetResult(true);
     }
 
     private void OnSessionCompleted(

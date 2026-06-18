@@ -14,23 +14,20 @@ namespace NayfWindows;
 /// </summary>
 public sealed class SystemTrayManager : IDisposable
 {
-    private readonly Action _onShowPanel;
-    private readonly Action _onHidePanel;
+    private readonly Action _onTogglePanel;
     private readonly Action _onQuit;
 
     private IntPtr _messageWindowHandle = IntPtr.Zero;
     private IntPtr _trayIconHandle = IntPtr.Zero;
     private Thread? _messageLoopThread;
-    private bool _panelVisible = false;
     private NativeMethods.NOTIFYICONDATA _notifyIconData;
     private static readonly uint TrayCallbackMessage = NativeMethods.WM_APP_TRAY;
     private NativeMethods.WndProc? _wndProcDelegate;
     private NativeMethods.RECT _trayIconRect;
 
-    public SystemTrayManager(Action onShowPanel, Action onHidePanel, Action onQuit)
+    public SystemTrayManager(Action onTogglePanel, Action onQuit)
     {
-        _onShowPanel = onShowPanel;
-        _onHidePanel = onHidePanel;
+        _onTogglePanel = onTogglePanel;
         _onQuit = onQuit;
     }
 
@@ -180,11 +177,9 @@ public sealed class SystemTrayManager : IDisposable
 
     private void TogglePanel()
     {
-        _panelVisible = !_panelVisible;
-        if (_panelVisible)
-            _onShowPanel();
-        else
-            _onHidePanel();
+        // The panel tracks its own visibility and toggles itself, so we just
+        // route every click through one callback — no separate state to drift.
+        _onTogglePanel();
     }
 
     /// <summary>

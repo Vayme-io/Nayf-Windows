@@ -5,8 +5,9 @@
     Title="Nayf">
 
     <Grid Width="340">
+        <!-- Transparent so the window's acrylic backdrop shows through -->
         <Grid.Background>
-            <SolidColorBrush Color="#F01C1C1E"/>
+            <SolidColorBrush Color="Transparent"/>
         </Grid.Background>
 
         <StackPanel Padding="20,16,20,20" Spacing="16">
@@ -232,6 +233,31 @@
                     <SolidColorBrush Color="#2C2C2E"/>
                 </Button.Background>
             </Button>
+
+            <!-- Separator -->
+            <Rectangle Height="1" Fill="#3A3A3C" Opacity="0.5"/>
+
+            <!-- Account: signed-in user + sign out -->
+            <StackPanel Spacing="8">
+                <TextBlock x:Name="AccountEmailText"
+                           Text=""
+                           Foreground="#8E8E93"
+                           FontSize="12"
+                           FontFamily="Segoe UI Variable"
+                           TextTrimming="CharacterEllipsis"
+                           Visibility="Collapsed"/>
+                <Button x:Name="SignOutButton"
+                        Content="Sign Out"
+                        HorizontalAlignment="Stretch"
+                        Click="SignOutButton_Click"
+                        Foreground="#FF453A"
+                        FontSize="13"
+                        FontFamily="Segoe UI Variable">
+                    <Button.Background>
+                        <SolidColorBrush Color="#2C2C2E"/>
+                    </Button.Background>
+                </Button>
+            </StackPanel>
 
             <!-- Separator -->
             <Rectangle Height="1" Fill="#3A3A3C" Opacity="0.5"/>

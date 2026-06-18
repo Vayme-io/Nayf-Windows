@@ -15,6 +15,14 @@ namespace NayfWindows;
 /// </summary>
 public sealed partial class AnchorWindow : Window
 {
+    /// <summary>
+    /// Raised when the user activates this window via its taskbar button
+    /// (the very first programmatic activation at startup is ignored).
+    /// </summary>
+    public event Action? TaskbarActivated;
+
+    private bool _seenInitialActivation;
+
     public AnchorWindow()
     {
         InitializeComponent();
@@ -41,5 +49,18 @@ public sealed partial class AnchorWindow : Window
 
         // Block the close button so the user can't accidentally shut down the app
         Closed += (_, e) => e.Handled = true;
+
+        // Clicking the taskbar button activates this window — surface that as a
+        // request to open the panel. Skip the initial startup activation.
+        Activated += (_, args) =>
+        {
+            if (args.WindowActivationState == WindowActivationState.Deactivated) return;
+            if (!_seenInitialActivation)
+            {
+                _seenInitialActivation = true;
+                return;
+            }
+            TaskbarActivated?.Invoke();
+        };
     }
 }

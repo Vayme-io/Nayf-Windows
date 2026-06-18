@@ -17,6 +17,10 @@ public partial class App : Application
     private bool _companionStarted;
     private bool _authSucceeded;
 
+    // The UI/dispatcher thread. The tray icon's message loop runs on its own
+    // thread, so its callbacks must marshal here before touching any window.
+    private Microsoft.UI.Dispatching.DispatcherQueue? _uiDispatcher;
+
     private static readonly string LogPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.Desktop), "nayf-crash.log");
 
@@ -80,6 +84,7 @@ public partial class App : Application
 
     private void ShowAuthWindow()
     {
+        _authSucceeded = false;
         _authWindow = new AuthWindow(_authManager!);
         _authWindow.AuthenticationSucceeded += () =>
         {
@@ -112,7 +117,24 @@ public partial class App : Application
 
         try
         {
+            _uiDispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
+
             _anchorWindow = new AnchorWindow();
+            // Clicking the taskbar button opens the panel (it's an off-screen
+            // anchor window, so there's nothing to restore otherwise). Center it
+            // over where the user clicked — i.e. the taskbar button itself.
+            _anchorWindow.TaskbarActivated += () =>
+                _uiDispatcher?.TryEnqueue(() =>
+                {
+                    NativeMethods.RECT anchor = default;
+                    if (NativeMethods.GetCursorPos(out var pt))
+                        anchor = new NativeMethods.RECT
+                        {
+                            Left = pt.X - 8, Top = pt.Y - 8,
+                            Right = pt.X + 8, Bottom = pt.Y + 8
+                        };
+                    _companionPanelWindow?.EnsureVisibleNearTray(anchor);
+                });
             _anchorWindow.Activate();
             Log("Step", "AnchorWindow created");
 
@@ -124,6 +146,7 @@ public partial class App : Application
             Log("Step", "Overlays created");
 
             _companionPanelWindow = new CompanionPanelWindow(_companionManager);
+            _companionPanelWindow.SignOutRequested += OnSignOutRequested;
             Log("Step", "PanelWindow created");
 
             // Auto-show the panel when the user needs to enable speech
@@ -138,8 +161,7 @@ public partial class App : Application
             };
 
             _systemTrayManager = new SystemTrayManager(
-                onShowPanel: ShowCompanionPanel,
-                onHidePanel: HideCompanionPanel,
+                onTogglePanel: ShowCompanionPanel,
                 onQuit: QuitApp
             );
             _systemTrayManager.Initialize();
@@ -155,22 +177,37 @@ public partial class App : Application
         }
     }
 
+    // These are invoked from the tray icon's background message-loop thread,
+    // so they hop to the UI thread before touching any window.
     private void ShowCompanionPanel()
     {
-        _companionPanelWindow?.ShowNearTray(_systemTrayManager?.GetTrayIconRect() ?? default);
+        _uiDispatcher?.TryEnqueue(() =>
+            _companionPanelWindow?.ShowNearTray(_systemTrayManager?.GetTrayIconRect() ?? default));
     }
 
-    private void HideCompanionPanel()
+    /// <summary>
+    /// Clears the saved session and shows the login window again. The companion
+    /// stays alive but is inert until the user re-authenticates (it shares the
+    /// same AuthManager, so it picks up the new token automatically).
+    /// </summary>
+    private void OnSignOutRequested()
     {
+        Log("Step", "Sign out requested");
         _companionPanelWindow?.HidePanel();
+        _authManager!.SignOut();
+        ShowAuthWindow();
     }
 
     private void QuitApp()
     {
-        _systemTrayManager?.Dispose();
-        _overlayWindowManager?.Dispose();
-        _companionManager?.Dispose();
-        Exit();
+        // Invoked from the tray thread (context-menu "Quit") — marshal to UI.
+        _uiDispatcher?.TryEnqueue(() =>
+        {
+            _systemTrayManager?.Dispose();
+            _overlayWindowManager?.Dispose();
+            _companionManager?.Dispose();
+            Exit();
+        });
     }
 
     private static void Log(string step, string message)

@@ -112,6 +112,9 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
     private readonly AuthManager _authManager;
     public readonly NayfAgentManager AgentManager;
 
+    /// <summary>The auth manager, so UIs can show the signed-in user and sign out.</summary>
+    public AuthManager Auth => _authManager;
+
     private readonly DispatcherQueue _dispatcherQueue;
 
     // MARK: - Session state

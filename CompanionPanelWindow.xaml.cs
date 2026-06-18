@@ -19,6 +19,10 @@ public sealed partial class CompanionPanelWindow : Window
 {
     private readonly CompanionManager _companionManager;
     private bool _isVisible = false;
+    private DateTimeOffset _lastHidden = DateTimeOffset.MinValue;
+
+    /// <summary>Raised when the user clicks Sign Out; the app handles the flow.</summary>
+    public event Action? SignOutRequested;
 
     public CompanionPanelWindow(CompanionManager companionManager)
     {
@@ -26,16 +30,38 @@ public sealed partial class CompanionPanelWindow : Window
         InitializeComponent();
         SetupWindow();
         SubscribeToCompanionManager();
+
+        _companionManager.Auth.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(AuthManager.CurrentUserEmail))
+                DispatcherQueue.TryEnqueue(() => UpdateAccountEmail(_companionManager.Auth.CurrentUserEmail));
+        };
+        UpdateAccountEmail(_companionManager.Auth.CurrentUserEmail);
+    }
+
+    private void UpdateAccountEmail(string? email)
+    {
+        if (string.IsNullOrWhiteSpace(email))
+        {
+            AccountEmailText.Visibility = Visibility.Collapsed;
+        }
+        else
+        {
+            AccountEmailText.Text = $"Signed in as {email}";
+            AccountEmailText.Visibility = Visibility.Visible;
+        }
     }
 
     private void SetupWindow()
     {
         var hwnd = WindowNative.GetWindowHandle(this);
 
-        // Make this a tool window (no taskbar button, no Alt+Tab appearance)
+        // Tool window (no taskbar button, no Alt+Tab). WS_EX_NOACTIVATE is
+        // deliberately omitted — the panel needs to activate so the acrylic
+        // material renders and it dismisses on blur, like the Start menu.
         var exStyle = NativeMethods.GetWindowLong(hwnd, NativeMethods.GWL_EXSTYLE);
         NativeMethods.SetWindowLong(hwnd, NativeMethods.GWL_EXSTYLE,
-            exStyle | NativeMethods.WS_EX_TOOLWINDOW | NativeMethods.WS_EX_NOACTIVATE);
+            exStyle | NativeMethods.WS_EX_TOOLWINDOW);
 
         // Remove title bar using AppWindow presenter
         var appWindow = AppWindow.GetFromWindowId(Microsoft.UI.Win32Interop.GetWindowIdFromWindow(hwnd));
@@ -52,6 +78,18 @@ public sealed partial class CompanionPanelWindow : Window
         int darkModeValue = 1;
         NativeMethods.DwmSetWindowAttribute(hwnd, 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */,
             ref darkModeValue, sizeof(int));
+
+        // Frosted acrylic material like the Windows 11 Start menu.
+        SystemBackdrop = new DesktopAcrylicBackdrop();
+        if (Content is FrameworkElement root)
+            root.RequestedTheme = ElementTheme.Dark;
+
+        // Dismiss when the panel loses focus (clicking elsewhere), like Start.
+        Activated += (_, args) =>
+        {
+            if (args.WindowActivationState == WindowActivationState.Deactivated)
+                HidePanel();
+        };
 
         // Hide initially
         appWindow.Hide();
@@ -131,6 +169,11 @@ public sealed partial class CompanionPanelWindow : Window
     public void ShowNearTray(NativeMethods.RECT trayRect)
     {
         if (_isVisible) { HidePanel(); return; }
+
+        // If the panel just blur-dismissed (e.g. the same click that closed it
+        // is what hit the tray icon), treat this as a close, not a reopen.
+        if ((DateTimeOffset.UtcNow - _lastHidden).TotalMilliseconds < 250) return;
+
         ShowPanelAt(trayRect);
     }
 
@@ -142,6 +185,7 @@ public sealed partial class CompanionPanelWindow : Window
     public void EnsureVisibleNearTray(NativeMethods.RECT trayRect)
     {
         if (_isVisible) return;
+        if ((DateTimeOffset.UtcNow - _lastHidden).TotalMilliseconds < 250) return;
         ShowPanelAt(trayRect);
     }
 
@@ -159,18 +203,21 @@ public sealed partial class CompanionPanelWindow : Window
         var workArea = new NativeMethods.RECT();
         NativeMethods.SystemParametersInfo(NativeMethods.SPI_GETWORKAREA, 0, ref workArea, 0);
 
-        // Position the panel above the tray icon
-        int x = Math.Clamp(trayRect.Left - panelWidth / 2,
+        // Center the panel horizontally over the anchor (tray icon or taskbar
+        // button). Fall back to the screen center if we don't have a valid rect.
+        int anchorX = trayRect.Right > trayRect.Left
+            ? (trayRect.Left + trayRect.Right) / 2
+            : (workArea.Left + workArea.Right) / 2;
+
+        int x = Math.Clamp(anchorX - panelWidth / 2,
             workArea.Left + margin,
             workArea.Right - panelWidth - margin);
         int y = workArea.Bottom - panelHeight - margin;
 
         appWindow.MoveAndResize(new Windows.Graphics.RectInt32(x, y, panelWidth, panelHeight));
         appWindow.Show();
+        Activate(); // take focus so the acrylic renders active and blur-dismiss works
         _isVisible = true;
-
-        // Install a click-outside monitor to auto-dismiss the panel
-        InstallClickOutsideMonitor();
     }
 
     public void HidePanel()
@@ -180,40 +227,8 @@ public sealed partial class CompanionPanelWindow : Window
             Microsoft.UI.Win32Interop.GetWindowIdFromWindow(
                 WindowNative.GetWindowHandle(this))).Hide();
         _isVisible = false;
+        _lastHidden = DateTimeOffset.UtcNow;
     }
-
-    private void InstallClickOutsideMonitor()
-    {
-        // Poll for clicks outside the panel window — simplified approach
-        // A production version would use a global mouse hook
-        var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
-        timer.Tick += (_, _) =>
-        {
-            if (!_isVisible) { timer.Stop(); return; }
-
-            if (NativeMethods.GetCursorPos(out var pt))
-            {
-                var hwnd = WindowNative.GetWindowHandle(this);
-                NativeMethods.GetWindowRect(hwnd, out var rect);
-
-                bool cursorIsOutside =
-                    pt.X < rect.Left || pt.X > rect.Right ||
-                    pt.Y < rect.Top || pt.Y > rect.Bottom;
-
-                // Only auto-dismiss on left mouse button click outside
-                if (cursorIsOutside && IsLeftMouseButtonDown())
-                {
-                    HidePanel();
-                    timer.Stop();
-                }
-            }
-        };
-        timer.Start();
-    }
-
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
-    private static extern short GetAsyncKeyState(int vKey);
-    private static bool IsLeftMouseButtonDown() => (GetAsyncKeyState(0x01) & 0x8000) != 0;
 
     private void QuitButton_Click(object sender, RoutedEventArgs e)
     {
@@ -236,5 +251,11 @@ public sealed partial class CompanionPanelWindow : Window
     private void OpenSpeechSettingsButton_Click(object sender, RoutedEventArgs e)
     {
         Process.Start(new ProcessStartInfo("ms-settings:privacy-speech") { UseShellExecute = true });
+    }
+
+    private void SignOutButton_Click(object sender, RoutedEventArgs e)
+    {
+        HidePanel();
+        SignOutRequested?.Invoke();
     }
 }

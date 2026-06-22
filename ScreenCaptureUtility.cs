@@ -32,13 +32,20 @@ public static class ScreenCaptureUtility
                 var rect = monitors[i];
                 try
                 {
-                    var imageData = CaptureScreenRegion(rect.Left, rect.Top, rect.Width, rect.Height);
+                    var (imageData, imgW, imgH) =
+                        CaptureScreenRegion(rect.Left, rect.Top, rect.Width, rect.Height);
                     Logger.Log("ScreenCapture",
-                        $"Screen {i + 1}: {rect.Width}x{rect.Height} -> {imageData.Length / 1024} KB");
+                        $"Screen {i + 1}: {rect.Width}x{rect.Height} -> {imgW}x{imgH}, {imageData.Length / 1024} KB");
                     results.Add(new CapturedScreenshot(
                         ImageData: imageData,
                         ScreenIndex: i,
-                        ScreenLabel: $"Screen {i + 1}"
+                        ScreenLabel: $"Screen {i + 1}",
+                        ImageWidth: imgW,
+                        ImageHeight: imgH,
+                        MonitorLeft: rect.Left,
+                        MonitorTop: rect.Top,
+                        MonitorWidth: rect.Width,
+                        MonitorHeight: rect.Height
                     ));
                 }
                 catch (Exception ex)
@@ -58,7 +65,7 @@ public static class ScreenCaptureUtility
         {
             int width = NativeMethods.GetSystemMetrics(NativeMethods.SM_CXSCREEN);
             int height = NativeMethods.GetSystemMetrics(NativeMethods.SM_CYSCREEN);
-            return CaptureScreenRegion(0, 0, width, height);
+            return CaptureScreenRegion(0, 0, width, height).data;
         });
     }
 
@@ -67,7 +74,8 @@ public static class ScreenCaptureUtility
     private const int MaxImageEdge = 1568;
     private const long JpegQuality = 70L;
 
-    private static byte[] CaptureScreenRegion(int x, int y, int width, int height)
+    private static (byte[] data, int width, int height) CaptureScreenRegion(
+        int x, int y, int width, int height)
     {
         IntPtr desktopDC = NativeMethods.GetDC(IntPtr.Zero);
         try
@@ -102,7 +110,7 @@ public static class ScreenCaptureUtility
                 var encoderParams = new EncoderParameters(1);
                 encoderParams.Param[0] = new EncoderParameter(Encoder.Quality, JpegQuality);
                 toEncode.Save(ms, jpegEncoder, encoderParams);
-                return ms.ToArray();
+                return (ms.ToArray(), toEncode.Width, toEncode.Height);
             }
             finally
             {
@@ -135,26 +143,39 @@ public static class ScreenCaptureUtility
 
     private static List<NativeMethods.RECT> GetAllMonitorRects()
     {
-        var rects = new List<NativeMethods.RECT>();
+        // Track which monitor is primary so we can list it first — Claude is told
+        // "screen0 is the primary display", so the order here must match.
+        var monitors = new List<(NativeMethods.RECT rect, bool isPrimary)>();
         NativeMethods.EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero,
             (hMonitor, hdc, ref rect, data) =>
             {
                 var info = new NativeMethods.MONITORINFOEX { cbSize = (uint)Marshal.SizeOf<NativeMethods.MONITORINFOEX>() };
                 if (NativeMethods.GetMonitorInfo(hMonitor, ref info))
-                    rects.Add(info.rcMonitor);
+                {
+                    bool isPrimary = (info.dwFlags & NativeMethods.MONITORINFOF_PRIMARY) != 0;
+                    monitors.Add((info.rcMonitor, isPrimary));
+                }
                 return true;
             }, IntPtr.Zero);
 
-        if (rects.Count == 0)
+        if (monitors.Count == 0)
         {
             // Fallback: use primary screen
-            rects.Add(new NativeMethods.RECT
+            return new List<NativeMethods.RECT>
             {
-                Left = 0, Top = 0,
-                Right = NativeMethods.GetSystemMetrics(NativeMethods.SM_CXSCREEN),
-                Bottom = NativeMethods.GetSystemMetrics(NativeMethods.SM_CYSCREEN)
-            });
+                new NativeMethods.RECT
+                {
+                    Left = 0, Top = 0,
+                    Right = NativeMethods.GetSystemMetrics(NativeMethods.SM_CXSCREEN),
+                    Bottom = NativeMethods.GetSystemMetrics(NativeMethods.SM_CYSCREEN)
+                }
+            };
         }
+
+        // Primary first, rest in enumeration order.
+        var rects = new List<NativeMethods.RECT>();
+        foreach (var m in monitors) if (m.isPrimary) rects.Add(m.rect);
+        foreach (var m in monitors) if (!m.isPrimary) rects.Add(m.rect);
         return rects;
     }
 

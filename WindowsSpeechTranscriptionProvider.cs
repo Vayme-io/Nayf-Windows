@@ -45,9 +45,15 @@ public sealed class WindowsSpeechTranscriptionProvider : IDisposable
         _firstResultTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         _recognizer.ContinuousRecognitionSession.ResultGenerated += OnResultGenerated;
         _recognizer.ContinuousRecognitionSession.Completed += OnSessionCompleted;
+        _recognizer.HypothesisGenerated += OnHypothesisGenerated;
+        // Reports when the mic signal is poor (no signal, too quiet, too noisy)
+        // — invaluable for diagnosing empty transcripts.
+        _recognizer.RecognitionQualityDegrading += OnQualityDegrading;
 
+        // Default (not PauseOnRecognition) so the recognizer keeps transcribing
+        // a whole spoken sentence instead of pausing after the first phrase.
         await _recognizer.ContinuousRecognitionSession.StartAsync(
-            SpeechContinuousRecognitionMode.PauseOnRecognition);
+            SpeechContinuousRecognitionMode.Default);
 
         _isSessionActive = true;
     }
@@ -64,8 +70,10 @@ public sealed class WindowsSpeechTranscriptionProvider : IDisposable
         // Wait up to 2.5 s for the recognizer to deliver at least one result
         // before stopping — online recognition can take 1-2 s to respond, and
         // calling StopAsync immediately discards any in-flight result.
+        bool gotResult = false;
         if (_firstResultTcs != null)
-            await Task.WhenAny(_firstResultTcs.Task, Task.Delay(2500));
+            gotResult = await Task.WhenAny(_firstResultTcs.Task, Task.Delay(2500)) == _firstResultTcs.Task;
+        Logger.Log("WindowsSpeech", $"EndSession: gotResult={gotResult}");
 
         try
         {
@@ -77,14 +85,29 @@ public sealed class WindowsSpeechTranscriptionProvider : IDisposable
         }
     }
 
+    private void OnHypothesisGenerated(
+        SpeechRecognizer sender, SpeechRecognitionHypothesisGeneratedEventArgs args)
+    {
+        // A hypothesis means the recognizer IS hearing audio, even if it never
+        // finalizes — distinguishes "mic dead" from "low confidence".
+        Logger.Log("WindowsSpeech", $"Hypothesis: '{args.Hypothesis.Text}'");
+    }
+
+    private void OnQualityDegrading(
+        SpeechRecognizer sender, SpeechRecognitionQualityDegradingEventArgs args)
+    {
+        Logger.Log("WindowsSpeech", $"Audio problem: {args.Problem}");
+    }
+
     private void OnResultGenerated(
         SpeechContinuousRecognitionSession sender,
         SpeechContinuousRecognitionResultGeneratedEventArgs args)
     {
         var text = args.Result.Text;
-        if (string.IsNullOrWhiteSpace(text)) return;
-
         var confidence = args.Result.Confidence;
+        Logger.Log("WindowsSpeech", $"Result: '{text}' ({confidence})");
+
+        if (string.IsNullOrWhiteSpace(text)) return;
 
         // High/medium confidence → treat as finalized
         if (confidence == SpeechRecognitionConfidence.High ||
@@ -105,7 +128,7 @@ public sealed class WindowsSpeechTranscriptionProvider : IDisposable
         SpeechContinuousRecognitionSession sender,
         SpeechContinuousRecognitionCompletedEventArgs args)
     {
-        System.Diagnostics.Debug.WriteLine($"[WindowsSpeech] Session completed: {args.Status}");
+        Logger.Log("WindowsSpeech", $"Session completed: {args.Status}");
         _isSessionActive = false;
     }
 
@@ -117,6 +140,8 @@ public sealed class WindowsSpeechTranscriptionProvider : IDisposable
             {
                 _recognizer.ContinuousRecognitionSession.ResultGenerated -= OnResultGenerated;
                 _recognizer.ContinuousRecognitionSession.Completed -= OnSessionCompleted;
+                _recognizer.HypothesisGenerated -= OnHypothesisGenerated;
+                _recognizer.RecognitionQualityDegrading -= OnQualityDegrading;
                 _recognizer.Dispose();
             }
             catch { /* ignore disposal errors */ }

@@ -351,11 +351,39 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
 
         var match = matches[0]; // Use first point tag
         if (int.TryParse(match.Groups[1].Value, out int x) &&
-            int.TryParse(match.Groups[2].Value, out int y))
+            int.TryParse(match.Groups[2].Value, out int y) &&
+            int.TryParse(match.Groups[4].Value, out int screenIndex))
         {
+            // Claude's coordinates are in the (downscaled) image it was sent, and
+            // are local to that screen. Map them back to absolute virtual-desktop
+            // pixels: scale up by native/image size, then offset by the monitor.
+            float screenX = x;
+            float screenY = y;
+
+            CapturedScreenshot? shot = null;
+            if (screenshots != null)
+            {
+                foreach (var s in screenshots)
+                {
+                    if (s.ScreenIndex == screenIndex) { shot = s; break; }
+                }
+                shot ??= screenshots.Count > 0 ? screenshots[0] : null;
+            }
+
+            if (shot != null && shot.ImageWidth > 0 && shot.ImageHeight > 0)
+            {
+                float scaleX = (float)shot.MonitorWidth / shot.ImageWidth;
+                float scaleY = (float)shot.MonitorHeight / shot.ImageHeight;
+                screenX = shot.MonitorLeft + x * scaleX;
+                screenY = shot.MonitorTop + y * scaleY;
+            }
+
+            Logger.Log("CompanionManager",
+                $"POINT image({x},{y}) screen{screenIndex} -> abs({screenX:0},{screenY:0})");
+
             UpdateOnUI(() =>
             {
-                DetectedElementPosition = new System.Drawing.PointF(x, y);
+                DetectedElementPosition = new System.Drawing.PointF(screenX, screenY);
                 DetectedElementBubbleText = match.Groups[3].Value;
             });
         }

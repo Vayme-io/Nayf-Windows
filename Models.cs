@@ -22,11 +22,21 @@ public record ConversationTurn(
     byte[]? AttachedImageData = null
 );
 
-/// <summary>A screenshot captured from one connected display.</summary>
+/// <summary>
+/// A screenshot captured from one connected display. Carries the encoded image
+/// size and the monitor's native bounds (in virtual-desktop coordinates) so a
+/// point Claude reports in image space can be mapped back to the real screen.
+/// </summary>
 public record CapturedScreenshot(
     byte[] ImageData,
     int ScreenIndex,
-    string ScreenLabel
+    string ScreenLabel,
+    int ImageWidth,
+    int ImageHeight,
+    int MonitorLeft,
+    int MonitorTop,
+    int MonitorWidth,
+    int MonitorHeight
 );
 
 /// <summary>

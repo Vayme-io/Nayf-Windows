@@ -4,100 +4,68 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Title="Nayf">
 
-    <Grid Width="340">
-        <!-- Transparent so the window's acrylic backdrop shows through -->
+    <!-- Transparent root so the window's acrylic backdrop shows through. The
+         content stack is top/left-aligned and the window is sized to fit it. -->
+    <Grid x:Name="RootGrid">
         <Grid.Background>
             <SolidColorBrush Color="Transparent"/>
         </Grid.Background>
 
-        <StackPanel Padding="20,16,20,20" Spacing="16">
+        <StackPanel x:Name="ContentStack"
+                    Width="368"
+                    HorizontalAlignment="Left"
+                    VerticalAlignment="Top"
+                    Padding="22,16,22,16"
+                    Spacing="14">
 
-            <!-- Header row: Nayf logo + title + quit button -->
+            <!-- Header: status dot + name + live status -->
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
 
-                <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
-                    <!-- Blue circle logo -->
-                    <Ellipse Width="28" Height="28">
-                        <Ellipse.Fill>
-                            <RadialGradientBrush>
-                                <GradientStop Color="#FF007AFF" Offset="0"/>
-                                <GradientStop Color="#FF0055CC" Offset="1"/>
-                            </RadialGradientBrush>
-                        </Ellipse.Fill>
-                    </Ellipse>
+                <StackPanel Orientation="Horizontal" Spacing="9" VerticalAlignment="Center">
+                    <Ellipse x:Name="StatusDot" Width="9" Height="9" Fill="#34C759"/>
                     <TextBlock Text="Nayf"
                                Foreground="White"
-                               FontSize="17"
+                               FontSize="16"
                                FontWeight="SemiBold"
                                FontFamily="Segoe UI Variable"
                                VerticalAlignment="Center"/>
                 </StackPanel>
 
-                <Button x:Name="QuitButton"
-                        Grid.Column="1"
-                        Content="Quit"
-                        Foreground="#8E8E93"
-                        FontSize="12"
-                        Click="QuitButton_Click"
-                        Style="{StaticResource DefaultButtonStyle}"
-                        Background="Transparent"
-                        BorderBrush="Transparent"/>
+                <TextBlock x:Name="HeaderStatusText"
+                           Grid.Column="1"
+                           Text="Active"
+                           Foreground="#8E8E93"
+                           FontSize="12"
+                           FontWeight="Medium"
+                           FontFamily="Segoe UI Variable"
+                           VerticalAlignment="Center"/>
             </Grid>
 
-            <!-- Separator -->
-            <Rectangle Height="1" Fill="#3A3A3C" Opacity="0.5"/>
+            <!-- Push-to-talk hint -->
+            <TextBlock Text="Hold Ctrl + Alt to talk."
+                       Foreground="#B0B0B5"
+                       FontSize="13"
+                       FontWeight="Medium"
+                       FontFamily="Segoe UI Variable"/>
 
-            <!-- Voice state indicator -->
-            <Border CornerRadius="12"
-                    Padding="14,12,14,12">
-                <Border.Background>
-                    <SolidColorBrush Color="#2C2C2E"/>
-                </Border.Background>
+            <!-- Last transcript (what the user said) -->
+            <TextBlock x:Name="LastTranscriptText"
+                       Text=""
+                       Foreground="#8E8E93"
+                       FontSize="12"
+                       FontFamily="Segoe UI Variable"
+                       TextWrapping="Wrap"
+                       MaxLines="2"
+                       TextTrimming="CharacterEllipsis"
+                       Visibility="Collapsed"/>
 
-                <StackPanel Spacing="8">
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
-                        </Grid.ColumnDefinitions>
-
-                        <TextBlock x:Name="VoiceStateLabel"
-                                   Text="Press Ctrl+Alt to speak"
-                                   Foreground="White"
-                                   FontSize="14"
-                                   FontWeight="Medium"
-                                   FontFamily="Segoe UI Variable"
-                                   VerticalAlignment="Center"/>
-
-                        <!-- Animated state indicator dot -->
-                        <Ellipse x:Name="StateIndicatorDot"
-                                 Grid.Column="1"
-                                 Width="8" Height="8"
-                                 Fill="#34C759"
-                                 VerticalAlignment="Center"/>
-                    </Grid>
-
-                    <!-- Last transcript (what the user said) -->
-                    <TextBlock x:Name="LastTranscriptText"
-                               Text=""
-                               Foreground="#8E8E93"
-                               FontSize="12"
-                               FontFamily="Segoe UI Variable"
-                               TextWrapping="Wrap"
-                               MaxLines="2"
-                               TextTrimming="CharacterEllipsis"
-                               Visibility="Collapsed"/>
-                </StackPanel>
-            </Border>
-
-            <!-- Microphone permission banner — shown when Windows hasn't
-                 enabled "Online speech recognition" yet -->
+            <!-- Microphone permission banner -->
             <Border x:Name="MicPermissionBanner"
-                    CornerRadius="12"
+                    CornerRadius="10"
                     Padding="14,12,14,12"
                     Visibility="Collapsed">
                 <Border.Background>
@@ -132,7 +100,7 @@
 
             <!-- Streaming response text (latest AI response) -->
             <Border x:Name="ResponseContainer"
-                    CornerRadius="12"
+                    CornerRadius="10"
                     Padding="14,12,14,12"
                     Visibility="Collapsed">
                 <Border.Background>
@@ -157,7 +125,7 @@
 
             <!-- Agent task steps — visible when running an agentic loop -->
             <Border x:Name="AgentTaskContainer"
-                    CornerRadius="12"
+                    CornerRadius="10"
                     Padding="14,12,14,12"
                     Visibility="Collapsed">
                 <Border.Background>
@@ -195,79 +163,131 @@
             <!-- Separator -->
             <Rectangle Height="1" Fill="#3A3A3C" Opacity="0.5"/>
 
-            <!-- Model selector -->
-            <StackPanel Spacing="8">
-                <TextBlock Text="MODEL"
-                           Foreground="#8E8E93"
-                           FontSize="11"
-                           FontFamily="Segoe UI Variable"
-                           FontWeight="SemiBold"
-                           CharacterSpacing="80"/>
+            <!-- Model selector — segmented toggle -->
+            <Grid VerticalAlignment="Center">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
 
-                <StackPanel Orientation="Horizontal" Spacing="8">
-                    <RadioButton x:Name="SonnetRadio"
-                                 Content="Sonnet 4.6"
-                                 IsChecked="True"
-                                 Foreground="White"
-                                 FontFamily="Segoe UI Variable"
-                                 Click="ModelRadio_Click"
-                                 Tag="claude-sonnet-4-6"/>
-                    <RadioButton x:Name="OpusRadio"
-                                 Content="Opus 4.6"
-                                 Foreground="White"
-                                 FontFamily="Segoe UI Variable"
-                                 Click="ModelRadio_Click"
-                                 Tag="claude-opus-4-6"/>
-                </StackPanel>
-            </StackPanel>
+                <TextBlock Text="Model"
+                           Foreground="White"
+                           FontSize="13"
+                           FontWeight="Medium"
+                           FontFamily="Segoe UI Variable"
+                           VerticalAlignment="Center"/>
+
+                <Border Grid.Column="1"
+                        CornerRadius="7"
+                        Padding="2"
+                        HorizontalAlignment="Right">
+                    <Border.Background>
+                        <SolidColorBrush Color="#26000000"/>
+                    </Border.Background>
+                    <Border.BorderBrush>
+                        <SolidColorBrush Color="#22FFFFFF"/>
+                    </Border.BorderBrush>
+                    <Border.BorderThickness>
+                        <Thickness>0.5</Thickness>
+                    </Border.BorderThickness>
+
+                    <StackPanel Orientation="Horizontal" Spacing="2">
+                        <Button x:Name="SonnetSeg"
+                                Content="Sonnet"
+                                Tag="claude-sonnet-4-6"
+                                Click="ModelSeg_Click"
+                                Background="Transparent"
+                                BorderThickness="0"
+                                CornerRadius="5"
+                                Padding="14,5,14,5"
+                                FontSize="12"
+                                FontWeight="Medium"
+                                FontFamily="Segoe UI Variable"/>
+                        <Button x:Name="OpusSeg"
+                                Content="Opus"
+                                Tag="claude-opus-4-6"
+                                Click="ModelSeg_Click"
+                                Background="Transparent"
+                                BorderThickness="0"
+                                CornerRadius="5"
+                                Padding="14,5,14,5"
+                                FontSize="12"
+                                FontWeight="Medium"
+                                FontFamily="Segoe UI Variable"/>
+                    </StackPanel>
+                </Border>
+            </Grid>
 
             <!-- Clear history button -->
             <Button x:Name="ClearHistoryButton"
                     Content="Clear Conversation"
                     HorizontalAlignment="Stretch"
                     Click="ClearHistoryButton_Click"
-                    Foreground="#8E8E93"
+                    Foreground="#C5C5CA"
                     FontSize="13"
-                    FontFamily="Segoe UI Variable">
+                    FontFamily="Segoe UI Variable"
+                    CornerRadius="8"
+                    Padding="12,9,12,9">
                 <Button.Background>
-                    <SolidColorBrush Color="#2C2C2E"/>
+                    <SolidColorBrush Color="#1FFFFFFF"/>
                 </Button.Background>
             </Button>
 
             <!-- Separator -->
             <Rectangle Height="1" Fill="#3A3A3C" Opacity="0.5"/>
 
-            <!-- Account: signed-in user + sign out -->
-            <StackPanel Spacing="8">
+            <!-- Account: signed-in user + inline sign out -->
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
                 <TextBlock x:Name="AccountEmailText"
                            Text=""
                            Foreground="#8E8E93"
                            FontSize="12"
                            FontFamily="Segoe UI Variable"
                            TextTrimming="CharacterEllipsis"
+                           VerticalAlignment="Center"
                            Visibility="Collapsed"/>
-                <Button x:Name="SignOutButton"
-                        Content="Sign Out"
-                        HorizontalAlignment="Stretch"
-                        Click="SignOutButton_Click"
-                        Foreground="#FF453A"
-                        FontSize="13"
-                        FontFamily="Segoe UI Variable">
-                    <Button.Background>
-                        <SolidColorBrush Color="#2C2C2E"/>
-                    </Button.Background>
-                </Button>
-            </StackPanel>
+
+                <HyperlinkButton x:Name="SignOutButton"
+                                 Grid.Column="1"
+                                 Content="Sign out"
+                                 Click="SignOutButton_Click"
+                                 Foreground="#FF6B6B"
+                                 FontSize="12"
+                                 FontFamily="Segoe UI Variable"
+                                 Padding="4,0,0,0"/>
+            </Grid>
 
             <!-- Separator -->
             <Rectangle Height="1" Fill="#3A3A3C" Opacity="0.5"/>
 
-            <!-- Footer: keyboard shortcut hint -->
-            <TextBlock Text="Ctrl + Alt — push to talk"
-                       Foreground="#48484A"
-                       FontSize="11"
-                       FontFamily="Segoe UI Variable"
-                       HorizontalAlignment="Center"/>
+            <!-- Footer: Quit + shortcut hint -->
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <HyperlinkButton x:Name="QuitButton"
+                                 Content="Quit Nayf"
+                                 Click="QuitButton_Click"
+                                 Foreground="#8E8E93"
+                                 FontSize="12"
+                                 FontFamily="Segoe UI Variable"
+                                 Padding="0"/>
+
+                <TextBlock Grid.Column="1"
+                           Text="Ctrl + Alt — push to talk"
+                           Foreground="#48484A"
+                           FontSize="11"
+                           FontFamily="Segoe UI Variable"
+                           HorizontalAlignment="Right"
+                           VerticalAlignment="Center"/>
+            </Grid>
         </StackPanel>
     </Grid>
 </Window>

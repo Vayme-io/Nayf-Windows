@@ -63,4 +63,16 @@ public sealed partial class AnchorWindow : Window
             TaskbarActivated?.Invoke();
         };
     }
+
+    /// <summary>
+    /// Minimizes this (invisible) window so it releases foreground focus. Without
+    /// this, after a taskbar click closes the panel, the anchor window stays
+    /// foreground and the next taskbar click is a no-op — minimizing means the
+    /// next click restores it, firing a fresh activation that reopens the panel.
+    /// </summary>
+    public void ReleaseForeground()
+    {
+        var hwnd = WindowNative.GetWindowHandle(this);
+        NativeMethods.ShowWindow(hwnd, NativeMethods.SW_MINIMIZE);
+    }
 }

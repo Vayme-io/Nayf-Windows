@@ -133,7 +133,11 @@ public partial class App : Application
                             Left = pt.X - 8, Top = pt.Y - 8,
                             Right = pt.X + 8, Bottom = pt.Y + 8
                         };
-                    _companionPanelWindow?.EnsureVisibleNearTray(anchor);
+                    bool opened = _companionPanelWindow?.EnsureVisibleNearTray(anchor) ?? false;
+                    // If this click closed (or didn't open) the panel, drop the
+                    // anchor window out of foreground so the next click reopens it.
+                    if (!opened)
+                        _anchorWindow?.ReleaseForeground();
                 });
             _anchorWindow.Activate();
             Log("Step", "AnchorWindow created");

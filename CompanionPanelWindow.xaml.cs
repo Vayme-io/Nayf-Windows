@@ -20,6 +20,8 @@ public sealed partial class CompanionPanelWindow : Window
     private readonly CompanionManager _companionManager;
     private bool _isVisible = false;
     private DateTimeOffset _lastHidden = DateTimeOffset.MinValue;
+    private int _anchorCenterX;
+    private NativeMethods.POINT _anchorPoint;
 
     /// <summary>Raised when the user clicks Sign Out; the app handles the flow.</summary>
     public event Action? SignOutRequested;
@@ -37,6 +39,11 @@ public sealed partial class CompanionPanelWindow : Window
                 DispatcherQueue.TryEnqueue(() => UpdateAccountEmail(_companionManager.Auth.CurrentUserEmail));
         };
         UpdateAccountEmail(_companionManager.Auth.CurrentUserEmail);
+        UpdateModelSelection(_companionManager.SelectedModel);
+
+        // Re-fit the window whenever the content's height changes (e.g. a
+        // response appears) so there's never empty space or clipping.
+        ContentStack.SizeChanged += (_, _) => FitWindowToContent();
     }
 
     private void UpdateAccountEmail(string? email)
@@ -119,15 +126,16 @@ public sealed partial class CompanionPanelWindow : Window
 
     private void UpdateVoiceStateUI(CompanionVoiceState state)
     {
-        VoiceStateLabel.Text = _companionManager.VoiceStateLabel;
-
-        StateIndicatorDot.Fill = state switch
+        (string label, Windows.UI.Color color) = state switch
         {
-            CompanionVoiceState.Listening => new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0, 122, 255)),
-            CompanionVoiceState.Processing => new SolidColorBrush(Windows.UI.Color.FromArgb(255, 255, 159, 10)),
-            CompanionVoiceState.Responding => new SolidColorBrush(Windows.UI.Color.FromArgb(255, 52, 199, 89)),
-            _ => new SolidColorBrush(Windows.UI.Color.FromArgb(255, 52, 199, 89))
+            CompanionVoiceState.Listening => ("Listening", Windows.UI.Color.FromArgb(255, 0, 122, 255)),
+            CompanionVoiceState.Processing => ("Processing", Windows.UI.Color.FromArgb(255, 255, 159, 10)),
+            CompanionVoiceState.Responding => ("Responding", Windows.UI.Color.FromArgb(255, 52, 199, 89)),
+            _ => ("Active", Windows.UI.Color.FromArgb(255, 52, 199, 89))
         };
+
+        HeaderStatusText.Text = label;
+        StatusDot.Fill = new SolidColorBrush(color);
     }
 
     private void UpdateLastTranscript(string? transcript)
@@ -182,42 +190,103 @@ public sealed partial class CompanionPanelWindow : Window
     /// toggling it closed. Used to surface the panel automatically (e.g. when
     /// the microphone permission banner needs the user's attention).
     /// </summary>
-    public void EnsureVisibleNearTray(NativeMethods.RECT trayRect)
+    /// <returns>True if the panel was shown; false if it was already visible or
+    /// was just dismissed (so the caller can treat the click as a close).</returns>
+    public bool EnsureVisibleNearTray(NativeMethods.RECT trayRect)
     {
-        if (_isVisible) return;
-        if ((DateTimeOffset.UtcNow - _lastHidden).TotalMilliseconds < 250) return;
+        if (_isVisible) return false;
+        if ((DateTimeOffset.UtcNow - _lastHidden).TotalMilliseconds < 250) return false;
         ShowPanelAt(trayRect);
+        return true;
     }
 
     private void ShowPanelAt(NativeMethods.RECT trayRect)
     {
+        // Anchor on the clicked icon (tray or taskbar). Keep the full point so we
+        // can pick the monitor it's on; fall back to the cursor, then primary.
+        if (trayRect.Right > trayRect.Left)
+        {
+            _anchorPoint = new NativeMethods.POINT
+            {
+                X = (trayRect.Left + trayRect.Right) / 2,
+                Y = (trayRect.Top + trayRect.Bottom) / 2
+            };
+        }
+        else if (NativeMethods.GetCursorPos(out var cursor))
+        {
+            _anchorPoint = cursor;
+        }
+        _anchorCenterX = _anchorPoint.X;
+
         var hwnd = WindowNative.GetWindowHandle(this);
         var appWindow = AppWindow.GetFromWindowId(Microsoft.UI.Win32Interop.GetWindowIdFromWindow(hwnd));
-
-        // Panel dimensions
-        const int panelWidth = 340;
-        const int panelHeight = 520;
-        const int margin = 8;
-
-        // Get work area (screen minus taskbar)
-        var workArea = new NativeMethods.RECT();
-        NativeMethods.SystemParametersInfo(NativeMethods.SPI_GETWORKAREA, 0, ref workArea, 0);
-
-        // Center the panel horizontally over the anchor (tray icon or taskbar
-        // button). Fall back to the screen center if we don't have a valid rect.
-        int anchorX = trayRect.Right > trayRect.Left
-            ? (trayRect.Left + trayRect.Right) / 2
-            : (workArea.Left + workArea.Right) / 2;
-
-        int x = Math.Clamp(anchorX - panelWidth / 2,
-            workArea.Left + margin,
-            workArea.Right - panelWidth - margin);
-        int y = workArea.Bottom - panelHeight - margin;
-
-        appWindow.MoveAndResize(new Windows.Graphics.RectInt32(x, y, panelWidth, panelHeight));
         appWindow.Show();
         Activate(); // take focus so the acrylic renders active and blur-dismiss works
         _isVisible = true;
+
+        // Size + position the window to fit the content height.
+        FitWindowToContent();
+    }
+
+    /// <summary>
+    /// Resizes the window to exactly fit the content stack and re-anchors it
+    /// above the taskbar, centered on the icon that opened it. Runs on show and
+    /// whenever the content height changes.
+    /// </summary>
+    private void FitWindowToContent()
+    {
+        if (!_isVisible) return;
+
+        double dipWidth = ContentStack.ActualWidth > 0 ? ContentStack.ActualWidth : ContentStack.Width;
+        double dipHeight = ContentStack.ActualHeight;
+        if (dipWidth <= 0 || dipHeight <= 0) return;
+
+        double scale = RootGrid.XamlRoot?.RasterizationScale ?? 1.0;
+        int w = (int)Math.Ceiling(dipWidth * scale);
+        int h = (int)Math.Ceiling((dipHeight + 1) * scale);
+
+        const int margin = 12;
+        // Use the work area of the monitor the icon was clicked on, so the panel
+        // appears on that monitor (not always the primary one).
+        var workArea = GetWorkAreaForPoint(_anchorPoint);
+
+        var hwnd = WindowNative.GetWindowHandle(this);
+        var appWindow = AppWindow.GetFromWindowId(Microsoft.UI.Win32Interop.GetWindowIdFromWindow(hwnd));
+
+        // ResizeClient sizes the *client* area to the content so the window
+        // border doesn't eat into the padding (which made the right edge tight).
+        // The window then has an invisible resize frame around that, so we read
+        // the real outer size afterward to position it above the taskbar.
+        appWindow.ResizeClient(new Windows.Graphics.SizeInt32(w, h));
+        NativeMethods.GetWindowRect(hwnd, out var outer);
+        int outerW = outer.Right - outer.Left;
+        int outerH = outer.Bottom - outer.Top;
+
+        int x = Math.Clamp(_anchorCenterX - outerW / 2,
+            workArea.Left + margin,
+            Math.Max(workArea.Left + margin, workArea.Right - outerW - margin));
+        int y = workArea.Bottom - outerH - margin;
+
+        appWindow.Move(new Windows.Graphics.PointInt32(x, y));
+    }
+
+    /// <summary>
+    /// Returns the work area (screen minus taskbar) of the monitor containing
+    /// <paramref name="pt"/>, falling back to the primary monitor.
+    /// </summary>
+    private static NativeMethods.RECT GetWorkAreaForPoint(NativeMethods.POINT pt)
+    {
+        IntPtr hMon = NativeMethods.MonitorFromPoint(pt, NativeMethods.MONITOR_DEFAULTTONEAREST);
+        var info = new NativeMethods.MONITORINFOEX
+        {
+            cbSize = (uint)System.Runtime.InteropServices.Marshal.SizeOf<NativeMethods.MONITORINFOEX>()
+        };
+        if (hMon != IntPtr.Zero && NativeMethods.GetMonitorInfo(hMon, ref info))
+            return info.rcWork;
+
+        var workArea = new NativeMethods.RECT();
+        NativeMethods.SystemParametersInfo(NativeMethods.SPI_GETWORKAREA, 0, ref workArea, 0);
+        return workArea;
     }
 
     public void HidePanel()
@@ -235,12 +304,28 @@ public sealed partial class CompanionPanelWindow : Window
         App.Current.Exit();
     }
 
-    private void ModelRadio_Click(object sender, RoutedEventArgs e)
+    private void ModelSeg_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is RadioButton rb && rb.Tag is string modelId)
+        if (sender is Button b && b.Tag is string modelId)
         {
             _companionManager.SelectedModel = modelId;
+            UpdateModelSelection(modelId);
         }
+    }
+
+    /// <summary>Restyles the segmented model toggle to reflect the selection.</summary>
+    private void UpdateModelSelection(string modelId)
+    {
+        var selectedFill = new SolidColorBrush(Windows.UI.Color.FromArgb(0x33, 0xFF, 0xFF, 0xFF));
+        var clear = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0));
+        var selectedText = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 255, 255, 255));
+        var dimText = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 142, 142, 147));
+
+        bool sonnet = modelId == "claude-sonnet-4-6";
+        SonnetSeg.Background = sonnet ? selectedFill : clear;
+        SonnetSeg.Foreground = sonnet ? selectedText : dimText;
+        OpusSeg.Background = sonnet ? clear : selectedFill;
+        OpusSeg.Foreground = sonnet ? dimText : selectedText;
     }
 
     private void ClearHistoryButton_Click(object sender, RoutedEventArgs e)

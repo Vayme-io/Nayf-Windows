@@ -1,7 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.UI.Dispatching;
@@ -68,6 +71,19 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
         }
     }
 
+    private NayfCursorColor _selectedCursorColor = NayfSettings.LoadCursorColor();
+    public NayfCursorColor SelectedCursorColor
+    {
+        get => _selectedCursorColor;
+        set
+        {
+            _selectedCursorColor = value;
+            NativeOverlayWindow.CursorBlue = value.ToDrawingColor();
+            NayfSettings.SaveCursorColor(value);
+            OnPropertyChanged();
+        }
+    }
+
     // Cursor pointing state — observed by OverlayWindowManager to animate the cursor
     private System.Drawing.PointF? _detectedElementPosition;
     public System.Drawing.PointF? DetectedElementPosition
@@ -103,6 +119,23 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
         }
     }
 
+    // Remaining token balance for the signed-in user (null until first fetched).
+    private int? _tokenBalance;
+    public int? TokenBalance
+    {
+        get => _tokenBalance;
+        private set { _tokenBalance = value; OnPropertyChanged(); OnPropertyChanged(nameof(TokenBalanceText)); }
+    }
+
+    public string TokenBalanceText => TokenBalance is int b ? FormatTokenBalance(b) : "Loading tokens…";
+
+    private bool _isOutOfCredits;
+    public bool IsOutOfCredits
+    {
+        get => _isOutOfCredits;
+        private set { _isOutOfCredits = value; OnPropertyChanged(); }
+    }
+
     // MARK: - Dependencies
 
     private readonly ClaudeAPI _claudeAPI;
@@ -110,6 +143,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
     private readonly BuddyDictationManager _buddyDictationManager;
     private readonly GlobalPushToTalkMonitor _pushToTalkMonitor;
     private readonly AuthManager _authManager;
+    private readonly HttpClient _creditsHttp = new() { Timeout = TimeSpan.FromSeconds(10) };
     public readonly NayfAgentManager AgentManager;
 
     /// <summary>The auth manager, so UIs can show the signed-in user and sign out.</summary>
@@ -143,12 +177,31 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
         If you're not sure what the user wants, ask a clarifying question.
 
         You're running on Windows. Use Windows-specific knowledge for paths, apps, etc.
+
+        Agentic capabilities:
+        You also have tools to perform real actions on the user's PC — run PowerShell
+        commands (the "bash" tool runs PowerShell), read or write files, take screenshots,
+        and control the mouse and keyboard. Use these when the user asks you to actually DO
+        something, not just explain how. Examples: "clean up my downloads folder", "create a
+        folder called projects on my desktop", "write that script and run it".
+
+        When the user asks you to do something, just do it — don't describe what you're about
+        to do and ask for confirmation first; the user already asked, so that's the go-ahead.
+        (Destructive commands are gated by a separate confirmation prompt, so you don't need
+        to ask.) Explore first with read-only commands if needed, then act, then give a brief,
+        casual spoken summary of what you did.
+
+        Do NOT use tools for questions, explanations, or pointing — those need no action on the
+        PC. Tools are for tasks, not answers. For "where is X / how do I Y" use [POINT] tags.
         """;
 
     public CompanionManager(AuthManager authManager)
     {
         _dispatcherQueue = DispatcherQueue.GetForCurrentThread();
         _authManager = authManager;
+
+        // Apply the saved cursor color before the overlays start rendering.
+        NativeOverlayWindow.CursorBlue = _selectedCursorColor.ToDrawingColor();
 
         _claudeAPI = new ClaudeAPI(NayfConfig.ChatEndpoint);
         _elevenLabsTTSClient = new ElevenLabsTTSClient(NayfConfig.TTSEndpoint);
@@ -193,6 +246,48 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
     public void StartAsync()
     {
         _pushToTalkMonitor.Start();
+        _ = FetchCreditBalanceAsync();
+    }
+
+    /// <summary>
+    /// Fetches the user's remaining token balance from the proxy and updates
+    /// <see cref="TokenBalance"/>. Called on launch and after each response.
+    /// </summary>
+    public async Task FetchCreditBalanceAsync()
+    {
+        var token = await _authManager.CurrentAccessTokenAsync();
+        if (token == null) return;
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, NayfConfig.CreditsEndpoint);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            using var response = await _creditsHttp.SendAsync(request);
+            if (!response.IsSuccessStatusCode) return;
+
+            var body = await response.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(body);
+            if (doc.RootElement.TryGetProperty("token_balance", out var b) && b.TryGetInt32(out int balance))
+            {
+                UpdateOnUI(() =>
+                {
+                    TokenBalance = balance;
+                    IsOutOfCredits = balance <= 0;
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Log("CompanionManager", $"FetchCreditBalance error: {ex.Message}");
+        }
+    }
+
+    private static string FormatTokenBalance(int tokens)
+    {
+        if (tokens <= 0) return "No tokens remaining";
+        if (tokens >= 1_000_000) return $"{tokens / 1_000_000.0:0.0}M tokens";
+        if (tokens >= 1_000) return $"{tokens / 1_000.0:0.0}k tokens";
+        return $"{tokens} tokens";
     }
 
     private async void OnPushToTalkPressed()
@@ -294,16 +389,22 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
         try
         {
             Logger.Log("CompanionManager", "Sending to Claude…");
-            var responseText = await _claudeAPI.StreamResponseAsync(
+            // Route through the agent loop: Claude may call tools (PowerShell,
+            // files, computer control) before answering, or just respond/point
+            // normally. Either way it returns the final text for TTS.
+            var responseText = await AgentManager.RunAgentLoopAsync(
                 transcript,
-                _conversationHistory,
                 screenshots,
-                delta => UpdateOnUI(() => StreamingResponseText += delta),
                 BuildSystemPrompt(),
                 authToken,
-                ct);
+                delta => UpdateOnUI(() => StreamingResponseText += delta),
+                ct,
+                _conversationHistory);
 
             Logger.Log("CompanionManager", $"Claude responded ({responseText.Length} chars)");
+
+            // A response consumed tokens — refresh the displayed balance.
+            _ = FetchCreditBalanceAsync();
 
             if (ct.IsCancellationRequested) return;
 
@@ -514,5 +615,6 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
         _currentResponseCts?.Cancel();
         _watchdogCts?.Cancel();
         _micPermissionPollCts?.Cancel();
+        _creditsHttp.Dispose();
     }
 }

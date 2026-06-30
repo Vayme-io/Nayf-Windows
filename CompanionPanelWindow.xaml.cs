@@ -40,6 +40,18 @@ public sealed partial class CompanionPanelWindow : Window
         };
         UpdateAccountEmail(_companionManager.Auth.CurrentUserEmail);
         UpdateModelSelection(_companionManager.SelectedModel);
+        UpdateCreditBalance();
+        UpdateCursorColorSelection(_companionManager.SelectedCursorColor);
+
+        // Agent task UI: bind the live step list and react to confirmation prompts.
+        AgentStepsList.ItemsSource = _companionManager.AgentManager.AgentSteps;
+        _companionManager.AgentManager.AgentSteps.CollectionChanged += (_, _) =>
+            DispatcherQueue.TryEnqueue(UpdateAgentTaskVisibility);
+        _companionManager.AgentManager.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(NayfAgentManager.PendingConfirmationRequest))
+                DispatcherQueue.TryEnqueue(UpdateAgentConfirmation);
+        };
 
         // Re-fit the window whenever the content's height changes (e.g. a
         // response appears) so there's never empty space or clipping.
@@ -120,6 +132,10 @@ public sealed partial class CompanionPanelWindow : Window
                 case nameof(CompanionManager.MicrophonePermissionNeeded):
                     UpdateMicPermissionBanner(_companionManager.MicrophonePermissionNeeded);
                     break;
+                case nameof(CompanionManager.TokenBalanceText):
+                case nameof(CompanionManager.IsOutOfCredits):
+                    UpdateCreditBalance();
+                    break;
             }
         };
     }
@@ -167,6 +183,42 @@ public sealed partial class CompanionPanelWindow : Window
     private void UpdateMicPermissionBanner(bool needed)
     {
         MicPermissionBanner.Visibility = needed ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void UpdateAgentTaskVisibility()
+    {
+        AgentTaskContainer.Visibility = _companionManager.AgentManager.AgentSteps.Count > 0
+            ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void UpdateAgentConfirmation()
+    {
+        var request = _companionManager.AgentManager.PendingConfirmationRequest;
+        if (request == null)
+        {
+            AgentConfirmContainer.Visibility = Visibility.Collapsed;
+        }
+        else
+        {
+            AgentConfirmCommand.Text = request.CommandText;
+            AgentConfirmContainer.Visibility = Visibility.Visible;
+        }
+    }
+
+    private void AgentApproveButton_Click(object sender, RoutedEventArgs e)
+        => _companionManager.AgentManager.ApproveConfirmation(true);
+
+    private void AgentDenyButton_Click(object sender, RoutedEventArgs e)
+        => _companionManager.AgentManager.ApproveConfirmation(false);
+
+    private void UpdateCreditBalance()
+    {
+        CreditBalanceText.Text = _companionManager.TokenBalanceText;
+        bool out_ = _companionManager.IsOutOfCredits;
+        CreditBalanceText.Foreground = new SolidColorBrush(out_
+            ? Windows.UI.Color.FromArgb(255, 255, 69, 58)    // red when empty
+            : Windows.UI.Color.FromArgb(255, 142, 142, 147)); // gray otherwise
+        TopUpButton.Content = out_ ? "Get more" : "Top up";
     }
 
     /// <summary>
@@ -342,5 +394,32 @@ public sealed partial class CompanionPanelWindow : Window
     {
         HidePanel();
         SignOutRequested?.Invoke();
+    }
+
+    private void TopUpButton_Click(object sender, RoutedEventArgs e)
+    {
+        Process.Start(new ProcessStartInfo("https://vayme.com/pricing") { UseShellExecute = true });
+    }
+
+    private void CursorColor_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button b && b.Tag is string tag &&
+            Enum.TryParse<NayfCursorColor>(tag, out var color))
+        {
+            _companionManager.SelectedCursorColor = color;
+            UpdateCursorColorSelection(color);
+        }
+    }
+
+    /// <summary>Draws a white selection ring around the active cursor-color swatch.</summary>
+    private void UpdateCursorColorSelection(NayfCursorColor selected)
+    {
+        var ring = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 255, 255, 255));
+        var clear = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0));
+
+        ColorBlue.BorderBrush = selected == NayfCursorColor.Blue ? ring : clear;
+        ColorRed.BorderBrush = selected == NayfCursorColor.Red ? ring : clear;
+        ColorYellow.BorderBrush = selected == NayfCursorColor.Yellow ? ring : clear;
+        ColorGreen.BorderBrush = selected == NayfCursorColor.Green ? ring : clear;
     }
 }

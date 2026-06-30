@@ -52,6 +52,46 @@
                        FontWeight="Medium"
                        FontFamily="Segoe UI Variable"/>
 
+            <!-- Cursor color picker -->
+            <StackPanel Spacing="8">
+                <TextBlock Text="CURSOR COLOR"
+                           Foreground="#8E8E93"
+                           FontSize="11"
+                           FontWeight="SemiBold"
+                           CharacterSpacing="80"
+                           FontFamily="Segoe UI Variable"/>
+                <StackPanel Orientation="Horizontal" Spacing="10">
+                    <Button x:Name="ColorBlue" Tag="Blue" Click="CursorColor_Click"
+                            Width="36" Height="36" CornerRadius="18" Padding="0"
+                            Background="Transparent" BorderThickness="2" BorderBrush="Transparent">
+                        <Ellipse Width="22" Height="22">
+                            <Ellipse.Fill><SolidColorBrush Color="#458FFF"/></Ellipse.Fill>
+                        </Ellipse>
+                    </Button>
+                    <Button x:Name="ColorRed" Tag="Red" Click="CursorColor_Click"
+                            Width="36" Height="36" CornerRadius="18" Padding="0"
+                            Background="Transparent" BorderThickness="2" BorderBrush="Transparent">
+                        <Ellipse Width="22" Height="22">
+                            <Ellipse.Fill><SolidColorBrush Color="#FF5252"/></Ellipse.Fill>
+                        </Ellipse>
+                    </Button>
+                    <Button x:Name="ColorYellow" Tag="Yellow" Click="CursorColor_Click"
+                            Width="36" Height="36" CornerRadius="18" Padding="0"
+                            Background="Transparent" BorderThickness="2" BorderBrush="Transparent">
+                        <Ellipse Width="22" Height="22">
+                            <Ellipse.Fill><SolidColorBrush Color="#FFC72E"/></Ellipse.Fill>
+                        </Ellipse>
+                    </Button>
+                    <Button x:Name="ColorGreen" Tag="Green" Click="CursorColor_Click"
+                            Width="36" Height="36" CornerRadius="18" Padding="0"
+                            Background="Transparent" BorderThickness="2" BorderBrush="Transparent">
+                        <Ellipse Width="22" Height="22">
+                            <Ellipse.Fill><SolidColorBrush Color="#4DD185"/></Ellipse.Fill>
+                        </Ellipse>
+                    </Button>
+                </StackPanel>
+            </StackPanel>
+
             <!-- Last transcript (what the user said) -->
             <TextBlock x:Name="LastTranscriptText"
                        Text=""
@@ -145,18 +185,99 @@
                                FontFamily="Segoe UI Variable"
                                FontWeight="SemiBold"
                                CharacterSpacing="80"/>
-                    <ListView x:Name="AgentStepsList"
-                              SelectionMode="None"
-                              IsItemClickEnabled="False"
-                              Background="Transparent">
-                        <ListView.ItemContainerStyle>
-                            <Style TargetType="ListViewItem">
-                                <Setter Property="Padding" Value="0,2,0,2"/>
-                                <Setter Property="Background" Value="Transparent"/>
-                                <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
-                            </Style>
-                        </ListView.ItemContainerStyle>
-                    </ListView>
+                    <ItemsControl x:Name="AgentStepsList">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Padding="0,3,0,3">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="16"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="{Binding StatusGlyph}"
+                                               Foreground="#0A84FF"
+                                               FontSize="12"
+                                               VerticalAlignment="Top"/>
+                                    <StackPanel Grid.Column="1" Spacing="2">
+                                        <TextBlock Text="{Binding StepLabel}"
+                                                   Foreground="White"
+                                                   FontSize="12"
+                                                   FontFamily="Segoe UI Variable"
+                                                   TextWrapping="Wrap"/>
+                                        <TextBlock Text="{Binding OutputPreview}"
+                                                   Foreground="#8E8E93"
+                                                   FontSize="11"
+                                                   FontFamily="Consolas"
+                                                   TextWrapping="Wrap"
+                                                   MaxLines="2"
+                                                   TextTrimming="CharacterEllipsis"/>
+                                    </StackPanel>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- Agent confirmation prompt — shown for destructive commands -->
+            <Border x:Name="AgentConfirmContainer"
+                    CornerRadius="10"
+                    Padding="14,12,14,12"
+                    Visibility="Collapsed">
+                <Border.Background>
+                    <SolidColorBrush Color="#3A1A1A"/>
+                </Border.Background>
+                <Border.BorderBrush>
+                    <SolidColorBrush Color="#FF453A"/>
+                </Border.BorderBrush>
+                <Border.BorderThickness>
+                    <Thickness>0.5</Thickness>
+                </Border.BorderThickness>
+
+                <StackPanel Spacing="10">
+                    <TextBlock Text="Allow Nayf to run this command?"
+                               Foreground="White"
+                               FontSize="13"
+                               FontWeight="SemiBold"
+                               FontFamily="Segoe UI Variable"/>
+                    <TextBlock x:Name="AgentConfirmCommand"
+                               Text=""
+                               Foreground="#FFB0A8"
+                               FontSize="11"
+                               FontFamily="Consolas"
+                               TextWrapping="Wrap"
+                               MaxLines="4"
+                               TextTrimming="CharacterEllipsis"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="8"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Button x:Name="AgentDenyButton"
+                                Grid.Column="0"
+                                Content="Deny"
+                                HorizontalAlignment="Stretch"
+                                Click="AgentDenyButton_Click"
+                                Foreground="White"
+                                FontSize="13"
+                                FontFamily="Segoe UI Variable">
+                            <Button.Background>
+                                <SolidColorBrush Color="#3A3A3C"/>
+                            </Button.Background>
+                        </Button>
+                        <Button x:Name="AgentApproveButton"
+                                Grid.Column="2"
+                                Content="Allow"
+                                HorizontalAlignment="Stretch"
+                                Click="AgentApproveButton_Click"
+                                Foreground="White"
+                                FontSize="13"
+                                FontFamily="Segoe UI Variable">
+                            <Button.Background>
+                                <SolidColorBrush Color="#FF453A"/>
+                            </Button.Background>
+                        </Button>
+                    </Grid>
                 </StackPanel>
             </Border>
 
@@ -232,6 +353,30 @@
                     <SolidColorBrush Color="#1FFFFFFF"/>
                 </Button.Background>
             </Button>
+
+            <!-- Credit balance -->
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <TextBlock x:Name="CreditBalanceText"
+                           Text="Loading tokens…"
+                           Foreground="#8E8E93"
+                           FontSize="12"
+                           FontFamily="Segoe UI Variable"
+                           VerticalAlignment="Center"/>
+
+                <HyperlinkButton x:Name="TopUpButton"
+                                 Grid.Column="1"
+                                 Content="Top up"
+                                 Click="TopUpButton_Click"
+                                 Foreground="#0A84FF"
+                                 FontSize="12"
+                                 FontFamily="Segoe UI Variable"
+                                 Padding="4,0,0,0"/>
+            </Grid>
 
             <!-- Separator -->
             <Rectangle Height="1" Fill="#3A3A3C" Opacity="0.5"/>

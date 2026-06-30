@@ -59,11 +59,45 @@ public class AgentTurnResult
 }
 
 /// <summary>One step in an agentic task, displayed live in the panel UI.</summary>
-public class AgentStep
+public class AgentStep : System.ComponentModel.INotifyPropertyChanged
 {
-    public string StepLabel { get; set; } = "";
-    public AgentStepStatus Status { get; set; } = AgentStepStatus.Pending;
-    public string? OutputPreview { get; set; }
+    public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
+
+    private string _stepLabel = "";
+    public string StepLabel
+    {
+        get => _stepLabel;
+        set { _stepLabel = value; OnChanged(nameof(StepLabel)); }
+    }
+
+    private AgentStepStatus _status = AgentStepStatus.Pending;
+    public AgentStepStatus Status
+    {
+        get => _status;
+        set { _status = value; OnChanged(nameof(Status)); OnChanged(nameof(StatusGlyph)); }
+    }
+
+    private string? _outputPreview;
+    public string? OutputPreview
+    {
+        get => _outputPreview;
+        set { _outputPreview = value; OnChanged(nameof(OutputPreview)); OnChanged(nameof(HasOutput)); }
+    }
+
+    public bool HasOutput => !string.IsNullOrEmpty(OutputPreview);
+
+    /// <summary>A small status indicator glyph for the panel list.</summary>
+    public string StatusGlyph => Status switch
+    {
+        AgentStepStatus.Running => "•",
+        AgentStepStatus.Completed => "✓",
+        AgentStepStatus.Failed => "✕",
+        AgentStepStatus.AwaitingConfirmation => "?",
+        _ => "•"
+    };
+
+    private void OnChanged(string name)
+        => PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(name));
 }
 
 public enum AgentStepStatus

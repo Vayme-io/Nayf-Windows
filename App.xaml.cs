@@ -164,6 +164,17 @@ public partial class App : Application
                 }
             };
 
+            // Auto-show the panel when the agent needs a destructive-command
+            // decision — it blocks until the user approves or denies.
+            _companionManager.AgentManager.PropertyChanged += (_, e) =>
+            {
+                if (e.PropertyName == nameof(NayfAgentManager.PendingConfirmationRequest) &&
+                    _companionManager.AgentManager.PendingConfirmationRequest != null)
+                {
+                    _companionPanelWindow?.EnsureVisibleNearTray(_systemTrayManager?.GetTrayIconRect() ?? default);
+                }
+            };
+
             _systemTrayManager = new SystemTrayManager(
                 onTogglePanel: ShowCompanionPanel,
                 onQuit: QuitApp

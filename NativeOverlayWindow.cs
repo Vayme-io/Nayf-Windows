@@ -28,8 +28,9 @@ public sealed class NativeOverlayWindow : IDisposable
     private const int ANCHOR_X = 32;
     private const int ANCHOR_Y = 150;
 
-    // Matches Mac's DS.Colors.overlayCursorBlue (#3380FF)
-    private static readonly Color CursorBlue = Color.FromArgb(0x33, 0x80, 0xFF);
+    // The current cursor/highlight color, set from the user's pick in the panel.
+    // Static + mutable so a single change recolors every monitor's overlay at once.
+    internal static Color CursorBlue = NayfCursorColor.Blue.ToDrawingColor();
 
     // First-launch "hey! I'm Nayf" welcome bubble — matches Mac's
     // OverlayWindow welcome sequence timing.

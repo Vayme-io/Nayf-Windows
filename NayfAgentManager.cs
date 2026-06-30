@@ -119,11 +119,12 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
         string systemPrompt,
         string? authToken,
         Action<string>? onTextDelta,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        List<ConversationTurn>? conversationHistory = null)
     {
         UpdateOnUI(() => AgentSteps.Clear());
 
-        var messages = BuildInitialMessages(userRequest, screenshots);
+        var messages = BuildInitialMessages(userRequest, screenshots, conversationHistory);
         var fullFinalText = "";
 
         const int maxIterations = 10;
@@ -212,8 +213,23 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
         return fullFinalText;
     }
 
-    private List<object> BuildInitialMessages(string userRequest, List<CapturedScreenshot>? screenshots)
+    private List<object> BuildInitialMessages(
+        string userRequest,
+        List<CapturedScreenshot>? screenshots,
+        List<ConversationTurn>? conversationHistory = null)
     {
+        var messages = new List<object>();
+
+        // Prepend prior turns so the agent has conversation context.
+        if (conversationHistory != null)
+        {
+            foreach (var turn in conversationHistory)
+            {
+                messages.Add(new { role = "user", content = new[] { new { type = "text", text = turn.UserTranscript } } });
+                messages.Add(new { role = "assistant", content = new[] { new { type = "text", text = turn.AssistantResponse } } });
+            }
+        }
+
         var content = new List<object>();
 
         if (screenshots != null)
@@ -235,7 +251,8 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
         }
 
         content.Add(new { type = "text", text = userRequest });
-        return new List<object> { new { role = "user", content } };
+        messages.Add(new { role = "user", content });
+        return messages;
     }
 
     private AgentStep AddStep(string label, AgentStepStatus status)

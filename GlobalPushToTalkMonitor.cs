@@ -263,6 +263,11 @@ public static class NativeMethods
     public static extern IntPtr LoadIcon(IntPtr hInstance, IntPtr lpIconName);
 
     [DllImport("user32.dll")]
+    public static extern IntPtr LoadCursor(IntPtr hInstance, IntPtr lpCursorName);
+    public static readonly IntPtr IDC_ARROW = new(32512);
+    public static readonly IntPtr IDC_HAND = new(32649);
+
+    [DllImport("user32.dll")]
     public static extern IntPtr LoadImage(IntPtr hInstance, string lpszName, uint uType, int cxDesired, int cyDesired, uint fuLoad);
 
     [DllImport("dwmapi.dll")]
@@ -348,6 +353,16 @@ public static class NativeMethods
 
     [DllImport("gdi32.dll")]
     public static extern IntPtr CreateCompatibleBitmap(IntPtr hdc, int nWidth, int nHeight);
+
+    [DllImport("gdi32.dll")]
+    public static extern IntPtr CreateRoundRectRgn(int x1, int y1, int x2, int y2,
+        int nWidthEllipse, int nHeightEllipse);
+
+    [DllImport("gdi32.dll")]
+    public static extern bool DeleteObject(IntPtr hObject);
+
+    [DllImport("user32.dll")]
+    public static extern int SetWindowRgn(IntPtr hWnd, IntPtr hRgn, bool bRedraw);
 
     [DllImport("user32.dll")]
     public static extern bool SystemParametersInfo(uint uiAction, uint uiParam, ref RECT pvParam, uint fWinIni);

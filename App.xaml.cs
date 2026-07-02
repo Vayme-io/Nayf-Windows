@@ -12,6 +12,7 @@ public partial class App : Application
     private OverlayWindowManager? _overlayWindowManager;
     private CompanionPanelWindow? _companionPanelWindow;
     private AnchorWindow? _anchorWindow;
+    private TaskbarWidgetWindow? _taskbarWidget;
     private AuthManager? _authManager;
     private AuthWindow? _authWindow;
     private bool _companionStarted;
@@ -182,6 +183,14 @@ public partial class App : Application
             _systemTrayManager.Initialize();
             Log("Step", "SystemTray initialized");
 
+            // Taskbar widget: a chip in the bottom-left of the taskbar showing the
+            // live voice/thinking animation; clicking it opens the panel above it.
+            _taskbarWidget = new TaskbarWidgetWindow(_companionManager);
+            _taskbarWidget.Tapped += () => _uiDispatcher?.TryEnqueue(() =>
+                _companionPanelWindow?.ShowNearTray(_taskbarWidget.AnchorRect));
+            _taskbarWidget.Start();
+            Log("Step", "Taskbar widget created");
+
             _companionManager.StartAsync();
             Log("Step", "CompanionManager started — app running");
         }
@@ -220,6 +229,7 @@ public partial class App : Application
         {
             _systemTrayManager?.Dispose();
             _overlayWindowManager?.Dispose();
+            _taskbarWidget?.Dispose();
             _companionManager?.Dispose();
             Exit();
         });

@@ -1,10 +1,15 @@
 using System;
 using System.Diagnostics;
+using System.Threading.Tasks;
 using Microsoft.UI;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Animation;
+using Microsoft.UI.Composition;
+using Microsoft.UI.Composition.SystemBackdrops;
+using WinRT;
 using WinRT.Interop;
 
 namespace NayfWindows;
@@ -22,6 +27,11 @@ public sealed partial class CompanionPanelWindow : Window
     private DateTimeOffset _lastHidden = DateTimeOffset.MinValue;
     private int _anchorCenterX;
     private NativeMethods.POINT _anchorPoint;
+    private ScaleTransform? _contentScale;
+    private DesktopAcrylicController? _acrylicController;
+    private SystemBackdropConfiguration? _backdropConfig;
+
+    public bool IsPanelVisible => _isVisible;
 
     /// <summary>Raised when the user clicks Sign Out; the app handles the flow.</summary>
     public event Action? SignOutRequested;
@@ -42,6 +52,8 @@ public sealed partial class CompanionPanelWindow : Window
         UpdateModelSelection(_companionManager.SelectedModel);
         UpdateCreditBalance();
         UpdateCursorColorSelection(_companionManager.SelectedCursorColor);
+        UpdateVoiceStateUI(_companionManager.VoiceState);
+        ShowTab(home: true);
 
         // Agent task UI: bind the live step list and react to confirmation prompts.
         AgentStepsList.ItemsSource = _companionManager.AgentManager.AgentSteps;
@@ -56,19 +68,48 @@ public sealed partial class CompanionPanelWindow : Window
         // Re-fit the window whenever the content's height changes (e.g. a
         // response appears) so there's never empty space or clipping.
         ContentStack.SizeChanged += (_, _) => FitWindowToContent();
+
+        // Entrance transform: the panel unfolds upward out of the taskbar
+        // (scale anchored at the bottom-center + fade).
+        _contentScale = new ScaleTransform();
+        ContentStack.RenderTransform = _contentScale;
+        ContentStack.RenderTransformOrigin = new Windows.Foundation.Point(0.5, 1);
+    }
+
+    /// <summary>Plays the scale-up + fade-in entrance, like the panel unfolding from the notch.</summary>
+    private void PlayUnfoldAnimation()
+    {
+        if (_contentScale == null) return;
+
+        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+        var sb = new Storyboard();
+
+        void Add(DependencyObject target, string property, double from, double to, double ms)
+        {
+            var anim = new DoubleAnimation
+            {
+                From = from,
+                To = to,
+                Duration = TimeSpan.FromMilliseconds(ms),
+                EasingFunction = ease,
+                EnableDependentAnimation = true
+            };
+            Storyboard.SetTarget(anim, target);
+            Storyboard.SetTargetProperty(anim, property);
+            sb.Children.Add(anim);
+        }
+
+        Add(_contentScale, "ScaleY", 0.86, 1.0, 260);
+        Add(_contentScale, "ScaleX", 0.96, 1.0, 260);
+        Add(ContentStack, "Opacity", 0.0, 1.0, 200);
+        sb.Begin();
     }
 
     private void UpdateAccountEmail(string? email)
     {
-        if (string.IsNullOrWhiteSpace(email))
-        {
-            AccountEmailText.Visibility = Visibility.Collapsed;
-        }
-        else
-        {
-            AccountEmailText.Text = $"Signed in as {email}";
-            AccountEmailText.Visibility = Visibility.Visible;
-        }
+        // Sign-out lives in the footer; show it only when a user is signed in.
+        SignOutButton.Visibility = string.IsNullOrWhiteSpace(email)
+            ? Visibility.Collapsed : Visibility.Visible;
     }
 
     private void SetupWindow()
@@ -98,10 +139,26 @@ public sealed partial class CompanionPanelWindow : Window
         NativeMethods.DwmSetWindowAttribute(hwnd, 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */,
             ref darkModeValue, sizeof(int));
 
-        // Frosted acrylic material like the Windows 11 Start menu.
-        SystemBackdrop = new DesktopAcrylicBackdrop();
         if (Content is FrameworkElement root)
             root.RequestedTheme = ElementTheme.Dark;
+
+        // Standard (Base) acrylic — dark and frosted with the background just
+        // barely showing through, exactly like the Windows 11 Start menu.
+        if (DesktopAcrylicController.IsSupported())
+        {
+            _backdropConfig = new SystemBackdropConfiguration
+            {
+                IsInputActive = true,
+                Theme = SystemBackdropTheme.Dark
+            };
+            _acrylicController = new DesktopAcrylicController { Kind = DesktopAcrylicKind.Base };
+            _acrylicController.AddSystemBackdropTarget(this.As<ICompositionSupportsSystemBackdrop>());
+            _acrylicController.SetSystemBackdropConfiguration(_backdropConfig);
+        }
+        else
+        {
+            SystemBackdrop = new DesktopAcrylicBackdrop();
+        }
 
         // Dismiss when the panel loses focus (clicking elsewhere), like Start.
         Activated += (_, args) =>
@@ -152,6 +209,22 @@ public sealed partial class CompanionPanelWindow : Window
 
         HeaderStatusText.Text = label;
         StatusDot.Fill = new SolidColorBrush(color);
+
+        // Mic button: red while listening, otherwise the cursor accent color.
+        bool listening = state == CompanionVoiceState.Listening;
+        bool busy = state == CompanionVoiceState.Processing || state == CompanionVoiceState.Responding;
+        TapToTalkLabel.Text = listening ? "Listening…" : busy ? "Thinking…" : "Tap to talk";
+
+        var accent = listening ? Windows.UI.Color.FromArgb(255, 255, 102, 97) : AccentColor();
+        MicGlyph.Foreground = new SolidColorBrush(accent);
+        MicCircle.Fill = new SolidColorBrush(Windows.UI.Color.FromArgb(0x2E, accent.R, accent.G, accent.B));
+    }
+
+    /// <summary>The current cursor color, as a Windows.UI.Color, for accenting the panel.</summary>
+    private Windows.UI.Color AccentColor()
+    {
+        var c = _companionManager.SelectedCursorColor.ToDrawingColor();
+        return Windows.UI.Color.FromArgb(255, c.R, c.G, c.B);
     }
 
     private void UpdateLastTranscript(string? transcript)
@@ -269,7 +342,11 @@ public sealed partial class CompanionPanelWindow : Window
             _anchorPoint = cursor;
         }
         _anchorCenterX = _anchorPoint.X;
+        ShowPanelCore();
+    }
 
+    private void ShowPanelCore()
+    {
         var hwnd = WindowNative.GetWindowHandle(this);
         var appWindow = AppWindow.GetFromWindowId(Microsoft.UI.Win32Interop.GetWindowIdFromWindow(hwnd));
         appWindow.Show();
@@ -278,6 +355,9 @@ public sealed partial class CompanionPanelWindow : Window
 
         // Size + position the window to fit the content height.
         FitWindowToContent();
+
+        // Unfold from the notch with a scale-up + fade entrance.
+        PlayUnfoldAnimation();
     }
 
     /// <summary>
@@ -408,7 +488,46 @@ public sealed partial class CompanionPanelWindow : Window
         {
             _companionManager.SelectedCursorColor = color;
             UpdateCursorColorSelection(color);
+            UpdateVoiceStateUI(_companionManager.VoiceState); // re-accent the mic
         }
+    }
+
+    private void HomeTab_Click(object sender, RoutedEventArgs e) => ShowTab(home: true);
+    private void LibraryTab_Click(object sender, RoutedEventArgs e) => ShowTab(home: false);
+    private void CloseButton_Click(object sender, RoutedEventArgs e) => HidePanel();
+    private void TapToTalkButton_Click(object sender, RoutedEventArgs e) => _companionManager.ToggleTapToTalk();
+
+    private void PastePhotoButton_Click(object sender, RoutedEventArgs e)
+    {
+        // TODO: read an image from the clipboard and attach it to the next query.
+        ShowNoImageHintBriefly();
+    }
+
+    private void ScanPhoneButton_Click(object sender, RoutedEventArgs e)
+    {
+        // TODO: start a QR phone-scan session (needs the Worker relay endpoints).
+        ShowNoImageHintBriefly();
+    }
+
+    private async void ShowNoImageHintBriefly()
+    {
+        NoImageHint.Visibility = Visibility.Visible;
+        await Task.Delay(3000);
+        NoImageHint.Visibility = Visibility.Collapsed;
+    }
+
+    /// <summary>Switches between the Home and Library pages and highlights the active tab.</summary>
+    private void ShowTab(bool home)
+    {
+        HomePage.Visibility = home ? Visibility.Visible : Visibility.Collapsed;
+        LibraryPage.Visibility = home ? Visibility.Collapsed : Visibility.Visible;
+
+        var active = new SolidColorBrush(Windows.UI.Color.FromArgb(0x22, 0xFF, 0xFF, 0xFF));
+        var clear = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0));
+        HomeTab.Background = home ? active : clear;
+        LibraryTab.Background = home ? clear : active;
+
+        FitWindowToContent();
     }
 
     /// <summary>Draws a white selection ring around the active cursor-color swatch.</summary>

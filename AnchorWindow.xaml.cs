@@ -35,8 +35,10 @@ public sealed partial class AnchorWindow : Window
         appWindow.Resize(new Windows.Graphics.SizeInt32(1, 1));
         appWindow.Move(new Windows.Graphics.PointInt32(-32000, -32000));
 
-        // Show a taskbar button (and Alt+Tab entry) using the Nayf icon
-        appWindow.IsShownInSwitchers = true;
+        // Keep this window out of the taskbar and Alt+Tab — the taskbar chip and
+        // tray icon are the entry points now. It stays alive only to keep the
+        // app (a tray app) running.
+        appWindow.IsShownInSwitchers = false;
         appWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "NayfIcon.ico"));
 
         // Remove title bar and border

@@ -250,6 +250,18 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
     }
 
     /// <summary>
+    /// Click-to-talk fallback for the panel's mic button — toggles recording
+    /// using the same pipeline as the global Ctrl+Alt hotkey.
+    /// </summary>
+    public void ToggleTapToTalk()
+    {
+        if (VoiceState == CompanionVoiceState.Idle)
+            OnPushToTalkPressed();
+        else if (VoiceState == CompanionVoiceState.Listening)
+            OnPushToTalkReleased();
+    }
+
+    /// <summary>
     /// Fetches the user's remaining token balance from the proxy and updates
     /// <see cref="TokenBalance"/>. Called on launch and after each response.
     /// </summary>

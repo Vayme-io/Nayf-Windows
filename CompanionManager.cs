@@ -136,6 +136,16 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
         private set { _isOutOfCredits = value; OnPropertyChanged(); }
     }
 
+    // A photo pasted from the clipboard — sent with the next question instead of
+    // a screenshot, then consumed.
+    private byte[]? _pendingPhoto;
+    public bool HasPendingPhoto => _pendingPhoto != null;
+    public void SetPendingPhoto(byte[]? photo)
+    {
+        _pendingPhoto = photo;
+        UpdateOnUI(() => OnPropertyChanged(nameof(HasPendingPhoto)));
+    }
+
     // MARK: - Dependencies
 
     private readonly ClaudeAPI _claudeAPI;
@@ -148,6 +158,12 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
 
     /// <summary>The auth manager, so UIs can show the signed-in user and sign out.</summary>
     public AuthManager Auth => _authManager;
+
+    /// <summary>Durable facts Nayf has learned about the user (shown in the Memory tab).</summary>
+    public MemoryStore Memory { get; } = new();
+
+    /// <summary>Drives the "Scan with phone" QR/WebSocket flow.</summary>
+    public PhoneScanManager PhoneScan { get; }
 
     private readonly DispatcherQueue _dispatcherQueue;
 
@@ -202,6 +218,10 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
 
         // Apply the saved cursor color before the overlays start rendering.
         NativeOverlayWindow.CursorBlue = _selectedCursorColor.ToDrawingColor();
+
+        // A phone-scanned photo drops straight into the pending-photo slot.
+        PhoneScan = new PhoneScanManager(() => _authManager.CurrentAccessTokenAsync());
+        PhoneScan.PhotoReceived += bytes => SetPendingPhoto(bytes);
 
         _claudeAPI = new ClaudeAPI(NayfConfig.ChatEndpoint);
         _elevenLabsTTSClient = new ElevenLabsTTSClient(NayfConfig.TTSEndpoint);
@@ -294,6 +314,45 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
         }
     }
 
+    /// <summary>
+    /// Asks Claude, in the background, to pull any new durable facts about the
+    /// user out of the latest exchange and adds them to the memory store.
+    /// </summary>
+    private async Task ExtractMemoriesAsync(string transcript, string response, string authToken)
+    {
+        try
+        {
+            const string system =
+                "You extract durable facts worth remembering about the USER across sessions — " +
+                "their name, role, preferences, ongoing projects, tools they use, etc. " +
+                "Only include NEW facts not already listed. Return ONLY a JSON array of short " +
+                "strings (e.g. [\"Prefers concise answers\",\"Building a Windows port of Nayf\"]). " +
+                "Return [] if nothing new or durable. No prose, no markdown.";
+
+            var known = string.Join("\n", Memory.Memories);
+            var userMsg =
+                $"Already known:\n{(known.Length > 0 ? known : "(nothing yet)")}\n\n" +
+                $"Exchange:\nUser: {transcript}\nAssistant: {response}";
+
+            var result = await _claudeAPI.StreamResponseAsync(
+                userMsg, new List<ConversationTurn>(), null, null, system, authToken, CancellationToken.None);
+
+            // Pull the JSON array out of the response and add each fact.
+            int start = result.IndexOf('['), end = result.LastIndexOf(']');
+            if (start < 0 || end <= start) return;
+            var json = result.Substring(start, end - start + 1);
+            var facts = JsonSerializer.Deserialize<List<string>>(json);
+            if (facts == null) return;
+
+            foreach (var fact in facts)
+                UpdateOnUI(() => Memory.Add(fact));
+        }
+        catch (Exception ex)
+        {
+            Logger.Log("CompanionManager", $"Memory extraction failed: {ex.Message}");
+        }
+    }
+
     private static string FormatTokenBalance(int tokens)
     {
         if (tokens <= 0) return "No tokens remaining";
@@ -374,14 +433,28 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
         var ct = _currentResponseCts.Token;
 
         List<CapturedScreenshot>? screenshots = null;
-        try
+        var pending = _pendingPhoto;
+        if (pending != null)
         {
-            screenshots = await ScreenCaptureUtility.CaptureAllScreensAsync();
-            Logger.Log("CompanionManager", $"Captured {screenshots?.Count ?? 0} screenshot(s)");
+            // A pasted photo takes the place of a screenshot for this question.
+            screenshots = new List<CapturedScreenshot>
+            {
+                new CapturedScreenshot(pending, 0, "Photo", 0, 0, 0, 0, 0, 0)
+            };
+            SetPendingPhoto(null);
+            Logger.Log("CompanionManager", "Using pasted photo instead of screenshot");
         }
-        catch (Exception ex)
+        else
         {
-            Logger.Log("CompanionManager", $"Screen capture failed: {ex.Message}");
+            try
+            {
+                screenshots = await ScreenCaptureUtility.CaptureAllScreensAsync();
+                Logger.Log("CompanionManager", $"Captured {screenshots?.Count ?? 0} screenshot(s)");
+            }
+            catch (Exception ex)
+            {
+                Logger.Log("CompanionManager", $"Screen capture failed: {ex.Message}");
+            }
         }
 
         // Stay in Processing (the spinner) through the screenshot upload and
@@ -403,11 +476,16 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
             Logger.Log("CompanionManager", "Sending to Claude…");
             // Route through the agent loop: Claude may call tools (PowerShell,
             // files, computer control) before answering, or just respond/point
-            // normally. Either way it returns the final text for TTS.
+            // normally. Either way it returns the final text for TTS. The system
+            // prompt carries what Nayf remembers about the user.
+            var systemPrompt = BuildSystemPrompt();
+            var memoryBlock = Memory.ContextBlock();
+            if (memoryBlock.Length > 0) systemPrompt += "\n\n" + memoryBlock;
+
             var responseText = await AgentManager.RunAgentLoopAsync(
                 transcript,
                 screenshots,
-                BuildSystemPrompt(),
+                systemPrompt,
                 authToken,
                 delta => UpdateOnUI(() => StreamingResponseText += delta),
                 ct,
@@ -417,6 +495,9 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
 
             // A response consumed tokens — refresh the displayed balance.
             _ = FetchCreditBalanceAsync();
+
+            // Learn durable facts about the user in the background (don't block TTS).
+            _ = ExtractMemoriesAsync(transcript, responseText, authToken);
 
             if (ct.IsCancellationRequested) return;
 

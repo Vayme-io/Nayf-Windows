@@ -47,6 +47,14 @@
                                 <TextBlock Text="Library" FontSize="13" FontWeight="SemiBold" FontFamily="Segoe UI Variable"/>
                             </StackPanel>
                         </Button>
+                        <Button x:Name="MemoryTab" Click="MemoryTab_Click"
+                                Background="Transparent" BorderThickness="0"
+                                CornerRadius="13" Padding="14,7,14,7">
+                            <StackPanel Orientation="Horizontal" Spacing="7">
+                                <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE81C;" FontSize="13"/>
+                                <TextBlock Text="Memory" FontSize="13" FontWeight="SemiBold" FontFamily="Segoe UI Variable"/>
+                            </StackPanel>
+                        </Button>
                     </StackPanel>
                 </Border>
 
@@ -149,8 +157,8 @@
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE77F;" FontSize="14" Foreground="#458FFF"/>
-                            <TextBlock Grid.Column="1" Text="Paste photo" Margin="9,0,0,0"
+                            <FontIcon x:Name="PastePhotoIcon" FontFamily="Segoe Fluent Icons" Glyph="&#xE77F;" FontSize="14" Foreground="#458FFF"/>
+                            <TextBlock x:Name="PastePhotoLabel" Grid.Column="1" Text="Paste photo" Margin="9,0,0,0"
                                        Foreground="#C5C5CA" FontSize="13" FontFamily="Segoe UI Variable" VerticalAlignment="Center"/>
                             <FontIcon Grid.Column="2" FontFamily="Segoe Fluent Icons" Glyph="&#xE76C;" FontSize="10" Foreground="#6E6E73"/>
                         </Grid>
@@ -166,6 +174,21 @@
                             </Grid.ColumnDefinitions>
                             <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE8B6;" FontSize="14" Foreground="#8E8E93"/>
                             <TextBlock Grid.Column="1" Text="Scan with phone" Margin="9,0,0,0"
+                                       Foreground="#C5C5CA" FontSize="13" FontFamily="Segoe UI Variable" VerticalAlignment="Center"/>
+                            <FontIcon Grid.Column="2" FontFamily="Segoe Fluent Icons" Glyph="&#xE76C;" FontSize="10" Foreground="#6E6E73"/>
+                        </Grid>
+                    </Button>
+                    <Button x:Name="ConnectAppsButton" Click="ConnectAppsButton_Click"
+                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                            Background="#0FFFFFFF" BorderThickness="0" CornerRadius="12" Padding="12,11,12,11">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE71B;" FontSize="14" Foreground="#8E8E93"/>
+                            <TextBlock Grid.Column="1" Text="Connect apps" Margin="9,0,0,0"
                                        Foreground="#C5C5CA" FontSize="13" FontFamily="Segoe UI Variable" VerticalAlignment="Center"/>
                             <FontIcon Grid.Column="2" FontFamily="Segoe Fluent Icons" Glyph="&#xE76C;" FontSize="10" Foreground="#6E6E73"/>
                         </Grid>
@@ -197,6 +220,163 @@
                 <TextBlock Text="Ask Nayf to explain anything — it'll show up here."
                            Foreground="#8E8E93" FontSize="13" FontFamily="Segoe UI Variable"
                            HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"/>
+            </StackPanel>
+
+            <!-- ───────────── MEMORY PAGE ───────────── -->
+            <StackPanel x:Name="MemoryPage" Padding="28,10,28,16" Spacing="12"
+                        Visibility="Collapsed" HorizontalAlignment="Stretch">
+                <TextBlock Text="What Nayf remembers about you across sessions."
+                           Foreground="#8E8E93" FontSize="12.5" FontFamily="Segoe UI Variable"/>
+
+                <StackPanel x:Name="MemoryEmptyState" Spacing="10" MinHeight="120" Padding="0,18,0,18" HorizontalAlignment="Stretch">
+                    <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE81C;" FontSize="30"
+                              Foreground="#48484A" HorizontalAlignment="Center"/>
+                    <TextBlock Text="Nayf will remember details about you as you chat — they'll show up here."
+                               Foreground="#8E8E93" FontSize="12.5" FontFamily="Segoe UI Variable"
+                               HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"
+                               MaxWidth="360"/>
+                </StackPanel>
+
+                <ItemsControl x:Name="MemoryList" Visibility="Collapsed">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Border Background="#0BFFFFFF" CornerRadius="9" Padding="12,9,12,9" Margin="0,0,0,7">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xEC92;" FontSize="12"
+                                              Foreground="#8E8E93" VerticalAlignment="Top" Margin="0,2,0,0"/>
+                                    <TextBlock Grid.Column="1" Text="{Binding}" Margin="10,0,0,0"
+                                               Foreground="White" FontSize="13" FontFamily="Segoe UI Variable"
+                                               TextWrapping="Wrap"/>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+                <Rectangle Height="1" Fill="#12FFFFFF"/>
+                <HyperlinkButton x:Name="ClearMemoryButton" Click="ClearMemoryButton_Click"
+                                 HorizontalAlignment="Center" Padding="0">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE74D;" FontSize="12" Foreground="#8E8E93"/>
+                        <TextBlock Text="Clear all memory" Foreground="#8E8E93" FontSize="12.5" FontFamily="Segoe UI Variable"/>
+                    </StackPanel>
+                </HyperlinkButton>
+            </StackPanel>
+
+            <!-- ───────────── CONNECTIONS PAGE ───────────── -->
+            <StackPanel x:Name="ConnectionsPage" Padding="28,10,28,16" Spacing="9"
+                        Visibility="Collapsed" HorizontalAlignment="Stretch">
+                <TextBlock Text="Connect your apps so Nayf can do more for you."
+                           Foreground="#8E8E93" FontSize="12.5" FontFamily="Segoe UI Variable"/>
+
+                <!-- Google Calendar -->
+                <Border Background="#0FFFFFFF" CornerRadius="12" Padding="14,11,14,11">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <Border Grid.RowSpan="2" Width="34" Height="34" CornerRadius="8" Background="#1A4285F4" VerticalAlignment="Center">
+                            <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE787;" FontSize="16" Foreground="#4285F4"/>
+                        </Border>
+                        <StackPanel Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center" Spacing="1">
+                            <TextBlock Text="Google Calendar" Foreground="White" FontSize="13.5" FontWeight="SemiBold" FontFamily="Segoe UI Variable"/>
+                            <TextBlock Text="Read your schedule and create events" Foreground="#8E8E93" FontSize="11.5" FontFamily="Segoe UI Variable"/>
+                        </StackPanel>
+                        <Button Grid.Column="2" x:Name="ConnectCalendarButton" Content="Connect"
+                                Click="ConnectCalendarButton_Click" VerticalAlignment="Center"
+                                Foreground="White" FontSize="12.5" FontWeight="SemiBold" FontFamily="Segoe UI Variable"
+                                CornerRadius="14" Padding="16,6,16,6">
+                            <Button.Background><SolidColorBrush Color="#0A84FF"/></Button.Background>
+                        </Button>
+                    </Grid>
+                </Border>
+
+                <!-- Gmail (soon) -->
+                <Border Background="#0AFFFFFF" CornerRadius="12" Padding="14,11,14,11">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <Border Width="34" Height="34" CornerRadius="8" Background="#1AEA4335" VerticalAlignment="Center">
+                            <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE715;" FontSize="16" Foreground="#EA4335"/>
+                        </Border>
+                        <StackPanel Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center" Spacing="1">
+                            <TextBlock Text="Gmail" Foreground="#C5C5CA" FontSize="13.5" FontWeight="SemiBold" FontFamily="Segoe UI Variable"/>
+                            <TextBlock Text="Read and draft email" Foreground="#8E8E93" FontSize="11.5" FontFamily="Segoe UI Variable"/>
+                        </StackPanel>
+                        <Border Grid.Column="2" Background="#14FFFFFF" CornerRadius="12" Padding="12,4,12,4" VerticalAlignment="Center">
+                            <TextBlock Text="Soon" Foreground="#8E8E93" FontSize="11.5" FontFamily="Segoe UI Variable"/>
+                        </Border>
+                    </Grid>
+                </Border>
+
+                <!-- Slack (soon) -->
+                <Border Background="#0AFFFFFF" CornerRadius="12" Padding="14,11,14,11">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <Border Width="34" Height="34" CornerRadius="8" Background="#1A611F69" VerticalAlignment="Center">
+                            <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE8BD;" FontSize="16" Foreground="#C084D8"/>
+                        </Border>
+                        <StackPanel Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center" Spacing="1">
+                            <TextBlock Text="Slack" Foreground="#C5C5CA" FontSize="13.5" FontWeight="SemiBold" FontFamily="Segoe UI Variable"/>
+                            <TextBlock Text="Send and read messages" Foreground="#8E8E93" FontSize="11.5" FontFamily="Segoe UI Variable"/>
+                        </StackPanel>
+                        <Border Grid.Column="2" Background="#14FFFFFF" CornerRadius="12" Padding="12,4,12,4" VerticalAlignment="Center">
+                            <TextBlock Text="Soon" Foreground="#8E8E93" FontSize="11.5" FontFamily="Segoe UI Variable"/>
+                        </Border>
+                    </Grid>
+                </Border>
+
+                <!-- Notion (soon) -->
+                <Border Background="#0AFFFFFF" CornerRadius="12" Padding="14,11,14,11">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <Border Width="34" Height="34" CornerRadius="8" Background="#14FFFFFF" VerticalAlignment="Center">
+                            <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE8A5;" FontSize="16" Foreground="#D5D5DA"/>
+                        </Border>
+                        <StackPanel Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center" Spacing="1">
+                            <TextBlock Text="Notion" Foreground="#C5C5CA" FontSize="13.5" FontWeight="SemiBold" FontFamily="Segoe UI Variable"/>
+                            <TextBlock Text="Search and create pages" Foreground="#8E8E93" FontSize="11.5" FontFamily="Segoe UI Variable"/>
+                        </StackPanel>
+                        <Border Grid.Column="2" Background="#14FFFFFF" CornerRadius="12" Padding="12,4,12,4" VerticalAlignment="Center">
+                            <TextBlock Text="Soon" Foreground="#8E8E93" FontSize="11.5" FontFamily="Segoe UI Variable"/>
+                        </Border>
+                    </Grid>
+                </Border>
+            </StackPanel>
+
+            <!-- ───────────── SCAN WITH PHONE PAGE ───────────── -->
+            <StackPanel x:Name="ScanPage" Padding="28,10,28,20" Spacing="12"
+                        Visibility="Collapsed" HorizontalAlignment="Stretch">
+                <TextBlock Text="Scan with your phone camera"
+                           Foreground="White" FontSize="14" FontWeight="SemiBold"
+                           FontFamily="Segoe UI Variable" HorizontalAlignment="Center"/>
+                <Border Width="196" Height="196" CornerRadius="14" Background="White"
+                        HorizontalAlignment="Center" Padding="10">
+                    <Image x:Name="QrImage" Stretch="Uniform"/>
+                </Border>
+                <TextBlock x:Name="ScanStatusText" Text="Generating code…"
+                           Foreground="#8E8E93" FontSize="12.5" FontFamily="Segoe UI Variable"
+                           HorizontalAlignment="Center"/>
+                <TextBlock Text="Take a photo of anything — notes, a diagram, a problem — then hold Ctrl + Alt to ask Nayf about it."
+                           Foreground="#8E8E93" FontSize="12" FontFamily="Segoe UI Variable"
+                           HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" MaxWidth="380"/>
             </StackPanel>
 
             <!-- ───────────── DYNAMIC AREA (response / agent / banners) ───────────── -->

@@ -1,12 +1,16 @@
 using System;
 using System.Diagnostics;
+using System.IO;
+using System.Runtime.InteropServices.WindowsRuntime;
 using System.Threading.Tasks;
+using Windows.ApplicationModel.DataTransfer;
 using Microsoft.UI;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
+using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Composition;
 using Microsoft.UI.Composition.SystemBackdrops;
 using WinRT;
@@ -53,7 +57,17 @@ public sealed partial class CompanionPanelWindow : Window
         UpdateCreditBalance();
         UpdateCursorColorSelection(_companionManager.SelectedCursorColor);
         UpdateVoiceStateUI(_companionManager.VoiceState);
-        ShowTab(home: true);
+        ShowPage(PanelPage.Home);
+
+        // Memory tab: bind the list and toggle the empty state as it changes.
+        MemoryList.ItemsSource = _companionManager.Memory.Memories;
+        _companionManager.Memory.Memories.CollectionChanged += (_, _) =>
+            DispatcherQueue.TryEnqueue(UpdateMemoryView);
+        UpdateMemoryView();
+
+        // Scan-with-phone: refresh the QR + status as the session progresses.
+        _companionManager.PhoneScan.PropertyChanged += (_, _) =>
+            DispatcherQueue.TryEnqueue(UpdateScanUI);
 
         // Agent task UI: bind the live step list and react to confirmation prompts.
         AgentStepsList.ItemsSource = _companionManager.AgentManager.AgentSteps;
@@ -192,6 +206,9 @@ public sealed partial class CompanionPanelWindow : Window
                 case nameof(CompanionManager.TokenBalanceText):
                 case nameof(CompanionManager.IsOutOfCredits):
                     UpdateCreditBalance();
+                    break;
+                case nameof(CompanionManager.HasPendingPhoto):
+                    UpdatePhotoButton();
                     break;
             }
         };
@@ -492,21 +509,79 @@ public sealed partial class CompanionPanelWindow : Window
         }
     }
 
-    private void HomeTab_Click(object sender, RoutedEventArgs e) => ShowTab(home: true);
-    private void LibraryTab_Click(object sender, RoutedEventArgs e) => ShowTab(home: false);
+    private enum PanelPage { Home, Library, Memory, Connections, Scan }
+
+    private void HomeTab_Click(object sender, RoutedEventArgs e) => ShowPage(PanelPage.Home);
+    private void LibraryTab_Click(object sender, RoutedEventArgs e) => ShowPage(PanelPage.Library);
+    private void MemoryTab_Click(object sender, RoutedEventArgs e) => ShowPage(PanelPage.Memory);
+    private void ConnectAppsButton_Click(object sender, RoutedEventArgs e) => ShowPage(PanelPage.Connections);
     private void CloseButton_Click(object sender, RoutedEventArgs e) => HidePanel();
     private void TapToTalkButton_Click(object sender, RoutedEventArgs e) => _companionManager.ToggleTapToTalk();
 
-    private void PastePhotoButton_Click(object sender, RoutedEventArgs e)
+    private async void PastePhotoButton_Click(object sender, RoutedEventArgs e)
     {
-        // TODO: read an image from the clipboard and attach it to the next query.
+        try
+        {
+            var content = Clipboard.GetContent();
+            if (content.Contains(StandardDataFormats.Bitmap))
+            {
+                var streamRef = await content.GetBitmapAsync();
+                using var raStream = await streamRef.OpenReadAsync();
+                using var netStream = raStream.AsStreamForRead();
+                using var img = System.Drawing.Image.FromStream(netStream);
+                using var ms = new MemoryStream();
+                img.Save(ms, System.Drawing.Imaging.ImageFormat.Jpeg);
+                _companionManager.SetPendingPhoto(ms.ToArray());
+                return;
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Log("Panel", $"Paste photo failed: {ex.Message}");
+        }
         ShowNoImageHintBriefly();
+    }
+
+    private void UpdatePhotoButton()
+    {
+        if (_companionManager.HasPendingPhoto)
+        {
+            PastePhotoLabel.Text = "Photo ready — ask your question";
+            PastePhotoLabel.Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 52, 199, 89));
+            PastePhotoIcon.Glyph = ""; // checkmark
+            PastePhotoIcon.Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 52, 199, 89));
+        }
+        else
+        {
+            PastePhotoLabel.Text = "Paste photo";
+            PastePhotoLabel.Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 197, 197, 202));
+            PastePhotoIcon.Glyph = "";
+            PastePhotoIcon.Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 69, 143, 255));
+        }
     }
 
     private void ScanPhoneButton_Click(object sender, RoutedEventArgs e)
     {
-        // TODO: start a QR phone-scan session (needs the Worker relay endpoints).
-        ShowNoImageHintBriefly();
+        _companionManager.PhoneScan.Start();
+        ShowPage(PanelPage.Scan);
+    }
+
+    private void ConnectCalendarButton_Click(object sender, RoutedEventArgs e)
+    {
+        // TODO: OAuth flow — needs the Worker's connection endpoints.
+    }
+
+    private void ClearMemoryButton_Click(object sender, RoutedEventArgs e)
+    {
+        _companionManager.Memory.ClearAll();
+    }
+
+    private void UpdateMemoryView()
+    {
+        bool has = _companionManager.Memory.HasMemories;
+        MemoryList.Visibility = has ? Visibility.Visible : Visibility.Collapsed;
+        MemoryEmptyState.Visibility = has ? Visibility.Collapsed : Visibility.Visible;
+        FitWindowToContent();
     }
 
     private async void ShowNoImageHintBriefly()
@@ -516,18 +591,58 @@ public sealed partial class CompanionPanelWindow : Window
         NoImageHint.Visibility = Visibility.Collapsed;
     }
 
-    /// <summary>Switches between the Home and Library pages and highlights the active tab.</summary>
-    private void ShowTab(bool home)
+    /// <summary>Switches the visible page and highlights the active tab.</summary>
+    private void ShowPage(PanelPage page)
     {
-        HomePage.Visibility = home ? Visibility.Visible : Visibility.Collapsed;
-        LibraryPage.Visibility = home ? Visibility.Collapsed : Visibility.Visible;
+        HomePage.Visibility = page == PanelPage.Home ? Visibility.Visible : Visibility.Collapsed;
+        LibraryPage.Visibility = page == PanelPage.Library ? Visibility.Visible : Visibility.Collapsed;
+        MemoryPage.Visibility = page == PanelPage.Memory ? Visibility.Visible : Visibility.Collapsed;
+        ConnectionsPage.Visibility = page == PanelPage.Connections ? Visibility.Visible : Visibility.Collapsed;
+        ScanPage.Visibility = page == PanelPage.Scan ? Visibility.Visible : Visibility.Collapsed;
 
         var active = new SolidColorBrush(Windows.UI.Color.FromArgb(0x22, 0xFF, 0xFF, 0xFF));
         var clear = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0));
-        HomeTab.Background = home ? active : clear;
-        LibraryTab.Background = home ? clear : active;
+        HomeTab.Background = page == PanelPage.Home ? active : clear;
+        LibraryTab.Background = page == PanelPage.Library ? active : clear;
+        MemoryTab.Background = page == PanelPage.Memory ? active : clear;
 
         FitWindowToContent();
+    }
+
+    private async void UpdateScanUI()
+    {
+        var scan = _companionManager.PhoneScan;
+        ScanStatusText.Text = scan.State switch
+        {
+            PhoneScanState.Generating => "Generating code…",
+            PhoneScanState.AwaitingPhoto => "Point your phone camera at the code",
+            PhoneScanState.PhotoReceived => "Photo received!",
+            PhoneScanState.Expired => "Code expired — tap Scan with phone again",
+            PhoneScanState.Failed => "Something went wrong — try again",
+            _ => ""
+        };
+
+        // Once the photo is in, jump back Home where the "Photo ready" card shows.
+        if (scan.State == PhoneScanState.PhotoReceived)
+        {
+            ShowPage(PanelPage.Home);
+            return;
+        }
+
+        var png = scan.QrPng;
+        if (png != null)
+        {
+            var bmp = new BitmapImage();
+            using var stream = new Windows.Storage.Streams.InMemoryRandomAccessStream();
+            await stream.WriteAsync(png.AsBuffer());
+            stream.Seek(0);
+            await bmp.SetSourceAsync(stream);
+            QrImage.Source = bmp;
+        }
+        else
+        {
+            QrImage.Source = null;
+        }
     }
 
     /// <summary>Draws a white selection ring around the active cursor-color swatch.</summary>

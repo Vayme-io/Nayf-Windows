@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using NAudio.CoreAudioApi;
 using NAudio.Wave;
 
 namespace NayfWindows;
@@ -18,7 +19,8 @@ public sealed class BuddyDictationManager : IDisposable
     public event Action<float>? AudioPowerLevelChanged;
 
     private WindowsSpeechTranscriptionProvider? _speechProvider;
-    private WaveInEvent? _waveIn;
+    private MMDevice? _meterDevice;
+    private System.Threading.Timer? _meterTimer;
     private CancellationTokenSource? _sessionCts;
     private bool _isRecording = false;
     private readonly object _recordingLock = new();
@@ -85,32 +87,46 @@ public sealed class BuddyDictationManager : IDisposable
         return string.IsNullOrWhiteSpace(fullTranscript) ? null : fullTranscript;
     }
 
+    private DateTime _lastPowerLog = DateTime.MinValue;
+
     private void StartMicrophonePowerMonitor()
     {
-        _waveIn = new WaveInEvent
+        // Poll the device's peak meter (no capture stream → doesn't disturb the
+        // recognizer). All COM work happens inside the timer callback so the
+        // MMDevice is created and read on the same (threadpool) apartment.
+        _meterTimer = new System.Threading.Timer(MeterTick, null, 0, 33);
+    }
+
+    private void MeterTick(object? state)
+    {
+        try
         {
-            WaveFormat = new WaveFormat(NayfConfig.AudioSampleRate, NayfConfig.AudioBitsPerSample, NayfConfig.AudioChannels),
-            BufferMilliseconds = 50
-        };
-        _waveIn.DataAvailable += OnAudioDataAvailable;
-        try { _waveIn.StartRecording(); }
+            if (_meterDevice == null)
+            {
+                var enumerator = new MMDeviceEnumerator();
+                _meterDevice = enumerator.GetDefaultAudioEndpoint(DataFlow.Capture, Role.Communications);
+                Logger.Log("Dictation", $"Metering '{_meterDevice.FriendlyName}'");
+            }
+
+            float peak = _meterDevice.AudioMeterInformation.MasterPeakValue;
+            AudioPowerLevelChanged?.Invoke(peak);
+        }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"[Dictation] Mic monitor failed: {ex.Message}");
+            if ((DateTime.UtcNow - _lastPowerLog).TotalMilliseconds > 500)
+            {
+                _lastPowerLog = DateTime.UtcNow;
+                Logger.Log("Dictation", $"Meter error: {ex.Message}");
+            }
         }
     }
 
     private void StopMicrophonePowerMonitor()
     {
-        _waveIn?.StopRecording();
-        _waveIn?.Dispose();
-        _waveIn = null;
-    }
-
-    private void OnAudioDataAvailable(object? sender, WaveInEventArgs e)
-    {
-        var power = CalculateAudioPower(e.Buffer, e.BytesRecorded);
-        AudioPowerLevelChanged?.Invoke(power);
+        _meterTimer?.Dispose();
+        _meterTimer = null;
+        _meterDevice?.Dispose();
+        _meterDevice = null;
     }
 
     private void OnTranscriptFinalized(string text)
@@ -125,9 +141,21 @@ public sealed class BuddyDictationManager : IDisposable
         PartialTranscriptUpdated?.Invoke(text);
     }
 
-    private static float CalculateAudioPower(byte[] buffer, int bytesRecorded)
+    private static float CalculateAudioPower(byte[] buffer, int bytesRecorded, WaveFormat? format)
     {
-        if (bytesRecorded < 2) return 0f;
+        if (bytesRecorded < 4) return 0f;
+
+        // WASAPI shared-mode capture is normally 32-bit IEEE float.
+        if (format?.Encoding == NAudio.Wave.WaveFormatEncoding.IeeeFloat)
+        {
+            double sum = 0;
+            int count = bytesRecorded / 4;
+            for (int i = 0; i + 3 < bytesRecorded; i += 4)
+                { float s = BitConverter.ToSingle(buffer, i); sum += (double)s * s; }
+            return (float)Math.Min(Math.Sqrt(sum / count), 1.0);
+        }
+
+        // Otherwise treat as 16-bit PCM.
         long sumSquares = 0;
         int sampleCount = bytesRecorded / 2;
         for (int i = 0; i < bytesRecorded - 1; i += 2)

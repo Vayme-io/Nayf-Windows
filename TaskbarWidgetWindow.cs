@@ -37,6 +37,10 @@ public sealed class TaskbarWidgetWindow : IDisposable
     private const int W = 226;
     private const int H = 40;
 
+    // Smoothing state for the equalizer so it swells/settles instead of jittering.
+    private float _smoothedLevel;
+    private readonly float[] _barHeights = new float[5];
+
     private IntPtr _hwnd = IntPtr.Zero;
     private Thread? _messageThread;
     private NativeMethods.WndProc? _wndProcDelegate;
@@ -212,7 +216,10 @@ public sealed class TaskbarWidgetWindow : IDisposable
         switch (state)
         {
             case CompanionVoiceState.Listening:
-                DrawEqualizer(g, rx, cy, accent, Math.Clamp(_companionManager.AudioPowerLevel, 0f, 1f), t);
+                // Green + audio-reactive while the user is speaking. AudioPowerLevel
+                // is now a device peak (0–1); a modest gain makes it lively.
+                DrawEqualizer(g, rx, cy, Color.FromArgb(255, 52, 199, 89),
+                    Math.Clamp(_companionManager.AudioPowerLevel * 2.2f, 0f, 1f), t);
                 break;
             case CompanionVoiceState.Responding:
                 DrawEqualizer(g, rx, cy, Color.FromArgb(255, 255, 140, 40), 0.55f, t);
@@ -262,16 +269,33 @@ public sealed class TaskbarWidgetWindow : IDisposable
         }
     }
 
-    /// <summary>Five oscillating bars whose height swells with the audio amplitude.</summary>
-    private static void DrawEqualizer(Graphics g, int x, int cy, Color color, float amplitude, float t)
+    /// <summary>
+    /// Five bars whose height swells with the (smoothed) audio level. The level
+    /// uses a fast attack / slow release, each bar eases toward its target, and a
+    /// bell profile makes the centre bars taller — so it feels fluid, not jittery.
+    /// </summary>
+    private void DrawEqualizer(Graphics g, int x, int cy, Color color, float amplitude, float t)
     {
+        // Smooth the level: rise quickly, fall gently.
+        float target = Math.Clamp(amplitude, 0f, 1f);
+        float rate = target > _smoothedLevel ? 0.45f : 0.10f;
+        _smoothedLevel += (target - _smoothedLevel) * rate;
+
+        const int bars = 5, barW = 3, gap = 4;
         using var brush = new SolidBrush(color);
-        const int bars = 5, barW = 3, gap = 3;
         for (int i = 0; i < bars; i++)
         {
-            float phase = i * 0.75f;
-            float wave = (float)(Math.Sin(t * 8 + phase) * 0.5 + 0.5); // 0..1
-            float h = 3 + wave * (3 + amplitude * 15);
+            // Two overlaid waves at different rates → organic, non-repeating motion.
+            float phase = i * 0.9f;
+            float wobble = (float)((Math.Sin(t * 5.5 + phase) * 0.5 + 0.5) * 0.6
+                                 + (Math.Sin(t * 3.1 + phase * 1.7) * 0.5 + 0.5) * 0.4);
+            // Bell shape: centre bars respond more than the edges.
+            float dist = Math.Abs(i - (bars - 1) / 2f) / ((bars - 1) / 2f);
+            float bell = 0.55f + 0.45f * (1f - dist);
+            float targetH = 3f + wobble * (2.5f + _smoothedLevel * 20f * bell);
+
+            _barHeights[i] += (targetH - _barHeights[i]) * 0.30f; // per-bar easing
+            float h = _barHeights[i];
             float bx = x + i * (barW + gap);
             g.FillRoundedRect(brush, bx, cy - h / 2, barW, h, barW / 2f);
         }

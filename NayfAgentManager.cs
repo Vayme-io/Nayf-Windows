@@ -97,6 +97,20 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
                 },
                 required = new[] { "action" }
             }
+        },
+        new
+        {
+            name = "spotify_play",
+            description = "Play a specific song, album, or artist on Spotify by name. This is the RELIABLE way to play music on Spotify — it searches the Spotify catalog for the best match and plays that exact track in the Spotify desktop app, launching Spotify if needed. ALWAYS use this for \"play <song/artist> on spotify\" requests instead of opening Spotify and navigating its UI by clicking.",
+            input_schema = new
+            {
+                type = "object",
+                properties = new
+                {
+                    query = new { type = "string", description = "The song, album, or artist to play, e.g. 'Go by The Chemical Brothers'" }
+                },
+                required = new[] { "query" }
+            }
         }
     };
 
@@ -126,8 +140,9 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
 
         var messages = BuildInitialMessages(userRequest, screenshots, conversationHistory);
         var fullFinalText = "";
+        var lastAssistantText = "";
 
-        const int maxIterations = 10;
+        const int maxIterations = 15;
 
         for (int iteration = 0; iteration < maxIterations; iteration++)
         {
@@ -156,7 +171,10 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
             // Add Claude's response to the message history
             var assistantContent = new List<object>();
             if (!string.IsNullOrEmpty(turnResult.TextContent))
+            {
                 assistantContent.Add(new { type = "text", text = turnResult.TextContent });
+                lastAssistantText = turnResult.TextContent; // keep the latest narration
+            }
 
             foreach (var toolCall in turnResult.ToolCalls)
             {
@@ -185,29 +203,65 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
             foreach (var toolCall in turnResult.ToolCalls)
             {
                 var toolStep = AddStep($"Running: {toolCall.ToolName}", AgentStepStatus.Running);
-                string toolOutput;
+                AgentToolResult toolResult;
 
                 try
                 {
-                    toolOutput = await _toolExecutor.ExecuteToolAsync(toolCall, cancellationToken);
+                    toolResult = await _toolExecutor.ExecuteToolAsync(toolCall, cancellationToken, authToken);
                     UpdateStep(toolStep, AgentStepStatus.Completed,
-                        toolOutput.Length > 100 ? toolOutput[..100] + "…" : toolOutput);
+                        toolResult.Text.Length > 100 ? toolResult.Text[..100] + "…" : toolResult.Text);
                 }
                 catch (Exception ex)
                 {
-                    toolOutput = $"Tool error: {ex.Message}";
+                    toolResult = AgentToolResult.Message($"Tool error: {ex.Message}");
                     UpdateStep(toolStep, AgentStepStatus.Failed, ex.Message);
                 }
 
-                toolResults.Add(new
+                // A screenshot must go back as an image block so Claude can see it;
+                // everything else is plain text.
+                if (toolResult.ScreenshotJpeg != null)
                 {
-                    type = "tool_result",
-                    tool_use_id = toolCall.ToolUseId,
-                    content = toolOutput
-                });
+                    toolResults.Add(new
+                    {
+                        type = "tool_result",
+                        tool_use_id = toolCall.ToolUseId,
+                        content = new object[]
+                        {
+                            new
+                            {
+                                type = "image",
+                                source = new
+                                {
+                                    type = "base64",
+                                    media_type = "image/jpeg",
+                                    data = Convert.ToBase64String(toolResult.ScreenshotJpeg)
+                                }
+                            },
+                            new { type = "text", text = toolResult.Text }
+                        }
+                    });
+                }
+                else
+                {
+                    toolResults.Add(new
+                    {
+                        type = "tool_result",
+                        tool_use_id = toolCall.ToolUseId,
+                        content = toolResult.Text
+                    });
+                }
             }
 
             messages.Add(new { role = "user", content = toolResults });
+        }
+
+        // If we hit the step limit without a clean finish, still say something so
+        // the user isn't left with silence.
+        if (string.IsNullOrWhiteSpace(fullFinalText))
+        {
+            fullFinalText = string.IsNullOrWhiteSpace(lastAssistantText)
+                ? "I couldn't quite finish that — it took more steps than I could complete. Want me to keep going?"
+                : lastAssistantText;
         }
 
         return fullFinalText;

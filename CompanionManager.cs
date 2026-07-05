@@ -209,6 +209,21 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
 
         Do NOT use tools for questions, explanations, or pointing — those need no action on the
         PC. Tools are for tasks, not answers. For "where is X / how do I Y" use [POINT] tags.
+
+        Playing music on Spotify:
+        Use the dedicated spotify_play tool with a natural query (e.g. "Go by The Chemical
+        Brothers"). It searches the Spotify catalog and plays the exact track in the Spotify
+        app reliably — far better than navigating Spotify's UI. ALWAYS use it for any
+        "play <song/artist> on spotify" request. Never guess or construct track URIs.
+
+        Controlling other apps by mouse/keyboard:
+        Drive the app's UI, verifying with screenshots each step:
+        1. Open the app: bash `Start-Process <app>`.
+        2. Take a screenshot to see the layout.
+        3. Use the key tool for shortcuts (it accepts combos like "ctrl+l", "enter",
+           "ctrl+shift+p") and the type tool to enter text.
+        4. left_click using the coordinates you see in the LATEST screenshot, then take a
+           fresh screenshot to confirm the result. Never reuse old coordinates or guess.
         """;
 
     public CompanionManager(AuthManager authManager)

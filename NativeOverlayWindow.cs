@@ -77,6 +77,7 @@ public sealed class NativeOverlayWindow : IDisposable
 
     private System.Threading.Timer? _renderTimer;
     private System.Threading.Timer? _topmostTimer;
+    private int _renderGuard; // prevents overlapping render ticks (GDI+ isn't reentrant)
 
     private const int WS_EX_LAYERED     = 0x00080000;
     private const int WS_EX_TRANSPARENT = 0x00000020;
@@ -140,9 +141,13 @@ public sealed class NativeOverlayWindow : IDisposable
 
         RenderFrame();
 
-        // 60 fps render + move
-        _renderTimer = new System.Threading.Timer(_ => RenderFrame(), null,
-            TimeSpan.FromMilliseconds(16), TimeSpan.FromMilliseconds(16));
+        // 60 fps render + move. Guard against overlapping ticks — GDI+ is not
+        // reentrant, and a long frame firing twice fail-fasts the process.
+        _renderTimer = new System.Threading.Timer(_ =>
+        {
+            if (Interlocked.Exchange(ref _renderGuard, 1) == 1) return;
+            try { RenderFrame(); } finally { Interlocked.Exchange(ref _renderGuard, 0); }
+        }, null, TimeSpan.FromMilliseconds(16), TimeSpan.FromMilliseconds(16));
 
         // Re-assert topmost every 2 s
         _topmostTimer = new System.Threading.Timer(_ =>

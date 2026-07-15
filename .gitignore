@@ -2,3 +2,7 @@ bin/
 obj/
 *.user
 .vs/
+
+# Publish output and compiled installer (build artifacts)
+publish/
+installer/Output/

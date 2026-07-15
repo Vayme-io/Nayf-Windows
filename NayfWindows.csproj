@@ -30,4 +30,21 @@
   <ItemGroup>
     <Content Include="Assets\**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
+
+  <!-- WORKAROUND: `dotnet publish` for unpackaged WinUI 3 apps drops the compiled
+       XAML (*.xbf) and the app resource index (NayfWindows.pri). Without them
+       Application.LoadComponent throws XamlParseException at first-window
+       creation and the app dies on startup. Copy them from the build output
+       ($(OutDir)) into the publish folder so published builds run correctly. -->
+  <Target Name="CopyPriAndXbfToPublish" AfterTargets="Publish">
+    <ItemGroup>
+      <_NayfPriXbf Include="$(OutDir)*.pri" />
+      <_NayfPriXbf Include="$(OutDir)*.xbf" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_NayfPriXbf)"
+          DestinationFolder="$(PublishDir)"
+          SkipUnchangedFiles="false"
+          Condition="'@(_NayfPriXbf)' != ''" />
+    <Message Importance="high" Text="Nayf: copied PRI/XBF resources into publish output." />
+  </Target>
 </Project>

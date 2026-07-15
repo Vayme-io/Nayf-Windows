@@ -46,6 +46,7 @@ public sealed class TaskbarWidgetWindow : IDisposable
     private NativeMethods.WndProc? _wndProcDelegate;
     private System.Threading.Timer? _renderTimer;
     private System.Threading.Timer? _topmostTimer;
+    private int _renderGuard; // prevents overlapping timer callbacks (GDI+ isn't reentrant)
     private int _originX, _originY;
 
     private const int WS_EX_LAYERED = 0x00080000;
@@ -124,9 +125,13 @@ public sealed class TaskbarWidgetWindow : IDisposable
             NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE);
 
         RenderFrame();
-        // ~33 fps for smooth equalizer animation.
-        _renderTimer = new System.Threading.Timer(_ => RenderFrame(), null,
-            TimeSpan.FromMilliseconds(30), TimeSpan.FromMilliseconds(30));
+        // ~33 fps for smooth equalizer animation. Guard against re-entrancy: if a
+        // frame runs long, skip the overlapping tick instead of drawing twice.
+        _renderTimer = new System.Threading.Timer(_ =>
+        {
+            if (Interlocked.Exchange(ref _renderGuard, 1) == 1) return;
+            try { RenderFrame(); } finally { Interlocked.Exchange(ref _renderGuard, 0); }
+        }, null, TimeSpan.FromMilliseconds(30), TimeSpan.FromMilliseconds(30));
         _topmostTimer = new System.Threading.Timer(_ =>
         {
             if (_hwnd != IntPtr.Zero)

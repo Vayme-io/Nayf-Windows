@@ -509,10 +509,9 @@ public sealed partial class CompanionPanelWindow : Window
         }
     }
 
-    private enum PanelPage { Home, Library, Memory, Connections, Scan }
+    private enum PanelPage { Home, Memory, Connections, Scan }
 
     private void HomeTab_Click(object sender, RoutedEventArgs e) => ShowPage(PanelPage.Home);
-    private void LibraryTab_Click(object sender, RoutedEventArgs e) => ShowPage(PanelPage.Library);
     private void MemoryTab_Click(object sender, RoutedEventArgs e) => ShowPage(PanelPage.Memory);
     private void ConnectAppsButton_Click(object sender, RoutedEventArgs e) => ShowPage(PanelPage.Connections);
     private void CloseButton_Click(object sender, RoutedEventArgs e) => HidePanel();
@@ -595,7 +594,6 @@ public sealed partial class CompanionPanelWindow : Window
     private void ShowPage(PanelPage page)
     {
         HomePage.Visibility = page == PanelPage.Home ? Visibility.Visible : Visibility.Collapsed;
-        LibraryPage.Visibility = page == PanelPage.Library ? Visibility.Visible : Visibility.Collapsed;
         MemoryPage.Visibility = page == PanelPage.Memory ? Visibility.Visible : Visibility.Collapsed;
         ConnectionsPage.Visibility = page == PanelPage.Connections ? Visibility.Visible : Visibility.Collapsed;
         ScanPage.Visibility = page == PanelPage.Scan ? Visibility.Visible : Visibility.Collapsed;
@@ -603,7 +601,6 @@ public sealed partial class CompanionPanelWindow : Window
         var active = new SolidColorBrush(Windows.UI.Color.FromArgb(0x22, 0xFF, 0xFF, 0xFF));
         var clear = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0));
         HomeTab.Background = page == PanelPage.Home ? active : clear;
-        LibraryTab.Background = page == PanelPage.Library ? active : clear;
         MemoryTab.Background = page == PanelPage.Memory ? active : clear;
 
         FitWindowToContent();

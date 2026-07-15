@@ -39,14 +39,6 @@
                                 <TextBlock Text="Home" FontSize="13" FontWeight="SemiBold" FontFamily="Segoe UI Variable"/>
                             </StackPanel>
                         </Button>
-                        <Button x:Name="LibraryTab" Click="LibraryTab_Click"
-                                Background="Transparent" BorderThickness="0"
-                                CornerRadius="13" Padding="14,7,14,7">
-                            <StackPanel Orientation="Horizontal" Spacing="7">
-                                <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE736;" FontSize="13"/>
-                                <TextBlock Text="Library" FontSize="13" FontWeight="SemiBold" FontFamily="Segoe UI Variable"/>
-                            </StackPanel>
-                        </Button>
                         <Button x:Name="MemoryTab" Click="MemoryTab_Click"
                                 Background="Transparent" BorderThickness="0"
                                 CornerRadius="13" Padding="14,7,14,7">
@@ -81,8 +73,6 @@
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="196"/>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="116"/>
                 </Grid.ColumnDefinitions>
 
                 <!-- Talk card + cursor color -->
@@ -194,33 +184,7 @@
                         </Grid>
                     </Button>
                 </StackPanel>
-
-                <Rectangle Grid.Column="3" Width="1" Fill="#14FFFFFF" VerticalAlignment="Stretch"/>
-
-                <!-- Library column -->
-                <Button x:Name="LibraryButton" Grid.Column="4" Click="LibraryTab_Click"
-                        Background="Transparent" BorderThickness="0" Padding="0" Margin="16,0,0,0"
-                        HorizontalAlignment="Stretch" VerticalAlignment="Top">
-                    <StackPanel Spacing="8" HorizontalAlignment="Center">
-                        <Grid Width="66" Height="66">
-                            <Ellipse Width="66" Height="66" Fill="#0FFFFFFF"/>
-                            <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE736;" FontSize="24" Foreground="#C5C5CA"/>
-                        </Grid>
-                        <TextBlock Text="Library" Foreground="#8E8E93" FontSize="12"
-                                   FontFamily="Segoe UI Variable" HorizontalAlignment="Center"/>
-                    </StackPanel>
-                </Button>
             </Grid>
-
-            <!-- ───────────── LIBRARY PAGE ───────────── -->
-            <StackPanel x:Name="LibraryPage" Padding="28,28,28,40" Spacing="12"
-                        Visibility="Collapsed" HorizontalAlignment="Stretch">
-                <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE736;" FontSize="34"
-                          Foreground="#48484A" HorizontalAlignment="Center"/>
-                <TextBlock Text="Ask Nayf to explain anything — it'll show up here."
-                           Foreground="#8E8E93" FontSize="13" FontFamily="Segoe UI Variable"
-                           HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"/>
-            </StackPanel>
 
             <!-- ───────────── MEMORY PAGE ───────────── -->
             <StackPanel x:Name="MemoryPage" Padding="28,10,28,16" Spacing="12"

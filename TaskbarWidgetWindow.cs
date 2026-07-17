@@ -63,6 +63,7 @@ public sealed class TaskbarWidgetWindow : IDisposable
     private const uint TME_LEAVE = 0x00000002;
 
     private bool _hovering;
+    private bool _hiddenForFullscreen; // hidden while a fullscreen app (video/game) is foreground
 
     public TaskbarWidgetWindow(CompanionManager companionManager)
     {
@@ -134,7 +135,7 @@ public sealed class TaskbarWidgetWindow : IDisposable
         }, null, TimeSpan.FromMilliseconds(30), TimeSpan.FromMilliseconds(30));
         _topmostTimer = new System.Threading.Timer(_ =>
         {
-            if (_hwnd != IntPtr.Zero)
+            if (_hwnd != IntPtr.Zero && !_hiddenForFullscreen)
                 NativeMethods.SetWindowPos(_hwnd, NativeMethods.HWND_TOPMOST, 0, 0, 0, 0,
                     NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE);
         }, null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
@@ -179,6 +180,16 @@ public sealed class TaskbarWidgetWindow : IDisposable
     private void RenderFrame()
     {
         if (_hwnd == IntPtr.Zero) return;
+
+        // Get out of the way of fullscreen apps (video, games) — just like the
+        // taskbar auto-hides. Toggle visibility only on change to avoid churn.
+        bool fullscreen = IsFullscreenAppForeground();
+        if (fullscreen != _hiddenForFullscreen)
+        {
+            _hiddenForFullscreen = fullscreen;
+            ShowWindow(_hwnd, fullscreen ? 0 /* SW_HIDE */ : 4 /* SW_SHOWNOACTIVATE */);
+        }
+        if (fullscreen) return; // nothing to draw while hidden
 
         using var bitmap = new Bitmap(W, H, PixelFormat.Format32bppArgb);
         using var g = Graphics.FromImage(bitmap);
@@ -238,6 +249,30 @@ public sealed class TaskbarWidgetWindow : IDisposable
         }
 
         ApplyLayeredWindow(bitmap, _originX, _originY);
+    }
+
+    /// <summary>
+    /// True when a fullscreen application (fullscreen video, a game, a slideshow)
+    /// owns the foreground on its monitor — the cue to get out of the way. Detected
+    /// by comparing the foreground window's rect to its monitor bounds; the shell
+    /// and desktop are excluded so a bare desktop never counts as fullscreen.
+    /// </summary>
+    private static bool IsFullscreenAppForeground()
+    {
+        IntPtr fg = NativeMethods.GetForegroundWindow();
+        if (fg == IntPtr.Zero) return false;
+        if (fg == NativeMethods.GetShellWindow()) return false;
+
+        if (!NativeMethods.GetWindowRect(fg, out var wr)) return false;
+
+        IntPtr mon = NativeMethods.MonitorFromWindow(fg, NativeMethods.MONITOR_DEFAULTTONEAREST);
+        if (mon == IntPtr.Zero) return false;
+        var mi = new NativeMethods.MONITORINFOEX { cbSize = (uint)Marshal.SizeOf<NativeMethods.MONITORINFOEX>() };
+        if (!NativeMethods.GetMonitorInfo(mon, ref mi)) return false;
+        var m = mi.rcMonitor;
+
+        // Foreground window fully covers (or exceeds) the monitor → fullscreen.
+        return wr.Left <= m.Left && wr.Top <= m.Top && wr.Right >= m.Right && wr.Bottom >= m.Bottom;
     }
 
     /// <summary>Draws the Nayf logo centered at (x, cy), scaled by the breath factor.</summary>

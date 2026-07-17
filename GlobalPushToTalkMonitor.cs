@@ -392,6 +392,12 @@ public static class NativeMethods
     public static extern IntPtr MonitorFromPoint(POINT pt, uint dwFlags);
     public const uint MONITOR_DEFAULTTONEAREST = 0x00000002;
 
+    [DllImport("user32.dll")]
+    public static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint dwFlags);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetShellWindow();
+
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     public struct MONITORINFOEX
     {

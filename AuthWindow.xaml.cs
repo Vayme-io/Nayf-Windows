@@ -1,11 +1,17 @@
 using System;
+using System.IO;
 using System.Threading.Tasks;
+using Microsoft.UI.Composition;
+using Microsoft.UI.Composition.SystemBackdrops;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Imaging;
 using Windows.Graphics;
 using Windows.System;
+using WinRT;
 using WinRT.Interop;
 
 namespace NayfWindows;
@@ -22,6 +28,9 @@ public sealed partial class AuthWindow : Window
     private bool _isSignUpMode;
     private bool _isBusy;
 
+    private DesktopAcrylicController? _acrylicController;
+    private SystemBackdropConfiguration? _backdropConfig;
+
     /// <summary>Raised once the user successfully signs in or signs up.</summary>
     public event Action? AuthenticationSucceeded;
 
@@ -30,10 +39,15 @@ public sealed partial class AuthWindow : Window
         _authManager = authManager;
         InitializeComponent();
         SetupWindow();
+        LoadLogo();
 
-        // Submit on Enter from either field.
+        // Submit on Enter from either field; Escape closes the window.
         EmailBox.KeyDown += OnFieldKeyDown;
         PasswordBox.KeyDown += OnFieldKeyDown;
+        RootGrid.KeyDown += OnFieldKeyDown;
+
+        // Size the window to fit its content and keep it centred.
+        ContentStack.SizeChanged += (_, _) => FitWindowToContent();
     }
 
     private void SetupWindow()
@@ -42,31 +56,104 @@ public sealed partial class AuthWindow : Window
         var appWindow = AppWindow.GetFromWindowId(
             Microsoft.UI.Win32Interop.GetWindowIdFromWindow(hwnd));
 
+        // Borderless, frameless — no title bar — exactly like the companion panel.
         var presenter = OverlappedPresenter.Create();
         presenter.IsMaximizable = false;
         presenter.IsMinimizable = false;
         presenter.IsResizable = false;
+        presenter.SetBorderAndTitleBar(hasBorder: true, hasTitleBar: false);
         appWindow.SetPresenter(presenter);
+        appWindow.Title = "Nayf";
 
-        // Dark title bar to match the panel.
+        // Dark-mode rounded appearance.
         int darkMode = 1;
         NativeMethods.DwmSetWindowAttribute(hwnd, 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */,
             ref darkMode, sizeof(int));
 
-        appWindow.Title = "Sign in to Nayf";
-        appWindow.ResizeClient(new SizeInt32(360, 560));
+        if (Content is FrameworkElement root)
+            root.RequestedTheme = ElementTheme.Dark;
 
-        // Center on the work area.
+        // Standard (Base) acrylic — the same frosted, dark, Start-menu-like
+        // material the companion panel uses.
+        if (DesktopAcrylicController.IsSupported())
+        {
+            _backdropConfig = new SystemBackdropConfiguration
+            {
+                IsInputActive = true,
+                Theme = SystemBackdropTheme.Dark
+            };
+            _acrylicController = new DesktopAcrylicController { Kind = DesktopAcrylicKind.Base };
+            _acrylicController.AddSystemBackdropTarget(this.As<ICompositionSupportsSystemBackdrop>());
+            _acrylicController.SetSystemBackdropConfiguration(_backdropConfig);
+        }
+        else
+        {
+            SystemBackdrop = new DesktopAcrylicBackdrop();
+        }
+
+        // Release the backdrop material when the window goes away.
+        Closed += (_, _) =>
+        {
+            _acrylicController?.Dispose();
+            _acrylicController = null;
+        };
+
+        // Reasonable initial size; FitWindowToContent refines it once measured.
+        appWindow.ResizeClient(new SizeInt32(380, 470));
+        CenterOnPrimary(appWindow, 380, 470);
+    }
+
+    /// <summary>Loads the real Nayf logo from the app's Assets folder.</summary>
+    private void LoadLogo()
+    {
+        try
+        {
+            var path = Path.Combine(AppContext.BaseDirectory, "Assets", "NayfIcon.png");
+            if (File.Exists(path))
+                LogoImage.Source = new BitmapImage(new Uri(path));
+        }
+        catch (Exception ex)
+        {
+            Logger.Log("AuthWindow", $"Logo load failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>Resizes the window to fit its content and re-centres it.</summary>
+    private void FitWindowToContent()
+    {
+        double dipWidth = ContentStack.ActualWidth > 0 ? ContentStack.ActualWidth : ContentStack.Width;
+        double dipHeight = ContentStack.ActualHeight;
+        if (dipWidth <= 0 || dipHeight <= 0) return;
+
+        double scale = RootGrid.XamlRoot?.RasterizationScale ?? 1.0;
+        int w = (int)Math.Ceiling(dipWidth * scale);
+        int h = (int)Math.Ceiling((dipHeight + 1) * scale);
+
+        var hwnd = WindowNative.GetWindowHandle(this);
+        var appWindow = AppWindow.GetFromWindowId(
+            Microsoft.UI.Win32Interop.GetWindowIdFromWindow(hwnd));
+
+        appWindow.ResizeClient(new SizeInt32(w, h));
+        NativeMethods.GetWindowRect(hwnd, out var outer);
+        CenterOnPrimary(appWindow, outer.Right - outer.Left, outer.Bottom - outer.Top);
+    }
+
+    private static void CenterOnPrimary(AppWindow appWindow, int outerW, int outerH)
+    {
         var area = DisplayArea.GetFromWindowId(appWindow.Id, DisplayAreaFallback.Primary);
-        int x = area.WorkArea.X + (area.WorkArea.Width - 360) / 2;
-        int y = area.WorkArea.Y + (area.WorkArea.Height - 560) / 2;
+        int x = area.WorkArea.X + (area.WorkArea.Width - outerW) / 2;
+        int y = area.WorkArea.Y + (area.WorkArea.Height - outerH) / 2;
         appWindow.Move(new PointInt32(x, y));
     }
+
+    private void CloseButton_Click(object sender, RoutedEventArgs e) => Close();
 
     private void OnFieldKeyDown(object sender, KeyRoutedEventArgs e)
     {
         if (e.Key == VirtualKey.Enter)
             _ = SubmitAsync();
+        else if (e.Key == VirtualKey.Escape)
+            Close();
     }
 
     private void SubmitButton_Click(object sender, RoutedEventArgs e) => _ = SubmitAsync();

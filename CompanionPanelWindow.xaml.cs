@@ -152,8 +152,11 @@ public sealed partial class CompanionPanelWindow : Window
         if (Content is FrameworkElement root)
             root.RequestedTheme = ElementTheme.Dark;
 
-        // Standard (Base) acrylic — dark and frosted with the background just
-        // barely showing through, exactly like the Windows 11 Start menu.
+        // Frosted, translucent acrylic. Base is the Start-menu material but is
+        // nearly opaque, so the tint is dialled back by hand to let more of the
+        // desktop through. The tint stays a dark near-black rather than switching
+        // to the Thin kind, which washes out to a light grey.
+        // NOTE: assigning Kind resets the tint properties, so it must come first.
         if (DesktopAcrylicController.IsSupported())
         {
             _backdropConfig = new SystemBackdropConfiguration
@@ -162,6 +165,10 @@ public sealed partial class CompanionPanelWindow : Window
                 Theme = SystemBackdropTheme.Dark
             };
             _acrylicController = new DesktopAcrylicController { Kind = DesktopAcrylicKind.Base };
+            _acrylicController.TintColor = Windows.UI.Color.FromArgb(255, 24, 24, 27);
+            _acrylicController.TintOpacity = 0.50f;       // how strongly the tint stains
+            _acrylicController.LuminosityOpacity = 0.78f; // lower = more background shows
+            _acrylicController.FallbackColor = Windows.UI.Color.FromArgb(255, 28, 28, 30);
             _acrylicController.AddSystemBackdropTarget(this.As<ICompositionSupportsSystemBackdrop>());
             _acrylicController.SetSystemBackdropConfiguration(_backdropConfig);
         }

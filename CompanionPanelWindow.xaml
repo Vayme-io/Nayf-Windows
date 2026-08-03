@@ -138,36 +138,6 @@
 
                 <!-- Quick actions -->
                 <StackPanel Grid.Column="2" Spacing="8" Margin="16,0,16,0">
-                    <Button x:Name="PastePhotoButton" Click="PastePhotoButton_Click"
-                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
-                            Background="#0FFFFFFF" BorderThickness="0" CornerRadius="12" Padding="12,11,12,11">
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto"/>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <FontIcon x:Name="PastePhotoIcon" FontFamily="Segoe Fluent Icons" Glyph="&#xE77F;" FontSize="14" Foreground="#458FFF"/>
-                            <TextBlock x:Name="PastePhotoLabel" Grid.Column="1" Text="Paste photo" Margin="9,0,0,0"
-                                       Foreground="#C5C5CA" FontSize="13" FontFamily="Segoe UI Variable" VerticalAlignment="Center"/>
-                            <FontIcon Grid.Column="2" FontFamily="Segoe Fluent Icons" Glyph="&#xE76C;" FontSize="10" Foreground="#6E6E73"/>
-                        </Grid>
-                    </Button>
-                    <Button x:Name="ScanPhoneButton" Click="ScanPhoneButton_Click"
-                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
-                            Background="#0FFFFFFF" BorderThickness="0" CornerRadius="12" Padding="12,11,12,11">
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto"/>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE8B6;" FontSize="14" Foreground="#8E8E93"/>
-                            <TextBlock Grid.Column="1" Text="Scan with phone" Margin="9,0,0,0"
-                                       Foreground="#C5C5CA" FontSize="13" FontFamily="Segoe UI Variable" VerticalAlignment="Center"/>
-                            <FontIcon Grid.Column="2" FontFamily="Segoe Fluent Icons" Glyph="&#xE76C;" FontSize="10" Foreground="#6E6E73"/>
-                        </Grid>
-                    </Button>
                     <Button x:Name="ConnectAppsButton" Click="ConnectAppsButton_Click"
                             HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
                             Background="#0FFFFFFF" BorderThickness="0" CornerRadius="12" Padding="12,11,12,11">
@@ -325,24 +295,6 @@
                 </Border>
             </StackPanel>
 
-            <!-- ───────────── SCAN WITH PHONE PAGE ───────────── -->
-            <StackPanel x:Name="ScanPage" Padding="28,10,28,20" Spacing="12"
-                        Visibility="Collapsed" HorizontalAlignment="Stretch">
-                <TextBlock Text="Scan with your phone camera"
-                           Foreground="White" FontSize="14" FontWeight="SemiBold"
-                           FontFamily="Segoe UI Variable" HorizontalAlignment="Center"/>
-                <Border Width="196" Height="196" CornerRadius="14" Background="White"
-                        HorizontalAlignment="Center" Padding="10">
-                    <Image x:Name="QrImage" Stretch="Uniform"/>
-                </Border>
-                <TextBlock x:Name="ScanStatusText" Text="Generating code…"
-                           Foreground="#8E8E93" FontSize="12.5" FontFamily="Segoe UI Variable"
-                           HorizontalAlignment="Center"/>
-                <TextBlock Text="Take a photo of anything — notes, a diagram, a problem — then hold Ctrl + Alt to ask Nayf about it."
-                           Foreground="#8E8E93" FontSize="12" FontFamily="Segoe UI Variable"
-                           HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" MaxWidth="380"/>
-            </StackPanel>
-
             <!-- ───────────── DYNAMIC AREA (response / agent / banners) ───────────── -->
             <StackPanel x:Name="DynamicArea" Padding="28,0,28,8" Spacing="10">
                 <TextBlock x:Name="LastTranscriptText" Text=""
@@ -434,9 +386,6 @@
                     </StackPanel>
                 </Border>
 
-                <!-- Hint when clipboard has no image -->
-                <TextBlock x:Name="NoImageHint" Text="No image in clipboard. Copy a photo first."
-                           Foreground="#FF9F0A" FontSize="11" FontFamily="Segoe UI Variable" Visibility="Collapsed"/>
             </StackPanel>
 
             <!-- ───────────── FOOTER ───────────── -->
@@ -464,16 +413,14 @@
                                  Foreground="#FF6B6B" FontSize="11" FontFamily="Segoe UI Variable"
                                  Padding="0" Margin="0,0,12,0" VerticalAlignment="Center"/>
 
-                <!-- Model toggle -->
-                <Border Grid.Column="3" CornerRadius="13" Padding="2" VerticalAlignment="Center" Margin="0,0,8,0">
+                <!-- Routed model (Nayf picks automatically — not user-selectable) -->
+                <Border Grid.Column="3" CornerRadius="11" Padding="10,4,10,4" VerticalAlignment="Center" Margin="0,0,8,0">
                     <Border.Background><SolidColorBrush Color="#14FFFFFF"/></Border.Background>
-                    <StackPanel Orientation="Horizontal" Spacing="2">
-                        <Button x:Name="SonnetSeg" Content="Sonnet" Tag="claude-sonnet-4-6" Click="ModelSeg_Click"
-                                Background="Transparent" BorderThickness="0" CornerRadius="11" Padding="12,4,12,4"
-                                FontSize="11" FontWeight="SemiBold" FontFamily="Segoe UI Variable"/>
-                        <Button x:Name="OpusSeg" Content="Opus" Tag="claude-opus-4-6" Click="ModelSeg_Click"
-                                Background="Transparent" BorderThickness="0" CornerRadius="11" Padding="12,4,12,4"
-                                FontSize="11" FontWeight="SemiBold" FontFamily="Segoe UI Variable"/>
+                    <StackPanel Orientation="Horizontal" Spacing="5">
+                        <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE945;" FontSize="10" Foreground="#8E8E93"/>
+                        <TextBlock x:Name="ActiveModelText" Text="Auto"
+                                   Foreground="#C5C5CA" FontSize="11" FontWeight="SemiBold"
+                                   FontFamily="Segoe UI Variable" VerticalAlignment="Center"/>
                     </StackPanel>
                 </Border>
 

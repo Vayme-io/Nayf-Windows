@@ -59,16 +59,29 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
         private set { _audioPowerLevel = value; OnPropertyChanged(); }
     }
 
-    private string _selectedModel = NayfConfig.DefaultModel;
-    public string SelectedModel
+    /// <summary>
+    /// The model the last turn was routed to — surfaced in the panel footer so the
+    /// user can see which tier answered, but no longer user-selectable (Nayf picks).
+    /// </summary>
+    private string _activeModel = NayfConfig.ScreenModel;
+    public string ActiveModel
     {
-        get => _selectedModel;
-        set
-        {
-            _selectedModel = value;
-            _claudeAPI.Model = value;
-            OnPropertyChanged();
-        }
+        get => _activeModel;
+        private set { _activeModel = value; OnPropertyChanged(); }
+    }
+
+    /// <summary>
+    /// Routes the model on ONE structural question: does this turn involve screen
+    /// coordinates? Voice turns run the agent loop with screenshots attached and can
+    /// point, draw and run walkthroughs, so they need the high-res vision tier.
+    /// Background text work (memory extraction) never touches coordinates.
+    /// </summary>
+    private void RouteModel(bool turnUsesScreenCoordinates)
+    {
+        var model = turnUsesScreenCoordinates ? NayfConfig.ScreenModel : NayfConfig.LightModel;
+        _claudeAPI.Model = model;
+        UpdateOnUI(() => ActiveModel = model);
+        Logger.Log("CompanionManager", $"model={model} (screenCoords={turnUsesScreenCoordinates})");
     }
 
     private NayfCursorColor _selectedCursorColor = NayfSettings.LoadCursorColor();
@@ -136,19 +149,17 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
         private set { _isOutOfCredits = value; OnPropertyChanged(); }
     }
 
-    // A photo pasted from the clipboard — sent with the next question instead of
-    // a screenshot, then consumed.
-    private byte[]? _pendingPhoto;
-    public bool HasPendingPhoto => _pendingPhoto != null;
-    public void SetPendingPhoto(byte[]? photo)
-    {
-        _pendingPhoto = photo;
-        UpdateOnUI(() => OnPropertyChanged(nameof(HasPendingPhoto)));
-    }
-
     // MARK: - Dependencies
 
     private readonly ClaudeAPI _claudeAPI;
+
+    /// <summary>
+    /// Dedicated client for background text-only work (memory extraction), pinned to
+    /// the light model. Kept separate from <see cref="_claudeAPI"/> because it runs
+    /// fire-and-forget alongside the next turn — sharing one instance would let the
+    /// two races overwrite each other's model.
+    /// </summary>
+    private readonly ClaudeAPI _lightClaudeAPI;
     private readonly ElevenLabsTTSClient _elevenLabsTTSClient;
     private readonly BuddyDictationManager _buddyDictationManager;
     private readonly GlobalPushToTalkMonitor _pushToTalkMonitor;
@@ -161,9 +172,6 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
 
     /// <summary>Durable facts Nayf has learned about the user (shown in the Memory tab).</summary>
     public MemoryStore Memory { get; } = new();
-
-    /// <summary>Drives the "Scan with phone" QR/WebSocket flow.</summary>
-    public PhoneScanManager PhoneScan { get; }
 
     private readonly DispatcherQueue _dispatcherQueue;
 
@@ -234,11 +242,8 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
         // Apply the saved cursor color before the overlays start rendering.
         NativeOverlayWindow.CursorBlue = _selectedCursorColor.ToDrawingColor();
 
-        // A phone-scanned photo drops straight into the pending-photo slot.
-        PhoneScan = new PhoneScanManager(() => _authManager.CurrentAccessTokenAsync());
-        PhoneScan.PhotoReceived += bytes => SetPendingPhoto(bytes);
-
-        _claudeAPI = new ClaudeAPI(NayfConfig.ChatEndpoint);
+        _claudeAPI = new ClaudeAPI(NayfConfig.ChatEndpoint, NayfConfig.ScreenModel);
+        _lightClaudeAPI = new ClaudeAPI(NayfConfig.ChatEndpoint, NayfConfig.LightModel);
         _elevenLabsTTSClient = new ElevenLabsTTSClient(NayfConfig.TTSEndpoint);
         _buddyDictationManager = new BuddyDictationManager();
         _pushToTalkMonitor = new GlobalPushToTalkMonitor();
@@ -349,7 +354,8 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
                 $"Already known:\n{(known.Length > 0 ? known : "(nothing yet)")}\n\n" +
                 $"Exchange:\nUser: {transcript}\nAssistant: {response}";
 
-            var result = await _claudeAPI.StreamResponseAsync(
+            // Text-only, no screen coordinates → light model.
+            var result = await _lightClaudeAPI.StreamResponseAsync(
                 userMsg, new List<ConversationTurn>(), null, null, system, authToken, CancellationToken.None);
 
             // Pull the JSON array out of the response and add each fact.
@@ -448,28 +454,14 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
         var ct = _currentResponseCts.Token;
 
         List<CapturedScreenshot>? screenshots = null;
-        var pending = _pendingPhoto;
-        if (pending != null)
+        try
         {
-            // A pasted photo takes the place of a screenshot for this question.
-            screenshots = new List<CapturedScreenshot>
-            {
-                new CapturedScreenshot(pending, 0, "Photo", 0, 0, 0, 0, 0, 0)
-            };
-            SetPendingPhoto(null);
-            Logger.Log("CompanionManager", "Using pasted photo instead of screenshot");
+            screenshots = await ScreenCaptureUtility.CaptureAllScreensAsync();
+            Logger.Log("CompanionManager", $"Captured {screenshots?.Count ?? 0} screenshot(s)");
         }
-        else
+        catch (Exception ex)
         {
-            try
-            {
-                screenshots = await ScreenCaptureUtility.CaptureAllScreensAsync();
-                Logger.Log("CompanionManager", $"Captured {screenshots?.Count ?? 0} screenshot(s)");
-            }
-            catch (Exception ex)
-            {
-                Logger.Log("CompanionManager", $"Screen capture failed: {ex.Message}");
-            }
+            Logger.Log("CompanionManager", $"Screen capture failed: {ex.Message}");
         }
 
         // Stay in Processing (the spinner) through the screenshot upload and
@@ -493,6 +485,9 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
             // files, computer control) before answering, or just respond/point
             // normally. Either way it returns the final text for TTS. The system
             // prompt carries what Nayf remembers about the user.
+            // Voice turns always carry screenshots and can point/draw → screen model.
+            RouteModel(turnUsesScreenCoordinates: true);
+
             var systemPrompt = BuildSystemPrompt();
             var memoryBlock = Memory.ContextBlock();
             if (memoryBlock.Length > 0) systemPrompt += "\n\n" + memoryBlock;

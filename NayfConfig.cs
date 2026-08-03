@@ -25,11 +25,31 @@ public static class NayfConfig
     public const string SupabaseURL = "https://vpigrsijmusymnjeuhsh.supabase.co";
     public const string SupabaseAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZwaWdyc2lqbXVzeW1uamV1aHNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk2NjA2ODksImV4cCI6MjA5NTIzNjY4OX0.keRzkBuv4QqfA6VDwJcznpEQbUR4ZsRmwHKJTeTzl74";
 
-    /// <summary>Default Claude model used for conversations.</summary>
-    public const string DefaultModel = "claude-sonnet-4-6";
+    /// <summary>
+    /// The two models Nayf routes between automatically — the user no longer picks.
+    ///
+    /// Routing answers ONE structural question: does this turn involve screen
+    /// coordinates? It is decided from the interaction mode, NOT by guessing from
+    /// the user's wording (cue-word matching decided the model *before* knowing what
+    /// the turn needed, so screen-coordinate turns could silently land on the light
+    /// model and point inaccurately — and it only ever worked in English).
+    ///
+    /// <see cref="ScreenModel"/> (Opus 5) is on the high-resolution vision tier: up to
+    /// 2576px long edge with 1:1 coordinate mapping between the image and the
+    /// coordinates it returns. Every turn that reads the screen or draws on it MUST
+    /// use it, or the overlay inherits scaling drift.
+    /// </summary>
+    public const string ScreenModel = "claude-opus-5";
 
-    /// <summary>Higher-quality/capability Claude model available as an option.</summary>
-    public const string OpusModel = "claude-opus-4-6";
+    /// <summary>
+    /// The standard vision tier (1568px, non-1:1 coords) — used only where no screen
+    /// coordinates are involved (background text work like memory extraction).
+    /// Cheaper and faster than <see cref="ScreenModel"/>.
+    /// </summary>
+    public const string LightModel = "claude-sonnet-5";
+
+    /// <summary>Model used when nothing more specific applies.</summary>
+    public const string DefaultModel = LightModel;
 
     /// <summary>
     /// Global push-to-talk keyboard shortcut — Ctrl+Alt matches the Mac's Ctrl+Option.

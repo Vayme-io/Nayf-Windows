@@ -63,7 +63,8 @@ public sealed class TaskbarWidgetWindow : IDisposable
     private const uint TME_LEAVE = 0x00000002;
 
     private bool _hovering;
-    private bool _hiddenForFullscreen; // hidden while a fullscreen app (video/game) is foreground
+    private bool _hiddenForFullscreen; // hidden while a fullscreen app (video/game) covers our monitor
+    private IntPtr _fsWindow;          // the fullscreen window we're currently hiding for (or Zero)
 
     public TaskbarWidgetWindow(CompanionManager companionManager)
     {
@@ -183,7 +184,7 @@ public sealed class TaskbarWidgetWindow : IDisposable
 
         // Get out of the way of fullscreen apps (video, games) — just like the
         // taskbar auto-hides. Toggle visibility only on change to avoid churn.
-        bool fullscreen = IsFullscreenAppForeground();
+        bool fullscreen = ShouldHideForFullscreen();
         if (fullscreen != _hiddenForFullscreen)
         {
             _hiddenForFullscreen = fullscreen;
@@ -252,26 +253,58 @@ public sealed class TaskbarWidgetWindow : IDisposable
     }
 
     /// <summary>
-    /// True when a fullscreen application (fullscreen video, a game, a slideshow)
-    /// owns the foreground on its monitor — the cue to get out of the way. Detected
-    /// by comparing the foreground window's rect to its monitor bounds; the shell
-    /// and desktop are excluded so a bare desktop never counts as fullscreen.
+    /// Whether the widget should hide because a fullscreen app (fullscreen video,
+    /// a game, a slideshow) covers the widget's monitor — mirroring how the taskbar
+    /// auto-hides. Once a fullscreen window is found we keep tracking it, so the
+    /// widget stays hidden even when the user clicks a window on another monitor
+    /// (the video is still fullscreen here). It reappears when that window leaves
+    /// fullscreen/closes, or when the user focuses a different window on THIS
+    /// monitor (the fullscreen content is no longer on top here).
     /// </summary>
-    private static bool IsFullscreenAppForeground()
+    private bool ShouldHideForFullscreen()
     {
+        IntPtr widgetMon = NativeMethods.MonitorFromWindow(_hwnd, NativeMethods.MONITOR_DEFAULTTONEAREST);
+        if (widgetMon == IntPtr.Zero) return false;
+
         IntPtr fg = NativeMethods.GetForegroundWindow();
-        if (fg == IntPtr.Zero) return false;
-        if (fg == NativeMethods.GetShellWindow()) return false;
+        IntPtr fgMon = fg != IntPtr.Zero
+            ? NativeMethods.MonitorFromWindow(fg, NativeMethods.MONITOR_DEFAULTTONEAREST)
+            : IntPtr.Zero;
 
-        if (!NativeMethods.GetWindowRect(fg, out var wr)) return false;
+        // Already tracking a fullscreen window that still covers our monitor.
+        if (_fsWindow != IntPtr.Zero && IsFullscreenOnMonitor(_fsWindow, widgetMon))
+        {
+            // Keep hidden while the user is in it or working on another monitor.
+            // Reveal only if they focused a different window on THIS monitor.
+            if (fg == _fsWindow || fgMon != widgetMon) return true;
+            _fsWindow = IntPtr.Zero;
+            return false;
+        }
 
-        IntPtr mon = NativeMethods.MonitorFromWindow(fg, NativeMethods.MONITOR_DEFAULTTONEAREST);
-        if (mon == IntPtr.Zero) return false;
+        _fsWindow = IntPtr.Zero;
+
+        // Start hiding when a fullscreen window becomes foreground on our monitor.
+        if (fg != IntPtr.Zero && fg != NativeMethods.GetShellWindow()
+            && fgMon == widgetMon && IsFullscreenOnMonitor(fg, widgetMon))
+        {
+            _fsWindow = fg;
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>True if <paramref name="hwnd"/> is a visible, non-minimised window
+    /// whose bounds fully cover the given monitor.</summary>
+    private static bool IsFullscreenOnMonitor(IntPtr hwnd, IntPtr monitor)
+    {
+        if (hwnd == IntPtr.Zero || !NativeMethods.IsWindow(hwnd)) return false;
+        if (!NativeMethods.IsWindowVisible(hwnd) || NativeMethods.IsIconic(hwnd)) return false;
+        if (!NativeMethods.GetWindowRect(hwnd, out var wr)) return false;
+
         var mi = new NativeMethods.MONITORINFOEX { cbSize = (uint)Marshal.SizeOf<NativeMethods.MONITORINFOEX>() };
-        if (!NativeMethods.GetMonitorInfo(mon, ref mi)) return false;
+        if (!NativeMethods.GetMonitorInfo(monitor, ref mi)) return false;
         var m = mi.rcMonitor;
 
-        // Foreground window fully covers (or exceeds) the monitor → fullscreen.
         return wr.Left <= m.Left && wr.Top <= m.Top && wr.Right >= m.Right && wr.Bottom >= m.Bottom;
     }
 

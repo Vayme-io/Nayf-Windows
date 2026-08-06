@@ -12,7 +12,6 @@ public partial class App : Application
     private OverlayWindowManager? _overlayWindowManager;
     private CompanionPanelWindow? _companionPanelWindow;
     private AnchorWindow? _anchorWindow;
-    private TaskbarWidgetWindow? _taskbarWidget;
     private AuthManager? _authManager;
     private AuthWindow? _authWindow;
     private bool _companionStarted;
@@ -121,9 +120,10 @@ public partial class App : Application
             _uiDispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
 
             _anchorWindow = new AnchorWindow();
-            // Clicking the taskbar button opens the panel (it's an off-screen
-            // anchor window, so there's nothing to restore otherwise). Center it
-            // over where the user clicked — i.e. the taskbar button itself.
+            // Clicking the taskbar button toggles the panel, opening it over the
+            // button the user clicked. ShowNearTray also covers the closing half:
+            // clicking the button while the panel is open blur-dismisses it, and
+            // the just-hidden guard inside keeps that same click from reopening it.
             _anchorWindow.TaskbarActivated += () =>
                 _uiDispatcher?.TryEnqueue(() =>
                 {
@@ -134,13 +134,9 @@ public partial class App : Application
                             Left = pt.X - 8, Top = pt.Y - 8,
                             Right = pt.X + 8, Bottom = pt.Y + 8
                         };
-                    bool opened = _companionPanelWindow?.EnsureVisibleNearTray(anchor) ?? false;
-                    // If this click closed (or didn't open) the panel, drop the
-                    // anchor window out of foreground so the next click reopens it.
-                    if (!opened)
-                        _anchorWindow?.ReleaseForeground();
+                    _companionPanelWindow?.ShowNearTray(anchor);
                 });
-            _anchorWindow.Activate();
+            _anchorWindow.ShowAsTaskbarButton();
             Log("Step", "AnchorWindow created");
 
             _companionManager = new CompanionManager(_authManager!);
@@ -183,14 +179,6 @@ public partial class App : Application
             _systemTrayManager.Initialize();
             Log("Step", "SystemTray initialized");
 
-            // Taskbar widget: a chip in the bottom-left of the taskbar showing the
-            // live voice/thinking animation; clicking it opens the panel above it.
-            _taskbarWidget = new TaskbarWidgetWindow(_companionManager);
-            _taskbarWidget.Tapped += () => _uiDispatcher?.TryEnqueue(() =>
-                _companionPanelWindow?.ShowNearTray(_taskbarWidget.AnchorRect));
-            _taskbarWidget.Start();
-            Log("Step", "Taskbar widget created");
-
             _companionManager.StartAsync();
             Log("Step", "CompanionManager started — app running");
         }
@@ -229,7 +217,6 @@ public partial class App : Application
         {
             _systemTrayManager?.Dispose();
             _overlayWindowManager?.Dispose();
-            _taskbarWidget?.Dispose();
             _companionManager?.Dispose();
             Exit();
         });

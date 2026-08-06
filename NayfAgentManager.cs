@@ -111,6 +111,94 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
                 },
                 required = new[] { "query" }
             }
+        },
+        new
+        {
+            name = "google_calendar_list_events",
+            description = "List upcoming events from the user's Google Calendar (their primary calendar). Use this for questions like \"what's on my calendar\", \"what does my day look like\", \"am I free tomorrow afternoon\", \"when's my next meeting\". Defaults to the next 7 days. To narrow to a specific day or range, pass timeMin/timeMax as ISO 8601 with the user's timezone offset — e.g. for \"tomorrow\" use the start and end of tomorrow in their local time. This reads the user's CONNECTED Google account (different from the Windows Calendar app). If they haven't connected Google Calendar, the call returns an error telling you to ask them to connect it in Nayf.",
+            input_schema = new
+            {
+                type = "object",
+                properties = new
+                {
+                    timeMin = new { type = "string", description = "ISO 8601 start of the range with timezone offset (e.g. 2026-06-21T00:00:00+02:00). Optional; defaults to now." },
+                    timeMax = new { type = "string", description = "ISO 8601 end of the range. Optional; defaults to 7 days from now." },
+                    maxResults = new { type = "number", description = "Max events to return, 1–50. Optional; defaults to 10." },
+                    query = new { type = "string", description = "Optional free-text filter (a person's name, a keyword)." }
+                },
+                required = Array.Empty<string>()
+            }
+        },
+        new
+        {
+            name = "google_calendar_create_event",
+            description = "Create an event on the user's Google Calendar (their primary calendar). Use for \"schedule…\", \"add to my calendar\", \"book…\", \"put a meeting on…\". Provide startDateTime and endDateTime as ISO 8601 with the user's local timezone offset. If the user gives no end time, default endDateTime to one hour after the start. This writes to the user's CONNECTED Google account. If they haven't connected Google Calendar, the call returns an error telling you to ask them to connect it.",
+            input_schema = new
+            {
+                type = "object",
+                properties = new
+                {
+                    summary = new { type = "string", description = "Event title, e.g. \"Lunch with Sara\"" },
+                    startDateTime = new { type = "string", description = "ISO 8601 start with timezone offset, e.g. 2026-06-21T12:00:00+02:00" },
+                    endDateTime = new { type = "string", description = "ISO 8601 end with timezone offset. Default to one hour after start if the user didn't specify." },
+                    description = new { type = "string", description = "Optional notes/details for the event." },
+                    location = new { type = "string", description = "Optional location." }
+                },
+                required = new[] { "summary", "startDateTime", "endDateTime" }
+            }
+        },
+        new
+        {
+            name = "google_calendar_delete_event",
+            description = "Delete an event from the user's Google Calendar by its event id. First call google_calendar_list_events to find the event the user means and read its \"id\" field, then pass that id here. Deleting can't be undone, so unless the user already named the exact event to delete, CONFIRM first: tell them which event (title + time) you're about to delete and get a quick yes before calling this.",
+            input_schema = new
+            {
+                type = "object",
+                properties = new
+                {
+                    eventId = new { type = "string", description = "The Google Calendar event id — the \"id\" field returned by google_calendar_list_events." }
+                },
+                required = new[] { "eventId" }
+            }
+        },
+        new
+        {
+            name = "github_list_issues",
+            description = "List the open GitHub issues assigned to the user, across all their repositories. Use for \"what issues are assigned to me\", \"what's on my plate on GitHub\", \"any open issues for me\". Reads the user's CONNECTED GitHub account; if not connected, the call returns an error telling you to ask them to connect it in Nayf.",
+            input_schema = new
+            {
+                type = "object",
+                properties = new { },
+                required = Array.Empty<string>()
+            }
+        },
+        new
+        {
+            name = "github_list_pull_requests",
+            description = "List the open GitHub pull requests authored by the user, across all repositories. Use for \"what PRs do I have open\", \"my open pull requests\". Reads the user's CONNECTED GitHub account.",
+            input_schema = new
+            {
+                type = "object",
+                properties = new { },
+                required = Array.Empty<string>()
+            }
+        },
+        new
+        {
+            name = "github_create_issue",
+            description = "Open a new GitHub issue in a repository. Use for \"file an issue\", \"open a bug on <repo>\", \"create an issue in <owner>/<repo>\". You must know the owner and repo; if the user only gives a repo name, ask which owner/org, or infer it if obvious from context. Writes to the user's CONNECTED GitHub account.",
+            input_schema = new
+            {
+                type = "object",
+                properties = new
+                {
+                    owner = new { type = "string", description = "Repository owner — the user or organization, e.g. \"Vayme-io\"" },
+                    repo = new { type = "string", description = "Repository name, e.g. \"Nayf\"" },
+                    title = new { type = "string", description = "Issue title" },
+                    body = new { type = "string", description = "Optional issue body / description (Markdown allowed)." }
+                },
+                required = new[] { "owner", "repo", "title" }
+            }
         }
     };
 

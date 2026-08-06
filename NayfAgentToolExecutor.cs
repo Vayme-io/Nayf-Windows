@@ -49,6 +49,12 @@ public sealed class NayfAgentToolExecutor
             "write_file" => AgentToolResult.Message(ExecuteWriteFileTool(toolCall.InputJson)),
             "computer" => await ExecuteComputerToolAsync(toolCall.InputJson, cancellationToken),
             "spotify_play" => AgentToolResult.Message(await ExecuteSpotifyPlayAsync(toolCall.InputJson, authToken)),
+            "google_calendar_list_events" => AgentToolResult.Message(await ExecuteGoogleCalendarListEventsAsync(toolCall.InputJson, authToken)),
+            "google_calendar_create_event" => AgentToolResult.Message(await ExecuteGoogleCalendarCreateEventAsync(toolCall.InputJson, authToken)),
+            "google_calendar_delete_event" => AgentToolResult.Message(await ExecuteGoogleCalendarDeleteEventAsync(toolCall.InputJson, authToken)),
+            "github_list_issues" => AgentToolResult.Message(await CallWorkerIntegrationAsync("/integrations/github/list_issues", new(), authToken)),
+            "github_list_pull_requests" => AgentToolResult.Message(await CallWorkerIntegrationAsync("/integrations/github/list_pull_requests", new(), authToken)),
+            "github_create_issue" => AgentToolResult.Message(await ExecuteGitHubCreateIssueAsync(toolCall.InputJson, authToken)),
             _ => AgentToolResult.Message($"Unknown tool: {toolCall.ToolName}")
         };
     }
@@ -94,6 +100,138 @@ public sealed class NayfAgentToolExecutor
 
         var suffix = artist.Length > 0 ? $" by {artist}" : "";
         return $"Now playing \"{name}\"{suffix} on Spotify.";
+    }
+
+    // MARK: - Google Calendar
+    //
+    // These read and write the user's CONNECTED Google account through the Worker, which
+    // holds the OAuth tokens server-side against their Supabase user. Nothing calls Google
+    // directly and no token ever reaches this process.
+
+    /// <summary>
+    /// Lists upcoming Google Calendar events via the Worker. Returns the JSON event list as
+    /// text for the model to read and summarise aloud.
+    /// </summary>
+    private static async Task<string> ExecuteGoogleCalendarListEventsAsync(
+        Dictionary<string, object> input, string? authToken)
+    {
+        // Every field is optional — the Worker defaults to the next 7 days, 10 events.
+        var body = new Dictionary<string, object>();
+        if (TryGetTrimmedString(input, "timeMin") is { } timeMin) body["timeMin"] = timeMin;
+        if (TryGetTrimmedString(input, "timeMax") is { } timeMax) body["timeMax"] = timeMax;
+        if (TryGetTrimmedString(input, "query") is { } query) body["query"] = query;
+        if (TryGetTrimmedString(input, "maxResults") is { } maxResultsText &&
+            int.TryParse(maxResultsText, out int maxResults))
+            body["maxResults"] = maxResults;
+
+        return await CallWorkerIntegrationAsync("/integrations/google/calendar/list_events", body, authToken);
+    }
+
+    /// <summary>Creates a Google Calendar event via the Worker. Requires summary + start + end.</summary>
+    private static async Task<string> ExecuteGoogleCalendarCreateEventAsync(
+        Dictionary<string, object> input, string? authToken)
+    {
+        var summary = TryGetTrimmedString(input, "summary");
+        var startDateTime = TryGetTrimmedString(input, "startDateTime");
+        var endDateTime = TryGetTrimmedString(input, "endDateTime");
+
+        if (summary == null || startDateTime == null || endDateTime == null)
+            return "Missing required fields: summary, startDateTime, endDateTime (ISO 8601 with timezone offset).";
+
+        var body = new Dictionary<string, object>
+        {
+            ["summary"] = summary,
+            ["startDateTime"] = startDateTime,
+            ["endDateTime"] = endDateTime
+        };
+        if (TryGetTrimmedString(input, "description") is { } description) body["description"] = description;
+        if (TryGetTrimmedString(input, "location") is { } location) body["location"] = location;
+        if (TryGetTrimmedString(input, "timeZone") is { } timeZone) body["timeZone"] = timeZone;
+
+        return await CallWorkerIntegrationAsync("/integrations/google/calendar/create_event", body, authToken);
+    }
+
+    /// <summary>
+    /// Deletes a Google Calendar event by id via the Worker. The id comes from a prior
+    /// google_calendar_list_events call.
+    /// </summary>
+    private static async Task<string> ExecuteGoogleCalendarDeleteEventAsync(
+        Dictionary<string, object> input, string? authToken)
+    {
+        var eventId = TryGetTrimmedString(input, "eventId");
+        if (eventId == null)
+            return "Missing required field: eventId (get it from google_calendar_list_events).";
+
+        var body = new Dictionary<string, object> { ["eventId"] = eventId };
+        return await CallWorkerIntegrationAsync("/integrations/google/calendar/delete_event", body, authToken);
+    }
+
+    // MARK: - GitHub
+
+    /// <summary>Creates a GitHub issue in owner/repo via the Worker. Requires owner, repo, title.</summary>
+    private static async Task<string> ExecuteGitHubCreateIssueAsync(
+        Dictionary<string, object> input, string? authToken)
+    {
+        var owner = TryGetTrimmedString(input, "owner");
+        var repo = TryGetTrimmedString(input, "repo");
+        var title = TryGetTrimmedString(input, "title");
+
+        if (owner == null || repo == null || title == null)
+            return "Missing required fields: owner, repo, title.";
+
+        var body = new Dictionary<string, object>
+        {
+            ["owner"] = owner,
+            ["repo"] = repo,
+            ["title"] = title
+        };
+        if (TryGetTrimmedString(input, "body") is { } issueBody) body["body"] = issueBody;
+
+        return await CallWorkerIntegrationAsync("/integrations/github/create_issue", body, authToken);
+    }
+
+    // MARK: - Worker plumbing
+
+    /// <summary>
+    /// POSTs a JSON body to a Worker integration route with the user's auth token, returning
+    /// the response text. Translates a 409 ("not connected") into a clear, actionable message
+    /// so the model asks the user to connect rather than reporting a bare failure.
+    /// </summary>
+    private static async Task<string> CallWorkerIntegrationAsync(
+        string path, Dictionary<string, object> body, string? authToken)
+    {
+        try
+        {
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"{NayfConfig.WorkerBaseURL}{path}");
+            if (authToken != null)
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", authToken);
+            request.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
+
+            using var response = await http.SendAsync(request);
+            var responseText = await response.Content.ReadAsStringAsync();
+
+            if (response.IsSuccessStatusCode) return responseText;
+            if ((int)response.StatusCode == 409)
+                return "That integration isn't connected yet. Tell the user to open Nayf, click \"Connect apps\", and connect it — then they can ask again.";
+
+            return $"Integration request failed (HTTP {(int)response.StatusCode}): {responseText}";
+        }
+        catch (Exception ex)
+        {
+            return $"Integration request error: {ex.Message}";
+        }
+    }
+
+    /// <summary>
+    /// Reads a tool argument as a non-empty trimmed string, or null when it's absent or
+    /// blank. Values arrive as JsonElement, whose ToString() yields the underlying scalar.
+    /// </summary>
+    private static string? TryGetTrimmedString(Dictionary<string, object> input, string key)
+    {
+        if (!input.TryGetValue(key, out var raw)) return null;
+        var text = raw?.ToString()?.Trim();
+        return string.IsNullOrEmpty(text) ? null : text;
     }
 
     private async Task<string> ExecuteBashToolAsync(

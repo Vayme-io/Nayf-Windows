@@ -173,6 +173,13 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
     /// <summary>Durable facts Nayf has learned about the user (shown in the Memory tab).</summary>
     public MemoryStore Memory { get; } = new();
 
+    /// <summary>
+    /// Cloud integrations (Google Calendar). Connection state is server-side and keyed
+    /// to the signed-in account, so this reports what the account has connected on any
+    /// device — not just what was connected from this PC.
+    /// </summary>
+    public NayfIntegrationsManager Integrations { get; }
+
     private readonly DispatcherQueue _dispatcherQueue;
 
     // MARK: - Session state
@@ -224,6 +231,20 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
         app reliably — far better than navigating Spotify's UI. ALWAYS use it for any
         "play <song/artist> on spotify" request. Never guess or construct track URIs.
 
+        The user's calendar:
+        Use the google_calendar_* tools for anything about their schedule — reading it,
+        adding to it, or clearing something off it. These reach their connected Google
+        account, which is the same calendar they see on their other devices, NOT the
+        Windows Calendar app. Never drive a calendar app's UI by clicking to do this.
+        Always send ISO 8601 datetimes with the user's local timezone offset.
+
+        The user's GitHub:
+        Use the github_* tools for their issues and pull requests — never the `gh` CLI or
+        git, which act as whatever account this PC is configured with rather than the one
+        they connected to Nayf. github_list_issues and github_list_pull_requests take no
+        arguments and already scope to them. github_create_issue needs owner and repo; ask
+        which repository if it isn't clear rather than guessing one.
+
         Controlling other apps by mouse/keyboard:
         Drive the app's UI, verifying with screenshots each step:
         1. Open the app: bash `Start-Process <app>`.
@@ -248,6 +269,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
         _buddyDictationManager = new BuddyDictationManager();
         _pushToTalkMonitor = new GlobalPushToTalkMonitor();
         AgentManager = new NayfAgentManager(_claudeAPI);
+        Integrations = new NayfIntegrationsManager(authManager);
 
         WireUpEvents();
     }
@@ -287,6 +309,10 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
     {
         _pushToTalkMonitor.Start();
         _ = FetchCreditBalanceAsync();
+        // Ask up front which providers the account has connected, so the panel opens
+        // already knowing — rather than showing "Connect" to someone who connected
+        // on another device and only correcting itself a moment later.
+        _ = Integrations.RefreshStatusAsync();
     }
 
     /// <summary>

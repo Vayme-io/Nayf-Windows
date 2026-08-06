@@ -53,10 +53,19 @@ public sealed partial class CompanionPanelWindow : Window
                 DispatcherQueue.TryEnqueue(() => UpdateAccountEmail(_companionManager.Auth.CurrentUserEmail));
         };
         UpdateAccountEmail(_companionManager.Auth.CurrentUserEmail);
+
+        // Connection state can land while the panel is closed (the connect flow finishes
+        // in the browser), so the page redraws from the manager rather than from whatever
+        // it last showed.
+        _companionManager.Integrations.PropertyChanged += (_, _) =>
+            DispatcherQueue.TryEnqueue(UpdateConnectionsView);
+        UpdateConnectionsView();
+
         UpdateModelSelection(_companionManager.ActiveModel);
         UpdateCreditBalance();
         UpdateCursorColorSelection(_companionManager.SelectedCursorColor);
         UpdateVoiceStateUI(_companionManager.VoiceState);
+        UpdateVersionText();
         ShowPage(PanelPage.Home);
 
         // Memory tab: bind the list and toggle the empty state as it changes.
@@ -117,9 +126,9 @@ public sealed partial class CompanionPanelWindow : Window
 
     private void UpdateAccountEmail(string? email)
     {
-        // Sign-out lives in the footer; show it only when a user is signed in.
-        SignOutButton.Visibility = string.IsNullOrWhiteSpace(email)
-            ? Visibility.Collapsed : Visibility.Visible;
+        bool signedIn = !string.IsNullOrWhiteSpace(email);
+        AccountEmailText.Text = signedIn ? email : "Not signed in";
+        SignOutButton.Visibility = signedIn ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void SetupWindow()
@@ -472,6 +481,39 @@ public sealed partial class CompanionPanelWindow : Window
     private void ClearHistoryButton_Click(object sender, RoutedEventArgs e)
     {
         _companionManager.ClearConversationHistory();
+        // Clearing produces no visible change on its own, so say it happened.
+        ClearHistoryCaption.Text = "Cleared — Nayf is starting fresh";
+    }
+
+    /// <summary>
+    /// Shows the running build's version. Read from the executable rather than
+    /// hard-coded so it can't drift from what the user actually has installed.
+    /// </summary>
+    private void UpdateVersionText()
+    {
+        string version = typeof(CompanionPanelWindow).Assembly.GetName().Version?.ToString(3) ?? "1.0.0";
+        VersionText.Text = $"Nayf for Windows · {version}";
+    }
+
+    // Set while the toggle is being synced from the registry, so the resulting
+    // Toggled event isn't mistaken for the user flipping the switch.
+    private bool _syncingStartupToggle;
+
+    private void RefreshStartupToggle()
+    {
+        _syncingStartupToggle = true;
+        StartupToggle.IsOn = NayfStartup.IsEnabled;
+        _syncingStartupToggle = false;
+    }
+
+    private void StartupToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_syncingStartupToggle) return;
+
+        // If Windows rejected the change, snap back rather than leave the switch
+        // showing a setting that isn't actually in effect.
+        if (!NayfStartup.SetEnabled(StartupToggle.IsOn))
+            RefreshStartupToggle();
     }
 
     private void OpenSpeechSettingsButton_Click(object sender, RoutedEventArgs e)
@@ -501,18 +543,101 @@ public sealed partial class CompanionPanelWindow : Window
         }
     }
 
-    private enum PanelPage { Home, Memory, Connections }
+    private enum PanelPage { Home, Memory, Connections, Settings }
 
-    private void HomeTab_Click(object sender, RoutedEventArgs e) => ShowPage(PanelPage.Home);
-    private void MemoryTab_Click(object sender, RoutedEventArgs e) => ShowPage(PanelPage.Memory);
+    private void BackButton_Click(object sender, RoutedEventArgs e) => ShowPage(PanelPage.Home);
+    private void MemoryButton_Click(object sender, RoutedEventArgs e) => ShowPage(PanelPage.Memory);
     private void ConnectAppsButton_Click(object sender, RoutedEventArgs e) => ShowPage(PanelPage.Connections);
+    private void SettingsButton_Click(object sender, RoutedEventArgs e) => ShowPage(PanelPage.Settings);
     private void CloseButton_Click(object sender, RoutedEventArgs e) => HidePanel();
     private void TapToTalkButton_Click(object sender, RoutedEventArgs e) => _companionManager.ToggleTapToTalk();
 
 
+    /// <summary>
+    /// Starts the Google consent flow. Handing focus to the browser blur-dismisses the
+    /// panel, so this deliberately isn't awaited — the manager keeps polling for the
+    /// result on its own, and the page shows the finished state when reopened.
+    /// </summary>
     private void ConnectCalendarButton_Click(object sender, RoutedEventArgs e)
+        => _ = _companionManager.Integrations.ConnectGoogleAsync();
+
+    private void DisconnectCalendarButton_Click(object sender, RoutedEventArgs e)
+        => _ = _companionManager.Integrations.DisconnectAsync(NayfIntegrationsManager.GoogleProvider);
+
+    private void ConnectGitHubButton_Click(object sender, RoutedEventArgs e)
+        => _ = _companionManager.Integrations.ConnectGitHubAsync();
+
+    private void DisconnectGitHubButton_Click(object sender, RoutedEventArgs e)
+        => _ = _companionManager.Integrations.DisconnectAsync(NayfIntegrationsManager.GitHubProvider);
+
+    /// <summary>
+    /// Paints the Connections page from the manager's state. Nothing here is assumed —
+    /// "connected" comes from the Worker, which stores the tokens against the signed-in
+    /// account, so a provider connected on another device already reads as connected.
+    /// </summary>
+    private void UpdateConnectionsView()
     {
-        // TODO: OAuth flow — needs the Worker's connection endpoints.
+        var integrations = _companionManager.Integrations;
+
+        UpdateProviderCard(
+            NayfIntegrationsManager.GoogleProvider,
+            idleSubtitle: "Read your schedule and create events",
+            brandColor: Windows.UI.Color.FromArgb(255, 0x42, 0x85, 0xF4),
+            CalendarIconBackground, CalendarIcon, CalendarConnectedDot, CalendarStatusText,
+            ConnectCalendarButton, DisconnectCalendarButton);
+
+        UpdateProviderCard(
+            NayfIntegrationsManager.GitHubProvider,
+            idleSubtitle: "Issues and pull requests",
+            brandColor: Windows.UI.Color.FromArgb(255, 0xD5, 0xD5, 0xDA),
+            GitHubIconBackground, GitHubIcon, GitHubConnectedDot, GitHubStatusText,
+            ConnectGitHubButton, DisconnectGitHubButton);
+
+        bool hasError = !string.IsNullOrWhiteSpace(integrations.ErrorMessage);
+        ConnectionsErrorText.Text = integrations.ErrorMessage ?? "";
+        ConnectionsErrorText.Visibility = hasError ? Visibility.Visible : Visibility.Collapsed;
+
+        // Say so on the home screen too, so the user doesn't have to open the page to
+        // find out whether anything is connected.
+        ConnectAppsLabel.Text = integrations.HasAnyConnection ? "Connected apps" : "Connect apps";
+
+        FitWindowToContent();
+    }
+
+    /// <summary>
+    /// Drives one provider card through its Connect / Connecting / Connected states. Both
+    /// cards behave identically, so they share this rather than each keeping its own copy
+    /// that could drift.
+    /// </summary>
+    private void UpdateProviderCard(
+        string provider,
+        string idleSubtitle,
+        Windows.UI.Color brandColor,
+        Border iconBackground,
+        FontIcon icon,
+        FrameworkElement connectedDot,
+        TextBlock statusText,
+        Button connectButton,
+        Button disconnectButton)
+    {
+        var integrations = _companionManager.Integrations;
+        bool connected = integrations.IsConnected(provider);
+        bool connecting = integrations.IsConnecting(provider);
+
+        // A connected integration turns green, and its subtitle stops advertising what
+        // it would do and starts reporting what it is.
+        connectedDot.Visibility = connected ? Visibility.Visible : Visibility.Collapsed;
+        statusText.Text = connected ? "Connected" : idleSubtitle;
+
+        var tint = connected ? Windows.UI.Color.FromArgb(255, 0x4D, 0xD1, 0x85) : brandColor;
+        icon.Foreground = new SolidColorBrush(tint);
+        iconBackground.Background =
+            new SolidColorBrush(Windows.UI.Color.FromArgb(0x1A, tint.R, tint.G, tint.B));
+
+        connectButton.Visibility = connected ? Visibility.Collapsed : Visibility.Visible;
+        connectButton.Content = connecting ? "Connecting…" : "Connect";
+        connectButton.IsEnabled = !connecting;
+        disconnectButton.Visibility = connected ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void ClearMemoryButton_Click(object sender, RoutedEventArgs e)
@@ -525,33 +650,71 @@ public sealed partial class CompanionPanelWindow : Window
         bool has = _companionManager.Memory.HasMemories;
         MemoryList.Visibility = has ? Visibility.Visible : Visibility.Collapsed;
         MemoryEmptyState.Visibility = has ? Visibility.Collapsed : Visibility.Visible;
+        // No point offering to clear an empty list.
+        ClearMemoryButton.Visibility = has ? Visibility.Visible : Visibility.Collapsed;
         FitWindowToContent();
     }
 
-    /// <summary>Switches the visible page and highlights the active tab.</summary>
+    /// <summary>
+    /// Switches the visible page. Subpages are reached from the bottom action bar
+    /// rather than tabs, so the header swaps its wordmark for a back button and
+    /// the page's title — that back button is the only way home.
+    /// </summary>
     private void ShowPage(PanelPage page)
     {
         HomePage.Visibility = page == PanelPage.Home ? Visibility.Visible : Visibility.Collapsed;
         MemoryPage.Visibility = page == PanelPage.Memory ? Visibility.Visible : Visibility.Collapsed;
         ConnectionsPage.Visibility = page == PanelPage.Connections ? Visibility.Visible : Visibility.Collapsed;
+        SettingsPage.Visibility = page == PanelPage.Settings ? Visibility.Visible : Visibility.Collapsed;
 
-        var active = new SolidColorBrush(Windows.UI.Color.FromArgb(0x22, 0xFF, 0xFF, 0xFF));
-        var clear = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0));
-        HomeTab.Background = page == PanelPage.Home ? active : clear;
-        MemoryTab.Background = page == PanelPage.Memory ? active : clear;
+        bool home = page == PanelPage.Home;
+        HeaderWordmark.Visibility = home ? Visibility.Visible : Visibility.Collapsed;
+        HeaderBackArea.Visibility = home ? Visibility.Collapsed : Visibility.Visible;
+        // The gear is the way in, so it has nowhere to go once you're there.
+        SettingsButton.Visibility = page == PanelPage.Settings ? Visibility.Collapsed : Visibility.Visible;
+
+        if (!home)
+            PageTitleText.Text = page switch
+            {
+                PanelPage.Memory => "Memory",
+                PanelPage.Connections => "Connect apps",
+                _ => "Settings"
+            };
+
+        // Re-ask the Worker on every visit — the account may have connected or
+        // disconnected something on another device since we last looked.
+        if (page == PanelPage.Connections)
+            _ = _companionManager.Integrations.RefreshStatusAsync();
+
+        // Read the live registry state each time rather than trusting a cached
+        // value — the installer, another Nayf window, or the user editing
+        // startup apps in Windows Settings can all change it behind our back.
+        if (page == PanelPage.Settings)
+        {
+            RefreshStartupToggle();
+            ClearHistoryCaption.Text = "Forget what we've talked about this session";
+        }
 
         FitWindowToContent();
     }
 
-    /// <summary>Draws a white selection ring around the active cursor-color swatch.</summary>
+    /// <summary>
+    /// Rings the active cursor-color swatch in its own color, so the selection
+    /// reads as "this color is on" rather than as a neutral highlight.
+    /// </summary>
     private void UpdateCursorColorSelection(NayfCursorColor selected)
     {
-        var ring = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 255, 255, 255));
         var clear = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0));
 
-        ColorBlue.BorderBrush = selected == NayfCursorColor.Blue ? ring : clear;
-        ColorRed.BorderBrush = selected == NayfCursorColor.Red ? ring : clear;
-        ColorYellow.BorderBrush = selected == NayfCursorColor.Yellow ? ring : clear;
-        ColorGreen.BorderBrush = selected == NayfCursorColor.Green ? ring : clear;
+        SolidColorBrush Ring(NayfCursorColor c)
+        {
+            var d = c.ToDrawingColor();
+            return new SolidColorBrush(Windows.UI.Color.FromArgb(0xE6, d.R, d.G, d.B));
+        }
+
+        ColorBlue.BorderBrush = selected == NayfCursorColor.Blue ? Ring(selected) : clear;
+        ColorRed.BorderBrush = selected == NayfCursorColor.Red ? Ring(selected) : clear;
+        ColorYellow.BorderBrush = selected == NayfCursorColor.Yellow ? Ring(selected) : clear;
+        ColorGreen.BorderBrush = selected == NayfCursorColor.Green ? Ring(selected) : clear;
     }
 }

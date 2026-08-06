@@ -11,179 +11,217 @@
             <SolidColorBrush Color="Transparent"/>
         </Grid.Background>
 
+        <!-- ═══════════ Design tokens ═══════════
+             One place for the palette, so text tiers and surface fills stay
+             consistent instead of drifting into a dozen near-identical greys. -->
+        <Grid.Resources>
+            <SolidColorBrush x:Key="TextPrimary"   Color="#F5F5F7"/>
+            <SolidColorBrush x:Key="TextSecondary" Color="#A1A1A6"/>
+            <SolidColorBrush x:Key="TextTertiary"  Color="#6E6E73"/>
+            <SolidColorBrush x:Key="AccentLink"    Color="#0A84FF"/>
+            <SolidColorBrush x:Key="Danger"        Color="#FF6B6B"/>
+
+            <!-- Surfaces, lightest to strongest -->
+            <SolidColorBrush x:Key="SurfaceLow"  Color="#0AFFFFFF"/>
+            <SolidColorBrush x:Key="SurfaceMid"  Color="#12FFFFFF"/>
+            <SolidColorBrush x:Key="Hairline"    Color="#14FFFFFF"/>
+
+            <x:String x:Key="UiFont">Segoe UI Variable</x:String>
+
+            <!-- A flat row action: icon + label, no chrome until hovered. -->
+            <Style x:Key="BarAction" TargetType="Button">
+                <Setter Property="Background" Value="Transparent"/>
+                <Setter Property="BorderThickness" Value="0"/>
+                <Setter Property="CornerRadius" Value="8"/>
+                <Setter Property="Padding" Value="9,6,9,6"/>
+            </Style>
+
+            <!-- A round icon-only button (close, quit). -->
+            <Style x:Key="RoundIconButton" TargetType="Button">
+                <Setter Property="Width" Value="28"/>
+                <Setter Property="Height" Value="28"/>
+                <Setter Property="CornerRadius" Value="14"/>
+                <Setter Property="Padding" Value="0"/>
+                <Setter Property="BorderThickness" Value="0"/>
+                <Setter Property="Background" Value="{StaticResource SurfaceMid}"/>
+                <Setter Property="VerticalAlignment" Value="Center"/>
+            </Style>
+
+            <!-- A small-caps heading that groups settings rows. -->
+            <Style x:Key="SectionLabel" TargetType="TextBlock">
+                <Setter Property="Foreground" Value="{StaticResource TextTertiary}"/>
+                <Setter Property="FontSize" Value="10"/>
+                <Setter Property="FontWeight" Value="SemiBold"/>
+                <Setter Property="CharacterSpacing" Value="120"/>
+                <Setter Property="Margin" Value="2,0,0,0"/>
+            </Style>
+
+            <!-- The card a single settings row sits in. -->
+            <Style x:Key="SettingsRow" TargetType="Border">
+                <Setter Property="Background" Value="{StaticResource SurfaceLow}"/>
+                <Setter Property="CornerRadius" Value="12"/>
+                <Setter Property="Padding" Value="14,10,12,10"/>
+            </Style>
+
+            <!-- A cursor-colour dot. The selection ring is drawn by setting
+                 BorderBrush from code (UpdateCursorColorSelection). -->
+            <Style x:Key="ColorDot" TargetType="Button">
+                <Setter Property="Width" Value="26"/>
+                <Setter Property="Height" Value="26"/>
+                <Setter Property="CornerRadius" Value="13"/>
+                <Setter Property="Padding" Value="0"/>
+                <Setter Property="Background" Value="Transparent"/>
+                <Setter Property="BorderThickness" Value="2"/>
+            </Style>
+        </Grid.Resources>
+
         <StackPanel x:Name="ContentStack"
-                    Width="620"
+                    Width="480"
                     HorizontalAlignment="Left"
                     VerticalAlignment="Top">
 
-            <!-- ───────────── Top bar: tabs + status + close ───────────── -->
-            <Grid Padding="28,14,20,10">
+            <!-- ───────────── Header ───────────── -->
+            <Grid Padding="24,16,16,10">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
 
-                <!-- Tab pills -->
-                <Border CornerRadius="16" Padding="3" VerticalAlignment="Center">
-                    <Border.Background>
-                        <SolidColorBrush Color="#14FFFFFF"/>
-                    </Border.Background>
-                    <StackPanel Orientation="Horizontal" Spacing="3">
-                        <Button x:Name="HomeTab" Click="HomeTab_Click"
-                                Background="Transparent" BorderThickness="0"
-                                CornerRadius="13" Padding="14,7,14,7">
-                            <StackPanel Orientation="Horizontal" Spacing="7">
-                                <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE80F;" FontSize="13"/>
-                                <TextBlock Text="Home" FontSize="13" FontWeight="SemiBold" FontFamily="Segoe UI Variable"/>
-                            </StackPanel>
-                        </Button>
-                        <Button x:Name="MemoryTab" Click="MemoryTab_Click"
-                                Background="Transparent" BorderThickness="0"
-                                CornerRadius="13" Padding="14,7,14,7">
-                            <StackPanel Orientation="Horizontal" Spacing="7">
-                                <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE81C;" FontSize="13"/>
-                                <TextBlock Text="Memory" FontSize="13" FontWeight="SemiBold" FontFamily="Segoe UI Variable"/>
-                            </StackPanel>
-                        </Button>
+                <!-- On Home: the wordmark. On a subpage it's swapped for a back
+                     button + page title, since there are no tabs to return with. -->
+                <TextBlock x:Name="HeaderWordmark" Text="Nayf"
+                           Foreground="{StaticResource TextPrimary}"
+                           FontSize="14" FontWeight="SemiBold"
+                           FontFamily="{StaticResource UiFont}"
+                           CharacterSpacing="20" VerticalAlignment="Center"/>
+
+                <StackPanel x:Name="HeaderBackArea" Orientation="Horizontal" Spacing="8"
+                            VerticalAlignment="Center" Visibility="Collapsed">
+                    <Button x:Name="BackButton" Click="BackButton_Click"
+                            Style="{StaticResource RoundIconButton}"
+                            Width="26" Height="26" CornerRadius="13">
+                        <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE72B;" FontSize="11"
+                                  Foreground="{StaticResource TextSecondary}"/>
+                    </Button>
+                    <TextBlock x:Name="PageTitleText" Text="Memory"
+                               Foreground="{StaticResource TextPrimary}"
+                               FontSize="14" FontWeight="SemiBold"
+                               FontFamily="{StaticResource UiFont}" VerticalAlignment="Center"/>
+                </StackPanel>
+
+                <!-- Status pill -->
+                <Border x:Name="StatusPill" Grid.Column="1" CornerRadius="11"
+                        Padding="9,4,11,4" Margin="0,0,8,0" VerticalAlignment="Center"
+                        Background="{StaticResource SurfaceLow}">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <Ellipse x:Name="StatusDot" Width="7" Height="7" Fill="#34C759"
+                                 VerticalAlignment="Center"/>
+                        <TextBlock x:Name="HeaderStatusText" Text="Active"
+                                   Foreground="{StaticResource TextSecondary}" FontSize="11.5"
+                                   FontWeight="Medium" FontFamily="{StaticResource UiFont}"
+                                   VerticalAlignment="Center"/>
                     </StackPanel>
                 </Border>
 
-                <!-- Status -->
-                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6"
-                            VerticalAlignment="Center" Margin="0,0,8,0">
-                    <Ellipse x:Name="StatusDot" Width="8" Height="8" Fill="#34C759"/>
-                    <TextBlock x:Name="HeaderStatusText" Text="Active"
-                               Foreground="#8E8E93" FontSize="12" FontWeight="Medium"
-                               FontFamily="Segoe UI Variable" VerticalAlignment="Center"/>
+                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6">
+                    <Button x:Name="SettingsButton" Click="SettingsButton_Click"
+                            Style="{StaticResource RoundIconButton}"
+                            ToolTipService.ToolTip="Settings">
+                        <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE713;" FontSize="12"
+                                  Foreground="{StaticResource TextSecondary}"/>
+                    </Button>
+                    <Button x:Name="CloseButton" Click="CloseButton_Click"
+                            Style="{StaticResource RoundIconButton}">
+                        <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE711;" FontSize="11"
+                                  Foreground="{StaticResource TextSecondary}"/>
+                    </Button>
                 </StackPanel>
+            </Grid>
 
-                <!-- Close -->
-                <Button x:Name="CloseButton" Grid.Column="3" Click="CloseButton_Click"
-                        Width="26" Height="26" CornerRadius="13" Padding="0"
-                        Background="#14FFFFFF" BorderThickness="0" VerticalAlignment="Center">
-                    <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE711;" FontSize="11" Foreground="#8E8E93"/>
+            <!-- ───────────── HOME PAGE ─────────────
+                 One hero action. The cursor colours and secondary destinations
+                 that used to sit in a second column now live in the bar below,
+                 which is what removed the panel's empty right half. -->
+            <Grid x:Name="HomePage" Padding="24,4,24,14">
+                <Button x:Name="TapToTalkButton" Click="TapToTalkButton_Click"
+                        HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
+                        Background="{StaticResource SurfaceLow}" BorderThickness="0"
+                        CornerRadius="14" Padding="16,14,16,14">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+
+                        <Grid Width="44" Height="44" VerticalAlignment="Center">
+                            <Ellipse x:Name="MicCircle" Width="44" Height="44" Fill="#2E458FFF"/>
+                            <FontIcon x:Name="MicGlyph" FontFamily="Segoe Fluent Icons"
+                                      Glyph="&#xE720;" FontSize="19" Foreground="#458FFF"/>
+                        </Grid>
+
+                        <StackPanel Grid.Column="1" Margin="14,0,12,0"
+                                    VerticalAlignment="Center" Spacing="2">
+                            <TextBlock x:Name="TapToTalkLabel" Text="Tap to talk"
+                                       Foreground="{StaticResource TextPrimary}"
+                                       FontSize="17" FontWeight="SemiBold"
+                                       FontFamily="{StaticResource UiFont}"/>
+                            <TextBlock Text="Ask about anything on your screen"
+                                       Foreground="{StaticResource TextSecondary}"
+                                       FontSize="12" FontFamily="{StaticResource UiFont}"/>
+                        </StackPanel>
+
+                        <!-- The shortcut sits at the far edge so the row is anchored
+                             at both ends instead of pooling all its weight on the left. -->
+                        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="4"
+                                    VerticalAlignment="Center">
+                            <Border CornerRadius="5" Padding="6,3,6,3" Background="{StaticResource SurfaceMid}">
+                                <TextBlock Text="Ctrl" FontSize="10" FontWeight="SemiBold"
+                                           FontFamily="Consolas" Foreground="{StaticResource TextSecondary}"/>
+                            </Border>
+                            <TextBlock Text="+" FontSize="10" Foreground="{StaticResource TextTertiary}"
+                                       VerticalAlignment="Center"/>
+                            <Border CornerRadius="5" Padding="6,3,6,3" Background="{StaticResource SurfaceMid}">
+                                <TextBlock Text="Alt" FontSize="10" FontWeight="SemiBold"
+                                           FontFamily="Consolas" Foreground="{StaticResource TextSecondary}"/>
+                            </Border>
+                        </StackPanel>
+                    </Grid>
                 </Button>
             </Grid>
 
-            <!-- ───────────── HOME PAGE ───────────── -->
-            <Grid x:Name="HomePage" Padding="28,6,28,14">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="196"/>
-                </Grid.ColumnDefinitions>
-
-                <!-- Talk card + cursor color -->
-                <StackPanel Grid.Column="0" Spacing="16" Margin="0,0,16,0">
-                    <Button x:Name="TapToTalkButton" Click="TapToTalkButton_Click"
-                            Background="Transparent" BorderThickness="0" Padding="0"
-                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Left">
-                        <StackPanel Orientation="Horizontal" Spacing="12">
-                            <Grid Width="48" Height="48">
-                                <Ellipse x:Name="MicCircle" Width="48" Height="48" Fill="#2E458FFF"/>
-                                <FontIcon x:Name="MicGlyph" FontFamily="Segoe Fluent Icons"
-                                          Glyph="&#xE720;" FontSize="19" Foreground="#458FFF"/>
-                            </Grid>
-                            <StackPanel VerticalAlignment="Center" Spacing="4">
-                                <TextBlock x:Name="TapToTalkLabel" Text="Tap to talk"
-                                           Foreground="White" FontSize="16" FontWeight="SemiBold"
-                                           FontFamily="Segoe UI Variable"/>
-                                <StackPanel Orientation="Horizontal" Spacing="4">
-                                    <Border CornerRadius="5" Padding="6,2,6,2" Background="#12FFFFFF">
-                                        <TextBlock Text="Ctrl" FontSize="10" FontWeight="SemiBold"
-                                                   FontFamily="Consolas" Foreground="#B0B0B5"/>
-                                    </Border>
-                                    <TextBlock Text="+" FontSize="10" Foreground="#6E6E73" VerticalAlignment="Center"/>
-                                    <Border CornerRadius="5" Padding="6,2,6,2" Background="#12FFFFFF">
-                                        <TextBlock Text="Alt" FontSize="10" FontWeight="SemiBold"
-                                                   FontFamily="Consolas" Foreground="#B0B0B5"/>
-                                    </Border>
-                                </StackPanel>
-                            </StackPanel>
-                        </StackPanel>
-                    </Button>
-
-                    <!-- Cursor color swatches -->
-                    <StackPanel Spacing="7">
-                        <TextBlock Text="Cursor color" Foreground="#8E8E93" FontSize="11"
-                                   FontWeight="SemiBold" FontFamily="Segoe UI Variable"/>
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <Button x:Name="ColorBlue" Tag="Blue" Click="CursorColor_Click"
-                                    Width="34" Height="34" CornerRadius="9" Padding="0"
-                                    Background="#0DFFFFFF" BorderThickness="2" BorderBrush="Transparent">
-                                <Ellipse Width="14" Height="14"><Ellipse.Fill><SolidColorBrush Color="#458FFF"/></Ellipse.Fill></Ellipse>
-                            </Button>
-                            <Button x:Name="ColorRed" Tag="Red" Click="CursorColor_Click"
-                                    Width="34" Height="34" CornerRadius="9" Padding="0"
-                                    Background="#0DFFFFFF" BorderThickness="2" BorderBrush="Transparent">
-                                <Ellipse Width="14" Height="14"><Ellipse.Fill><SolidColorBrush Color="#FF5252"/></Ellipse.Fill></Ellipse>
-                            </Button>
-                            <Button x:Name="ColorYellow" Tag="Yellow" Click="CursorColor_Click"
-                                    Width="34" Height="34" CornerRadius="9" Padding="0"
-                                    Background="#0DFFFFFF" BorderThickness="2" BorderBrush="Transparent">
-                                <Ellipse Width="14" Height="14"><Ellipse.Fill><SolidColorBrush Color="#FFC72E"/></Ellipse.Fill></Ellipse>
-                            </Button>
-                            <Button x:Name="ColorGreen" Tag="Green" Click="CursorColor_Click"
-                                    Width="34" Height="34" CornerRadius="9" Padding="0"
-                                    Background="#0DFFFFFF" BorderThickness="2" BorderBrush="Transparent">
-                                <Ellipse Width="14" Height="14"><Ellipse.Fill><SolidColorBrush Color="#4DD185"/></Ellipse.Fill></Ellipse>
-                            </Button>
-                        </StackPanel>
-                    </StackPanel>
-                </StackPanel>
-
-                <Rectangle Grid.Column="1" Width="1" Fill="#14FFFFFF" VerticalAlignment="Stretch"/>
-
-                <!-- Quick actions -->
-                <StackPanel Grid.Column="2" Spacing="8" Margin="16,0,16,0">
-                    <Button x:Name="ConnectAppsButton" Click="ConnectAppsButton_Click"
-                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
-                            Background="#0FFFFFFF" BorderThickness="0" CornerRadius="12" Padding="12,11,12,11">
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto"/>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE71B;" FontSize="14" Foreground="#8E8E93"/>
-                            <TextBlock Grid.Column="1" Text="Connect apps" Margin="9,0,0,0"
-                                       Foreground="#C5C5CA" FontSize="13" FontFamily="Segoe UI Variable" VerticalAlignment="Center"/>
-                            <FontIcon Grid.Column="2" FontFamily="Segoe Fluent Icons" Glyph="&#xE76C;" FontSize="10" Foreground="#6E6E73"/>
-                        </Grid>
-                    </Button>
-                </StackPanel>
-            </Grid>
-
             <!-- ───────────── MEMORY PAGE ───────────── -->
-            <StackPanel x:Name="MemoryPage" Padding="28,10,28,16" Spacing="12"
+            <StackPanel x:Name="MemoryPage" Padding="24,4,24,16" Spacing="12"
                         Visibility="Collapsed" HorizontalAlignment="Stretch">
                 <TextBlock Text="What Nayf remembers about you across sessions."
-                           Foreground="#8E8E93" FontSize="12.5" FontFamily="Segoe UI Variable"/>
+                           Foreground="{StaticResource TextSecondary}" FontSize="12.5"
+                           FontFamily="{StaticResource UiFont}"/>
 
-                <StackPanel x:Name="MemoryEmptyState" Spacing="10" MinHeight="120" Padding="0,18,0,18" HorizontalAlignment="Stretch">
-                    <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE81C;" FontSize="30"
+                <StackPanel x:Name="MemoryEmptyState" Spacing="12" Padding="0,20,0,20"
+                            HorizontalAlignment="Stretch">
+                    <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE81C;" FontSize="28"
                               Foreground="#48484A" HorizontalAlignment="Center"/>
                     <TextBlock Text="Nayf will remember details about you as you chat — they'll show up here."
-                               Foreground="#8E8E93" FontSize="12.5" FontFamily="Segoe UI Variable"
+                               Foreground="{StaticResource TextSecondary}" FontSize="12.5"
+                               FontFamily="{StaticResource UiFont}"
                                HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"
-                               MaxWidth="360"/>
+                               MaxWidth="340"/>
                 </StackPanel>
 
                 <ItemsControl x:Name="MemoryList" Visibility="Collapsed">
                     <ItemsControl.ItemTemplate>
                         <DataTemplate>
-                            <Border Background="#0BFFFFFF" CornerRadius="9" Padding="12,9,12,9" Margin="0,0,0,7">
+                            <Border Background="#0AFFFFFF" CornerRadius="10" Padding="12,10,12,10" Margin="0,0,0,7">
                                 <Grid>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="Auto"/>
                                         <ColumnDefinition Width="*"/>
                                     </Grid.ColumnDefinitions>
                                     <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xEC92;" FontSize="12"
-                                              Foreground="#8E8E93" VerticalAlignment="Top" Margin="0,2,0,0"/>
+                                              Foreground="#A1A1A6" VerticalAlignment="Top" Margin="0,2,0,0"/>
                                     <TextBlock Grid.Column="1" Text="{Binding}" Margin="10,0,0,0"
-                                               Foreground="White" FontSize="13" FontFamily="Segoe UI Variable"
+                                               Foreground="#F5F5F7" FontSize="13" FontFamily="Segoe UI Variable"
                                                TextWrapping="Wrap"/>
                                 </Grid>
                             </Border>
@@ -191,151 +229,362 @@
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
 
-                <Rectangle Height="1" Fill="#12FFFFFF"/>
                 <HyperlinkButton x:Name="ClearMemoryButton" Click="ClearMemoryButton_Click"
                                  HorizontalAlignment="Center" Padding="0">
                     <StackPanel Orientation="Horizontal" Spacing="6">
-                        <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE74D;" FontSize="12" Foreground="#8E8E93"/>
-                        <TextBlock Text="Clear all memory" Foreground="#8E8E93" FontSize="12.5" FontFamily="Segoe UI Variable"/>
+                        <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE74D;" FontSize="12"
+                                  Foreground="{StaticResource TextSecondary}"/>
+                        <TextBlock Text="Clear all memory" Foreground="{StaticResource TextSecondary}"
+                                   FontSize="12.5" FontFamily="{StaticResource UiFont}"/>
                     </StackPanel>
                 </HyperlinkButton>
             </StackPanel>
 
             <!-- ───────────── CONNECTIONS PAGE ───────────── -->
-            <StackPanel x:Name="ConnectionsPage" Padding="28,10,28,16" Spacing="9"
+            <StackPanel x:Name="ConnectionsPage" Padding="24,4,24,16" Spacing="8"
                         Visibility="Collapsed" HorizontalAlignment="Stretch">
                 <TextBlock Text="Connect your apps so Nayf can do more for you."
-                           Foreground="#8E8E93" FontSize="12.5" FontFamily="Segoe UI Variable"/>
+                           Foreground="{StaticResource TextSecondary}" FontSize="12.5"
+                           FontFamily="{StaticResource UiFont}" Margin="0,0,0,2"/>
 
-                <!-- Google Calendar -->
-                <Border Background="#0FFFFFFF" CornerRadius="12" Padding="14,11,14,11">
+                <!-- Only shown when a connect/disconnect attempt actually fails. -->
+                <TextBlock x:Name="ConnectionsErrorText" Visibility="Collapsed"
+                           Foreground="{StaticResource Danger}" FontSize="11.5"
+                           FontFamily="{StaticResource UiFont}" TextWrapping="Wrap"/>
+
+                <!-- Google Calendar. Connection state is server-side against the signed-in
+                     account, so this card reflects what the account has connected on any
+                     device — the state is read from the Worker, never assumed. -->
+                <Border Background="{StaticResource SurfaceLow}" CornerRadius="12" Padding="14,11,14,11">
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <Border Grid.RowSpan="2" Width="34" Height="34" CornerRadius="8" Background="#1A4285F4" VerticalAlignment="Center">
-                            <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE787;" FontSize="16" Foreground="#4285F4"/>
+                        <Border x:Name="CalendarIconBackground" Width="34" Height="34" CornerRadius="10"
+                                Background="#1A4285F4" VerticalAlignment="Center">
+                            <FontIcon x:Name="CalendarIcon" FontFamily="Segoe Fluent Icons"
+                                      Glyph="&#xE787;" FontSize="16" Foreground="#4285F4"/>
                         </Border>
-                        <StackPanel Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center" Spacing="1">
-                            <TextBlock Text="Google Calendar" Foreground="White" FontSize="13.5" FontWeight="SemiBold" FontFamily="Segoe UI Variable"/>
-                            <TextBlock Text="Read your schedule and create events" Foreground="#8E8E93" FontSize="11.5" FontFamily="Segoe UI Variable"/>
+                        <StackPanel Grid.Column="1" Margin="12,0,12,0" VerticalAlignment="Center" Spacing="2">
+                            <TextBlock Text="Google Calendar" Foreground="{StaticResource TextPrimary}"
+                                       FontSize="13.5" FontWeight="SemiBold" FontFamily="{StaticResource UiFont}"/>
+                            <StackPanel Orientation="Horizontal" Spacing="5">
+                                <Ellipse x:Name="CalendarConnectedDot" Width="6" Height="6" Fill="#4DD185"
+                                         VerticalAlignment="Center" Visibility="Collapsed"/>
+                                <TextBlock x:Name="CalendarStatusText" Text="Read your schedule and create events"
+                                           Foreground="{StaticResource TextSecondary}" FontSize="11.5"
+                                           FontFamily="{StaticResource UiFont}"/>
+                            </StackPanel>
                         </StackPanel>
+                        <!-- Connect and Disconnect share the column; exactly one is ever shown. -->
                         <Button Grid.Column="2" x:Name="ConnectCalendarButton" Content="Connect"
                                 Click="ConnectCalendarButton_Click" VerticalAlignment="Center"
-                                Foreground="White" FontSize="12.5" FontWeight="SemiBold" FontFamily="Segoe UI Variable"
-                                CornerRadius="14" Padding="16,6,16,6">
-                            <Button.Background><SolidColorBrush Color="#0A84FF"/></Button.Background>
-                        </Button>
+                                Foreground="White" FontSize="12.5" FontWeight="SemiBold"
+                                FontFamily="{StaticResource UiFont}" BorderThickness="0"
+                                CornerRadius="15" Padding="16,7,16,7"
+                                Background="{StaticResource AccentLink}"/>
+                        <Button Grid.Column="2" x:Name="DisconnectCalendarButton" Content="Disconnect"
+                                Click="DisconnectCalendarButton_Click" VerticalAlignment="Center"
+                                Visibility="Collapsed"
+                                Foreground="{StaticResource TextSecondary}" FontSize="12.5" FontWeight="SemiBold"
+                                FontFamily="{StaticResource UiFont}" BorderThickness="0"
+                                CornerRadius="15" Padding="14,7,14,7"
+                                Background="{StaticResource SurfaceMid}"/>
+                    </Grid>
+                </Border>
+
+                <!-- GitHub -->
+                <Border Background="{StaticResource SurfaceLow}" CornerRadius="12" Padding="14,11,14,11">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <Border x:Name="GitHubIconBackground" Width="34" Height="34" CornerRadius="10"
+                                Background="#1AD5D5DA" VerticalAlignment="Center">
+                            <FontIcon x:Name="GitHubIcon" FontFamily="Segoe Fluent Icons"
+                                      Glyph="&#xE943;" FontSize="16" Foreground="#D5D5DA"/>
+                        </Border>
+                        <StackPanel Grid.Column="1" Margin="12,0,12,0" VerticalAlignment="Center" Spacing="2">
+                            <TextBlock Text="GitHub" Foreground="{StaticResource TextPrimary}"
+                                       FontSize="13.5" FontWeight="SemiBold" FontFamily="{StaticResource UiFont}"/>
+                            <StackPanel Orientation="Horizontal" Spacing="5">
+                                <Ellipse x:Name="GitHubConnectedDot" Width="6" Height="6" Fill="#4DD185"
+                                         VerticalAlignment="Center" Visibility="Collapsed"/>
+                                <TextBlock x:Name="GitHubStatusText" Text="Issues and pull requests"
+                                           Foreground="{StaticResource TextSecondary}" FontSize="11.5"
+                                           FontFamily="{StaticResource UiFont}"/>
+                            </StackPanel>
+                        </StackPanel>
+                        <Button Grid.Column="2" x:Name="ConnectGitHubButton" Content="Connect"
+                                Click="ConnectGitHubButton_Click" VerticalAlignment="Center"
+                                Foreground="White" FontSize="12.5" FontWeight="SemiBold"
+                                FontFamily="{StaticResource UiFont}" BorderThickness="0"
+                                CornerRadius="15" Padding="16,7,16,7"
+                                Background="{StaticResource AccentLink}"/>
+                        <Button Grid.Column="2" x:Name="DisconnectGitHubButton" Content="Disconnect"
+                                Click="DisconnectGitHubButton_Click" VerticalAlignment="Center"
+                                Visibility="Collapsed"
+                                Foreground="{StaticResource TextSecondary}" FontSize="12.5" FontWeight="SemiBold"
+                                FontFamily="{StaticResource UiFont}" BorderThickness="0"
+                                CornerRadius="15" Padding="14,7,14,7"
+                                Background="{StaticResource SurfaceMid}"/>
                     </Grid>
                 </Border>
 
                 <!-- Gmail (soon) -->
-                <Border Background="#0AFFFFFF" CornerRadius="12" Padding="14,11,14,11">
+                <Border Background="{StaticResource SurfaceLow}" CornerRadius="12" Padding="14,11,14,11">
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <Border Width="34" Height="34" CornerRadius="8" Background="#1AEA4335" VerticalAlignment="Center">
+                        <Border Width="34" Height="34" CornerRadius="10" Background="#1AEA4335" VerticalAlignment="Center">
                             <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE715;" FontSize="16" Foreground="#EA4335"/>
                         </Border>
-                        <StackPanel Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center" Spacing="1">
-                            <TextBlock Text="Gmail" Foreground="#C5C5CA" FontSize="13.5" FontWeight="SemiBold" FontFamily="Segoe UI Variable"/>
-                            <TextBlock Text="Read and draft email" Foreground="#8E8E93" FontSize="11.5" FontFamily="Segoe UI Variable"/>
+                        <StackPanel Grid.Column="1" Margin="12,0,12,0" VerticalAlignment="Center" Spacing="2">
+                            <TextBlock Text="Gmail" Foreground="{StaticResource TextPrimary}"
+                                       FontSize="13.5" FontWeight="SemiBold" FontFamily="{StaticResource UiFont}"/>
+                            <TextBlock Text="Read and draft email" Foreground="{StaticResource TextSecondary}"
+                                       FontSize="11.5" FontFamily="{StaticResource UiFont}"/>
                         </StackPanel>
-                        <Border Grid.Column="2" Background="#14FFFFFF" CornerRadius="12" Padding="12,4,12,4" VerticalAlignment="Center">
-                            <TextBlock Text="Soon" Foreground="#8E8E93" FontSize="11.5" FontFamily="Segoe UI Variable"/>
+                        <Border Grid.Column="2" Background="{StaticResource SurfaceMid}" CornerRadius="11"
+                                Padding="11,4,11,4" VerticalAlignment="Center">
+                            <TextBlock Text="Soon" Foreground="{StaticResource TextTertiary}" FontSize="11"
+                                       FontWeight="SemiBold" FontFamily="{StaticResource UiFont}"/>
                         </Border>
                     </Grid>
                 </Border>
 
                 <!-- Slack (soon) -->
-                <Border Background="#0AFFFFFF" CornerRadius="12" Padding="14,11,14,11">
+                <Border Background="{StaticResource SurfaceLow}" CornerRadius="12" Padding="14,11,14,11">
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <Border Width="34" Height="34" CornerRadius="8" Background="#1A611F69" VerticalAlignment="Center">
+                        <Border Width="34" Height="34" CornerRadius="10" Background="#1A611F69" VerticalAlignment="Center">
                             <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE8BD;" FontSize="16" Foreground="#C084D8"/>
                         </Border>
-                        <StackPanel Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center" Spacing="1">
-                            <TextBlock Text="Slack" Foreground="#C5C5CA" FontSize="13.5" FontWeight="SemiBold" FontFamily="Segoe UI Variable"/>
-                            <TextBlock Text="Send and read messages" Foreground="#8E8E93" FontSize="11.5" FontFamily="Segoe UI Variable"/>
+                        <StackPanel Grid.Column="1" Margin="12,0,12,0" VerticalAlignment="Center" Spacing="2">
+                            <TextBlock Text="Slack" Foreground="{StaticResource TextPrimary}"
+                                       FontSize="13.5" FontWeight="SemiBold" FontFamily="{StaticResource UiFont}"/>
+                            <TextBlock Text="Send and read messages" Foreground="{StaticResource TextSecondary}"
+                                       FontSize="11.5" FontFamily="{StaticResource UiFont}"/>
                         </StackPanel>
-                        <Border Grid.Column="2" Background="#14FFFFFF" CornerRadius="12" Padding="12,4,12,4" VerticalAlignment="Center">
-                            <TextBlock Text="Soon" Foreground="#8E8E93" FontSize="11.5" FontFamily="Segoe UI Variable"/>
+                        <Border Grid.Column="2" Background="{StaticResource SurfaceMid}" CornerRadius="11"
+                                Padding="11,4,11,4" VerticalAlignment="Center">
+                            <TextBlock Text="Soon" Foreground="{StaticResource TextTertiary}" FontSize="11"
+                                       FontWeight="SemiBold" FontFamily="{StaticResource UiFont}"/>
                         </Border>
                     </Grid>
                 </Border>
 
                 <!-- Notion (soon) -->
-                <Border Background="#0AFFFFFF" CornerRadius="12" Padding="14,11,14,11">
+                <Border Background="{StaticResource SurfaceLow}" CornerRadius="12" Padding="14,11,14,11">
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <Border Width="34" Height="34" CornerRadius="8" Background="#14FFFFFF" VerticalAlignment="Center">
+                        <Border Width="34" Height="34" CornerRadius="10" Background="{StaticResource SurfaceMid}" VerticalAlignment="Center">
                             <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE8A5;" FontSize="16" Foreground="#D5D5DA"/>
                         </Border>
-                        <StackPanel Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center" Spacing="1">
-                            <TextBlock Text="Notion" Foreground="#C5C5CA" FontSize="13.5" FontWeight="SemiBold" FontFamily="Segoe UI Variable"/>
-                            <TextBlock Text="Search and create pages" Foreground="#8E8E93" FontSize="11.5" FontFamily="Segoe UI Variable"/>
+                        <StackPanel Grid.Column="1" Margin="12,0,12,0" VerticalAlignment="Center" Spacing="2">
+                            <TextBlock Text="Notion" Foreground="{StaticResource TextPrimary}"
+                                       FontSize="13.5" FontWeight="SemiBold" FontFamily="{StaticResource UiFont}"/>
+                            <TextBlock Text="Search and create pages" Foreground="{StaticResource TextSecondary}"
+                                       FontSize="11.5" FontFamily="{StaticResource UiFont}"/>
                         </StackPanel>
-                        <Border Grid.Column="2" Background="#14FFFFFF" CornerRadius="12" Padding="12,4,12,4" VerticalAlignment="Center">
-                            <TextBlock Text="Soon" Foreground="#8E8E93" FontSize="11.5" FontFamily="Segoe UI Variable"/>
+                        <Border Grid.Column="2" Background="{StaticResource SurfaceMid}" CornerRadius="11"
+                                Padding="11,4,11,4" VerticalAlignment="Center">
+                            <TextBlock Text="Soon" Foreground="{StaticResource TextTertiary}" FontSize="11"
+                                       FontWeight="SemiBold" FontFamily="{StaticResource UiFont}"/>
                         </Border>
                     </Grid>
                 </Border>
             </StackPanel>
 
+            <!-- ───────────── SETTINGS PAGE ───────────── -->
+            <StackPanel x:Name="SettingsPage" Padding="24,4,24,16" Spacing="14"
+                        Visibility="Collapsed" HorizontalAlignment="Stretch">
+
+                <StackPanel Spacing="7">
+                    <TextBlock Text="GENERAL" Style="{StaticResource SectionLabel}"/>
+
+                    <!-- Launch at sign-in. This is the same HKCU Run entry the
+                         installer offers to create, so the two stay in agreement. -->
+                    <Border Style="{StaticResource SettingsRow}">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE7E8;" FontSize="15"
+                                      Foreground="{StaticResource TextSecondary}"
+                                      VerticalAlignment="Center" Width="22"/>
+                            <StackPanel Grid.Column="1" Margin="11,0,10,0" VerticalAlignment="Center" Spacing="2">
+                                <TextBlock Text="Start Nayf when I sign in"
+                                           Foreground="{StaticResource TextPrimary}"
+                                           FontSize="13" FontWeight="SemiBold"
+                                           FontFamily="{StaticResource UiFont}"/>
+                                <TextBlock Text="Nayf is ready the moment Windows is"
+                                           Foreground="{StaticResource TextTertiary}"
+                                           FontSize="11" FontFamily="{StaticResource UiFont}"/>
+                            </StackPanel>
+                            <ToggleSwitch x:Name="StartupToggle" Grid.Column="2"
+                                          Toggled="StartupToggle_Toggled"
+                                          OnContent="" OffContent="" MinWidth="0"
+                                          VerticalAlignment="Center"/>
+                        </Grid>
+                    </Border>
+
+                    <!-- Speech recognition lives in Windows Settings, not in Nayf. -->
+                    <Button x:Name="SpeechSettingsRow" Click="OpenSpeechSettingsButton_Click"
+                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
+                            Background="{StaticResource SurfaceLow}" BorderThickness="0"
+                            CornerRadius="12" Padding="14,10,12,10">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE720;" FontSize="15"
+                                      Foreground="{StaticResource TextSecondary}"
+                                      VerticalAlignment="Center" Width="22"/>
+                            <StackPanel Grid.Column="1" Margin="11,0,10,0" VerticalAlignment="Center" Spacing="2">
+                                <TextBlock Text="Microphone &amp; speech"
+                                           Foreground="{StaticResource TextPrimary}"
+                                           FontSize="13" FontWeight="SemiBold"
+                                           FontFamily="{StaticResource UiFont}"/>
+                                <TextBlock Text="Manage speech recognition in Windows Settings"
+                                           Foreground="{StaticResource TextTertiary}"
+                                           FontSize="11" FontFamily="{StaticResource UiFont}"/>
+                            </StackPanel>
+                            <FontIcon Grid.Column="2" FontFamily="Segoe Fluent Icons" Glyph="&#xE76C;"
+                                      FontSize="10" Foreground="{StaticResource TextTertiary}"
+                                      VerticalAlignment="Center"/>
+                        </Grid>
+                    </Button>
+                </StackPanel>
+
+                <StackPanel Spacing="7">
+                    <TextBlock Text="PRIVACY" Style="{StaticResource SectionLabel}"/>
+
+                    <!-- Drops the in-memory conversation Nayf carries between turns. -->
+                    <Button x:Name="ClearHistoryButton" Click="ClearHistoryButton_Click"
+                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
+                            Background="{StaticResource SurfaceLow}" BorderThickness="0"
+                            CornerRadius="12" Padding="14,10,12,10">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE74D;" FontSize="15"
+                                      Foreground="{StaticResource TextSecondary}"
+                                      VerticalAlignment="Center" Width="22"/>
+                            <StackPanel Grid.Column="1" Margin="11,0,10,0" VerticalAlignment="Center" Spacing="2">
+                                <TextBlock Text="Clear conversation history"
+                                           Foreground="{StaticResource TextPrimary}"
+                                           FontSize="13" FontWeight="SemiBold"
+                                           FontFamily="{StaticResource UiFont}"/>
+                                <TextBlock x:Name="ClearHistoryCaption"
+                                           Text="Forget what we've talked about this session"
+                                           Foreground="{StaticResource TextTertiary}"
+                                           FontSize="11" FontFamily="{StaticResource UiFont}"/>
+                            </StackPanel>
+                        </Grid>
+                    </Button>
+
+                    <TextBlock Text="Saved memories are separate — clear those from the Memory page."
+                               Foreground="{StaticResource TextTertiary}" FontSize="11"
+                               FontFamily="{StaticResource UiFont}" TextWrapping="Wrap"
+                               Margin="2,0,0,0"/>
+                </StackPanel>
+
+                <StackPanel Spacing="7">
+                    <TextBlock Text="ACCOUNT" Style="{StaticResource SectionLabel}"/>
+
+                    <Border Style="{StaticResource SettingsRow}">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel VerticalAlignment="Center" Spacing="2" Margin="0,0,10,0">
+                                <TextBlock Text="Signed in as"
+                                           Foreground="{StaticResource TextTertiary}"
+                                           FontSize="11" FontFamily="{StaticResource UiFont}"/>
+                                <TextBlock x:Name="AccountEmailText" Text="—"
+                                           Foreground="{StaticResource TextPrimary}"
+                                           FontSize="13" FontWeight="SemiBold"
+                                           FontFamily="{StaticResource UiFont}"
+                                           TextTrimming="CharacterEllipsis"/>
+                            </StackPanel>
+                            <Button x:Name="SignOutButton" Grid.Column="1" Content="Sign out"
+                                    Click="SignOutButton_Click" VerticalAlignment="Center"
+                                    Foreground="{StaticResource Danger}" FontSize="12.5"
+                                    FontWeight="SemiBold" FontFamily="{StaticResource UiFont}"
+                                    Background="{StaticResource SurfaceMid}" BorderThickness="0"
+                                    CornerRadius="15" Padding="15,7,15,7"/>
+                        </Grid>
+                    </Border>
+                </StackPanel>
+
+                <TextBlock x:Name="VersionText" Text="Nayf for Windows"
+                           Foreground="{StaticResource TextTertiary}" FontSize="10.5"
+                           FontFamily="{StaticResource UiFont}"
+                           HorizontalAlignment="Center" Margin="0,2,0,0"/>
+            </StackPanel>
+
             <!-- ───────────── DYNAMIC AREA (response / agent / banners) ───────────── -->
-            <StackPanel x:Name="DynamicArea" Padding="28,0,28,8" Spacing="10">
+            <StackPanel x:Name="DynamicArea" Padding="24,0,24,8" Spacing="10">
                 <TextBlock x:Name="LastTranscriptText" Text=""
-                           Foreground="#8E8E93" FontSize="12" FontFamily="Segoe UI Variable"
+                           Foreground="{StaticResource TextSecondary}" FontSize="12"
+                           FontFamily="{StaticResource UiFont}"
                            TextWrapping="Wrap" MaxLines="2" TextTrimming="CharacterEllipsis"
                            Visibility="Collapsed"/>
 
                 <!-- Mic permission banner -->
-                <Border x:Name="MicPermissionBanner" CornerRadius="10" Padding="14,12,14,12" Visibility="Collapsed">
-                    <Border.Background><SolidColorBrush Color="#3A2A00"/></Border.Background>
-                    <Border.BorderBrush><SolidColorBrush Color="#FF9F0A"/></Border.BorderBrush>
-                    <Border.BorderThickness><Thickness>0.5</Thickness></Border.BorderThickness>
+                <Border x:Name="MicPermissionBanner" CornerRadius="12" Padding="14,12,14,12" Visibility="Collapsed"
+                        Background="#332600" BorderBrush="#66FF9F0A" BorderThickness="1">
                     <StackPanel Spacing="10">
                         <TextBlock Text="Nayf needs speech recognition turned on to hear you."
-                                   Foreground="White" FontSize="13" FontFamily="Segoe UI Variable" TextWrapping="Wrap"/>
+                                   Foreground="{StaticResource TextPrimary}" FontSize="13"
+                                   FontFamily="{StaticResource UiFont}" TextWrapping="Wrap"/>
                         <Button x:Name="OpenSpeechSettingsButton" Content="Open Speech Settings"
                                 HorizontalAlignment="Stretch" Click="OpenSpeechSettingsButton_Click"
-                                Foreground="White" FontSize="13" FontFamily="Segoe UI Variable">
-                            <Button.Background><SolidColorBrush Color="#FF9F0A"/></Button.Background>
-                        </Button>
+                                Foreground="#1C1C1E" FontSize="13" FontWeight="SemiBold"
+                                FontFamily="{StaticResource UiFont}" BorderThickness="0"
+                                CornerRadius="10" Padding="0,9,0,9" Background="#FF9F0A"/>
                     </StackPanel>
                 </Border>
 
                 <!-- Streaming response -->
-                <Border x:Name="ResponseContainer" CornerRadius="10" Padding="14,12,14,12" Visibility="Collapsed">
-                    <Border.Background><SolidColorBrush Color="#1E1E20"/></Border.Background>
-                    <Border.BorderBrush><SolidColorBrush Color="#3A3A3C"/></Border.BorderBrush>
-                    <Border.BorderThickness><Thickness>0.5</Thickness></Border.BorderThickness>
-                    <TextBlock x:Name="ResponseDisplayText" TextWrapping="Wrap" Foreground="White"
-                               FontSize="13" FontFamily="Segoe UI Variable" LineHeight="19"
+                <Border x:Name="ResponseContainer" CornerRadius="12" Padding="14,12,14,12" Visibility="Collapsed"
+                        Background="{StaticResource SurfaceLow}" BorderBrush="{StaticResource Hairline}" BorderThickness="1">
+                    <TextBlock x:Name="ResponseDisplayText" TextWrapping="Wrap"
+                               Foreground="{StaticResource TextPrimary}"
+                               FontSize="13" FontFamily="{StaticResource UiFont}" LineHeight="19"
                                MaxLines="8" TextTrimming="CharacterEllipsis"/>
                 </Border>
 
                 <!-- Agent task steps -->
-                <Border x:Name="AgentTaskContainer" CornerRadius="10" Padding="14,12,14,12" Visibility="Collapsed">
-                    <Border.Background><SolidColorBrush Color="#1C1C1E"/></Border.Background>
-                    <Border.BorderBrush><SolidColorBrush Color="#3A3A3C"/></Border.BorderBrush>
-                    <Border.BorderThickness><Thickness>0.5</Thickness></Border.BorderThickness>
+                <Border x:Name="AgentTaskContainer" CornerRadius="12" Padding="14,12,14,12" Visibility="Collapsed"
+                        Background="{StaticResource SurfaceLow}" BorderBrush="{StaticResource Hairline}" BorderThickness="1">
                     <StackPanel Spacing="8">
-                        <TextBlock Text="Working…" Foreground="#8E8E93" FontSize="11"
-                                   FontFamily="Segoe UI Variable" FontWeight="SemiBold" CharacterSpacing="80"/>
+                        <TextBlock Text="WORKING" Foreground="{StaticResource TextTertiary}" FontSize="10"
+                                   FontFamily="{StaticResource UiFont}" FontWeight="SemiBold" CharacterSpacing="120"/>
                         <ItemsControl x:Name="AgentStepsList">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
@@ -346,9 +595,9 @@
                                         </Grid.ColumnDefinitions>
                                         <TextBlock Text="{Binding StatusGlyph}" Foreground="#458FFF" FontSize="12" VerticalAlignment="Top"/>
                                         <StackPanel Grid.Column="1" Spacing="2">
-                                            <TextBlock Text="{Binding StepLabel}" Foreground="White" FontSize="12"
+                                            <TextBlock Text="{Binding StepLabel}" Foreground="#F5F5F7" FontSize="12"
                                                        FontFamily="Segoe UI Variable" TextWrapping="Wrap"/>
-                                            <TextBlock Text="{Binding OutputPreview}" Foreground="#8E8E93" FontSize="11"
+                                            <TextBlock Text="{Binding OutputPreview}" Foreground="#A1A1A6" FontSize="11"
                                                        FontFamily="Consolas" TextWrapping="Wrap" MaxLines="2" TextTrimming="CharacterEllipsis"/>
                                         </StackPanel>
                                     </Grid>
@@ -359,15 +608,15 @@
                 </Border>
 
                 <!-- Agent confirmation prompt -->
-                <Border x:Name="AgentConfirmContainer" CornerRadius="10" Padding="14,12,14,12" Visibility="Collapsed">
-                    <Border.Background><SolidColorBrush Color="#3A1A1A"/></Border.Background>
-                    <Border.BorderBrush><SolidColorBrush Color="#FF453A"/></Border.BorderBrush>
-                    <Border.BorderThickness><Thickness>0.5</Thickness></Border.BorderThickness>
+                <Border x:Name="AgentConfirmContainer" CornerRadius="12" Padding="14,12,14,12" Visibility="Collapsed"
+                        Background="#33140F" BorderBrush="#66FF453A" BorderThickness="1">
                     <StackPanel Spacing="10">
-                        <TextBlock Text="Allow Nayf to run this command?" Foreground="White"
-                                   FontSize="13" FontWeight="SemiBold" FontFamily="Segoe UI Variable"/>
-                        <TextBlock x:Name="AgentConfirmCommand" Text="" Foreground="#FFB0A8" FontSize="11"
-                                   FontFamily="Consolas" TextWrapping="Wrap" MaxLines="4" TextTrimming="CharacterEllipsis"/>
+                        <TextBlock Text="Allow Nayf to run this command?" Foreground="{StaticResource TextPrimary}"
+                                   FontSize="13" FontWeight="SemiBold" FontFamily="{StaticResource UiFont}"/>
+                        <Border Background="#22000000" CornerRadius="8" Padding="10,8,10,8">
+                            <TextBlock x:Name="AgentConfirmCommand" Text="" Foreground="#FFB0A8" FontSize="11"
+                                       FontFamily="Consolas" TextWrapping="Wrap" MaxLines="4" TextTrimming="CharacterEllipsis"/>
+                        </Border>
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
@@ -375,65 +624,110 @@
                                 <ColumnDefinition Width="*"/>
                             </Grid.ColumnDefinitions>
                             <Button x:Name="AgentDenyButton" Grid.Column="0" Content="Deny" HorizontalAlignment="Stretch"
-                                    Click="AgentDenyButton_Click" Foreground="White" FontSize="13" FontFamily="Segoe UI Variable">
-                                <Button.Background><SolidColorBrush Color="#3A3A3C"/></Button.Background>
-                            </Button>
+                                    Click="AgentDenyButton_Click" Foreground="{StaticResource TextPrimary}" FontSize="13"
+                                    FontFamily="{StaticResource UiFont}" BorderThickness="0" CornerRadius="10"
+                                    Padding="0,8,0,8" Background="{StaticResource SurfaceMid}"/>
                             <Button x:Name="AgentApproveButton" Grid.Column="2" Content="Allow" HorizontalAlignment="Stretch"
-                                    Click="AgentApproveButton_Click" Foreground="White" FontSize="13" FontFamily="Segoe UI Variable">
-                                <Button.Background><SolidColorBrush Color="#FF453A"/></Button.Background>
-                            </Button>
+                                    Click="AgentApproveButton_Click" Foreground="White" FontSize="13" FontWeight="SemiBold"
+                                    FontFamily="{StaticResource UiFont}" BorderThickness="0" CornerRadius="10"
+                                    Padding="0,8,0,8" Background="#FF453A"/>
                         </Grid>
                     </StackPanel>
                 </Border>
-
             </StackPanel>
 
-            <!-- ───────────── FOOTER ───────────── -->
-            <Rectangle Height="1" Fill="#12FFFFFF"/>
-            <Grid Padding="28,11,20,11">
+            <!-- ───────────── ACTION BAR ─────────────
+                 Secondary destinations on the left, cursor colour on the right.
+                 Mirrors the Mac panel's bottom action row. -->
+            <Rectangle Height="1" Fill="{StaticResource Hairline}"/>
+            <Grid Padding="18,8,18,8">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Orientation="Horizontal" Spacing="2">
+                    <Button x:Name="ConnectAppsButton" Click="ConnectAppsButton_Click" Style="{StaticResource BarAction}">
+                        <StackPanel Orientation="Horizontal" Spacing="7">
+                            <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE71B;" FontSize="13"
+                                      Foreground="{StaticResource TextSecondary}"/>
+                            <TextBlock x:Name="ConnectAppsLabel" Text="Connect apps"
+                                       Foreground="{StaticResource TextSecondary}"
+                                       FontSize="12.5" FontFamily="{StaticResource UiFont}" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="MemoryButton" Click="MemoryButton_Click" Style="{StaticResource BarAction}">
+                        <StackPanel Orientation="Horizontal" Spacing="7">
+                            <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE81C;" FontSize="13"
+                                      Foreground="{StaticResource TextSecondary}"/>
+                            <TextBlock Text="Memory" Foreground="{StaticResource TextSecondary}"
+                                       FontSize="12.5" FontFamily="{StaticResource UiFont}" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+
+                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="2"
+                            VerticalAlignment="Center" Margin="0,0,6,0"
+                            ToolTipService.ToolTip="Cursor colour">
+                    <Button x:Name="ColorBlue" Tag="Blue" Click="CursorColor_Click" Style="{StaticResource ColorDot}">
+                        <Ellipse Width="13" Height="13"><Ellipse.Fill><SolidColorBrush Color="#458FFF"/></Ellipse.Fill></Ellipse>
+                    </Button>
+                    <Button x:Name="ColorRed" Tag="Red" Click="CursorColor_Click" Style="{StaticResource ColorDot}">
+                        <Ellipse Width="13" Height="13"><Ellipse.Fill><SolidColorBrush Color="#FF5252"/></Ellipse.Fill></Ellipse>
+                    </Button>
+                    <Button x:Name="ColorYellow" Tag="Yellow" Click="CursorColor_Click" Style="{StaticResource ColorDot}">
+                        <Ellipse Width="13" Height="13"><Ellipse.Fill><SolidColorBrush Color="#FFC72E"/></Ellipse.Fill></Ellipse>
+                    </Button>
+                    <Button x:Name="ColorGreen" Tag="Green" Click="CursorColor_Click" Style="{StaticResource ColorDot}">
+                        <Ellipse Width="13" Height="13"><Ellipse.Fill><SolidColorBrush Color="#4DD185"/></Ellipse.Fill></Ellipse>
+                    </Button>
+                </StackPanel>
+            </Grid>
+
+            <!-- ───────────── FOOTER (account + meta) ───────────── -->
+            <Rectangle Height="1" Fill="{StaticResource Hairline}"/>
+            <Grid Padding="24,10,16,12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
 
                 <!-- Tokens -->
                 <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Center">
-                    <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE734;" FontSize="11" Foreground="#8E8E93"/>
+                    <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE734;" FontSize="11"
+                              Foreground="{StaticResource TextTertiary}"/>
                     <TextBlock x:Name="CreditBalanceText" Text="Loading tokens…"
-                               Foreground="#8E8E93" FontSize="12" FontFamily="Segoe UI Variable" VerticalAlignment="Center"/>
+                               Foreground="{StaticResource TextSecondary}" FontSize="11.5"
+                               FontFamily="{StaticResource UiFont}" VerticalAlignment="Center"/>
                     <HyperlinkButton x:Name="TopUpButton" Content="Top up" Click="TopUpButton_Click"
-                                     Foreground="#0A84FF" FontSize="11" FontFamily="Segoe UI Variable" Padding="4,0,0,0"/>
+                                     Foreground="{StaticResource AccentLink}" FontSize="11.5"
+                                     FontFamily="{StaticResource UiFont}" Padding="5,0,0,0"/>
                 </StackPanel>
 
-                <!-- Sign out -->
-                <HyperlinkButton x:Name="SignOutButton" Grid.Column="2" Content="Sign out" Click="SignOutButton_Click"
-                                 Foreground="#FF6B6B" FontSize="11" FontFamily="Segoe UI Variable"
-                                 Padding="0" Margin="0,0,12,0" VerticalAlignment="Center"/>
-
                 <!-- Routed model (Nayf picks automatically — not user-selectable) -->
-                <Border Grid.Column="3" CornerRadius="11" Padding="10,4,10,4" VerticalAlignment="Center" Margin="0,0,8,0">
-                    <Border.Background><SolidColorBrush Color="#14FFFFFF"/></Border.Background>
+                <Border Grid.Column="2" CornerRadius="11" Padding="9,4,11,4" VerticalAlignment="Center"
+                        Margin="0,0,8,0" Background="{StaticResource SurfaceLow}"
+                        ToolTipService.ToolTip="Nayf routes each request to the right model">
                     <StackPanel Orientation="Horizontal" Spacing="5">
-                        <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE945;" FontSize="10" Foreground="#8E8E93"/>
+                        <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE945;" FontSize="10"
+                                  Foreground="{StaticResource TextTertiary}"/>
                         <TextBlock x:Name="ActiveModelText" Text="Auto"
-                                   Foreground="#C5C5CA" FontSize="11" FontWeight="SemiBold"
-                                   FontFamily="Segoe UI Variable" VerticalAlignment="Center"/>
+                                   Foreground="{StaticResource TextSecondary}" FontSize="11"
+                                   FontWeight="SemiBold" FontFamily="{StaticResource UiFont}"
+                                   VerticalAlignment="Center"/>
                     </StackPanel>
                 </Border>
 
-                <!-- Quit -->
-                <Button x:Name="QuitButton" Grid.Column="4" Click="QuitButton_Click"
-                        Width="26" Height="26" CornerRadius="13" Padding="0"
-                        Background="#0FFFFFFF" BorderThickness="0" VerticalAlignment="Center">
-                    <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE7E8;" FontSize="12" Foreground="#8E8E93"/>
+                <Button x:Name="QuitButton" Grid.Column="3" Click="QuitButton_Click"
+                        Style="{StaticResource RoundIconButton}" Width="26" Height="26" CornerRadius="13"
+                        Background="{StaticResource SurfaceLow}"
+                        ToolTipService.ToolTip="Quit Nayf">
+                    <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE7E8;" FontSize="11"
+                              Foreground="{StaticResource TextSecondary}"/>
                 </Button>
-
-                <!-- Account email lives here too but hidden (kept for binding) -->
-                <TextBlock x:Name="AccountEmailText" Visibility="Collapsed"/>
-                <Button x:Name="ClearHistoryButton" Visibility="Collapsed" Click="ClearHistoryButton_Click"/>
             </Grid>
         </StackPanel>
     </Grid>

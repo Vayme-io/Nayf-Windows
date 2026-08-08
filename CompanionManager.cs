@@ -397,6 +397,11 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
 
             foreach (var fact in facts)
                 UpdateOnUI(() => Memory.Add(fact));
+
+            // The Mac chimes with its "Saved to memory" toast. One chime for the batch,
+            // not one per fact — a conversation can produce several at once.
+            if (facts.Count > 0)
+                NayfSoundPlayer.Shared.PlayTaskComplete();
         }
         catch (Exception ex)
         {
@@ -416,6 +421,10 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
     {
         Logger.Log("CompanionManager", $"OnPushToTalkPressed, VoiceState={VoiceState}");
         if (VoiceState != CompanionVoiceState.Idle) return;
+
+        // Instant audible feedback as the status pill springs up. After the guard, not
+        // before it: a press Nayf is going to ignore shouldn't sound like it was heard.
+        NayfSoundPlayer.Shared.PlayPushToTalkActivate();
 
         SetVoiceState(CompanionVoiceState.Listening);
         StreamingResponseText = "";
@@ -449,6 +458,9 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
     {
         Logger.Log("CompanionManager", $"OnPushToTalkReleased, VoiceState={VoiceState}");
         if (VoiceState != CompanionVoiceState.Listening) return;
+
+        // Blip on release too, after a shorter lead-in.
+        NayfSoundPlayer.Shared.PlayPushToTalkRelease();
 
         SetVoiceState(CompanionVoiceState.Processing);
         StopWatchdog();

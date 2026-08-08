@@ -140,6 +140,8 @@ public partial class App : Application
             _anchorWindow.ShowAsTaskbarButton();
             Log("Step", "AnchorWindow created");
 
+            NayfSoundPlayer.Warmup();
+
             _companionManager = new CompanionManager(_authManager!);
             Log("Step", "CompanionManager created");
 
@@ -224,6 +226,7 @@ public partial class App : Application
             _overlayWindowManager?.Dispose();
             _statusPillWindow?.Dispose();
             _companionManager?.Dispose();
+            NayfSoundPlayer.DisposeShared();
             Exit();
         });
     }

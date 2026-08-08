@@ -240,6 +240,7 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
         var messages = BuildInitialMessages(userRequest, screenshots, conversationHistory);
         var fullFinalText = "";
         var lastAssistantText = "";
+        var executedAnyTool = false;
 
         const int maxIterations = 15;
 
@@ -303,6 +304,7 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
             {
                 var toolStep = AddStep($"Running: {toolCall.ToolName}", AgentStepStatus.Running);
                 _runningToolLabel = DescribeTool(toolCall.ToolName);
+                executedAnyTool = true;
                 AgentToolResult toolResult;
 
                 try
@@ -367,6 +369,12 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
                 ? "I couldn't quite finish that — it took more steps than I could complete. Want me to keep going?"
                 : lastAssistantText;
         }
+
+        // The Mac chimes as its "task done" pill drops in. Windows has no such pill, so
+        // the chime marks the same moment directly: Nayf went and did something and has
+        // now finished. Gated on a tool having run, or every spoken answer would chime.
+        if (executedAnyTool)
+            NayfSoundPlayer.Shared.PlayTaskComplete();
 
         return fullFinalText;
     }

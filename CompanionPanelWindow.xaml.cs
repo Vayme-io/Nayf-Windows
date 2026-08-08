@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices.WindowsRuntime;
@@ -60,6 +61,13 @@ public sealed partial class CompanionPanelWindow : Window
         _companionManager.Integrations.PropertyChanged += (_, _) =>
             DispatcherQueue.TryEnqueue(UpdateConnectionsView);
         UpdateConnectionsView();
+
+        // Same reasoning for checkout: it finishes on Paddle's page in the browser,
+        // which took the focus and closed the panel on the way there.
+        _companionManager.Store.PropertyChanged += (_, _) =>
+            DispatcherQueue.TryEnqueue(UpdateTokensView);
+        BuildProductCards();
+        UpdateTokensView();
 
         UpdateModelSelection(_companionManager.ActiveModel);
         UpdateCreditBalance();
@@ -321,6 +329,13 @@ public sealed partial class CompanionPanelWindow : Window
             ? Windows.UI.Color.FromArgb(255, 255, 69, 58)    // red when empty
             : Windows.UI.Color.FromArgb(255, 142, 142, 147)); // gray otherwise
         TopUpButton.Content = out_ ? "Get more" : "Top up";
+
+        // The tokens page repeats the balance in its own words, since by then the
+        // footer that carried it has scrolled out of the user's attention.
+        TokenBalancePillText.Text = _companionManager.TokenBalance is null
+            ? "Loading tokens…"
+            : out_ ? "You have no tokens remaining"
+                   : $"You have {_companionManager.TokenBalanceText} remaining";
     }
 
     /// <summary>
@@ -527,10 +542,7 @@ public sealed partial class CompanionPanelWindow : Window
         SignOutRequested?.Invoke();
     }
 
-    private void TopUpButton_Click(object sender, RoutedEventArgs e)
-    {
-        Process.Start(new ProcessStartInfo("https://vayme.com/pricing") { UseShellExecute = true });
-    }
+    private void TopUpButton_Click(object sender, RoutedEventArgs e) => ShowPage(PanelPage.Tokens);
 
     private void CursorColor_Click(object sender, RoutedEventArgs e)
     {
@@ -543,7 +555,7 @@ public sealed partial class CompanionPanelWindow : Window
         }
     }
 
-    private enum PanelPage { Home, Memory, Connections, Settings }
+    private enum PanelPage { Home, Memory, Connections, Tokens, Settings }
 
     private void BackButton_Click(object sender, RoutedEventArgs e) => ShowPage(PanelPage.Home);
     private void MemoryButton_Click(object sender, RoutedEventArgs e) => ShowPage(PanelPage.Memory);
@@ -640,6 +652,263 @@ public sealed partial class CompanionPanelWindow : Window
         disconnectButton.Visibility = connected ? Visibility.Visible : Visibility.Collapsed;
     }
 
+    // MARK: - Tokens page
+
+    /// <summary>The product being bought, so only its card spins rather than all five.</summary>
+    private string? _pendingProductId;
+
+    /// <summary>Whether the withdrawal control is showing its confirmation step.</summary>
+    private bool _isConfirmingWithdrawal;
+
+    private readonly Dictionary<string, (Button Card, ProgressRing Spinner)> _productCards = new();
+
+    /// <summary>
+    /// Builds the five product cards from the catalogue rather than restating each one in
+    /// markup, so prices and token counts live in exactly one place — next to the Paddle
+    /// price IDs they belong to.
+    /// </summary>
+    private void BuildProductCards()
+    {
+        foreach (var product in NayfPaddleProducts.Subscriptions)
+            SubscriptionsList.Children.Add(
+                BuildProductCard(product, product.Id == NayfPaddleProducts.RecommendedSubscriptionId));
+
+        foreach (var product in NayfPaddleProducts.TokenPacks)
+            TokenPacksList.Children.Add(
+                BuildProductCard(product, product.Id == NayfPaddleProducts.RecommendedPackId));
+    }
+
+    private Button BuildProductCard(PaddleProduct product, bool isRecommended)
+    {
+        var uiFont = new FontFamily((string)RootGrid.Resources["UiFont"]);
+        var primary = (Brush)RootGrid.Resources["TextPrimary"];
+        var tertiary = (Brush)RootGrid.Resources["TextTertiary"];
+        var accent = (Brush)RootGrid.Resources["AccentLink"];
+
+        var titleRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        titleRow.Children.Add(new TextBlock
+        {
+            Text = product.DisplayName,
+            FontSize = 13,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            FontFamily = uiFont,
+            Foreground = primary,
+            VerticalAlignment = VerticalAlignment.Center
+        });
+
+        if (isRecommended)
+        {
+            titleRow.Children.Add(new Border
+            {
+                Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x26, 0x0A, 0x84, 0xFF)),
+                CornerRadius = new CornerRadius(5),
+                Padding = new Thickness(5, 1, 5, 1),
+                VerticalAlignment = VerticalAlignment.Center,
+                Child = new TextBlock
+                {
+                    Text = "POPULAR",
+                    FontSize = 8.5,
+                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                    FontFamily = uiFont,
+                    CharacterSpacing = 60,
+                    Foreground = accent
+                }
+            });
+        }
+
+        var details = new StackPanel { Spacing = 3 };
+        details.Children.Add(titleRow);
+        details.Children.Add(new TextBlock
+        {
+            Text = product.IsSubscription
+                ? $"{FormatTokenCount(product.TokenCount)} every month"
+                : $"{FormatTokenCount(product.TokenCount)}, one time",
+            FontSize = 11,
+            FontFamily = uiFont,
+            Foreground = tertiary
+        });
+
+        var spinner = new ProgressRing
+        {
+            Width = 15,
+            Height = 15,
+            IsActive = false,
+            Visibility = Visibility.Collapsed,
+            Foreground = accent,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+
+        var trailing = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        trailing.Children.Add(spinner);
+        trailing.Children.Add(new TextBlock
+        {
+            Text = product.DisplayPrice,
+            FontSize = 13,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            FontFamily = uiFont,
+            Foreground = primary,
+            VerticalAlignment = VerticalAlignment.Center
+        });
+
+        var layout = new Grid();
+        layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        layout.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        layout.Children.Add(details);
+        Grid.SetColumn(trailing, 1);
+        layout.Children.Add(trailing);
+
+        var card = new Button
+        {
+            Tag = product,
+            Content = layout,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            Background = (Brush)RootGrid.Resources["SurfaceLow"],
+            BorderThickness = new Thickness(0),
+            CornerRadius = new CornerRadius(12),
+            Padding = new Thickness(14, 11, 14, 11)
+        };
+        card.Click += ProductCard_Click;
+
+        _productCards[product.Id] = (card, spinner);
+        return card;
+    }
+
+    private static string FormatTokenCount(int tokens)
+        => tokens >= 1_000_000
+            ? $"{tokens / 1_000_000.0:0.#}M tokens"
+            : $"{tokens / 1_000.0:0.#}k tokens";
+
+    /// <summary>
+    /// Sends the user to Paddle for this product. Nothing is charged here — the browser
+    /// takes the focus, which blur-dismisses the panel, and the tokens arrive by webhook.
+    /// </summary>
+    private async void ProductCard_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: PaddleProduct product }) return;
+        if (_companionManager.Store.IsCreatingCheckout) return;
+
+        _pendingProductId = product.Id;
+        UpdateTokensView();
+
+        await _companionManager.Store.OpenCheckoutAsync(product);
+
+        _pendingProductId = null;
+        UpdateTokensView();
+    }
+
+    /// <summary>
+    /// Confirms the purchase finished. Paddle's webhook credits the account a moment after
+    /// payment clears, so the balance is read twice — once now, once after it has had time
+    /// to land — rather than leaving the user looking at a stale number.
+    /// </summary>
+    private async void PurchaseCompletedButton_Click(object sender, RoutedEventArgs e)
+    {
+        _companionManager.Store.ResetCheckoutState();
+        UpdateTokensView();
+
+        await _companionManager.FetchCreditBalanceAsync();
+        await Task.Delay(TimeSpan.FromSeconds(4));
+        await _companionManager.FetchCreditBalanceAsync();
+    }
+
+    private void BackToPlansButton_Click(object sender, RoutedEventArgs e)
+    {
+        _companionManager.Store.ResetCheckoutState();
+        UpdateTokensView();
+    }
+
+    private void WithdrawalTriggerButton_Click(object sender, RoutedEventArgs e)
+    {
+        _isConfirmingWithdrawal = true;
+        _companionManager.Store.ResetWithdrawalState();
+        UpdateTokensView();
+    }
+
+    private void WithdrawalCancelButton_Click(object sender, RoutedEventArgs e)
+    {
+        _isConfirmingWithdrawal = false;
+        UpdateTokensView();
+    }
+
+    private async void WithdrawalSubmitButton_Click(object sender, RoutedEventArgs e)
+    {
+        await _companionManager.Store.RequestWithdrawalAsync();
+        // Stay on the confirmation step if it failed, so the error has somewhere to show
+        // and the button they just pressed is still there to press again.
+        if (_companionManager.Store.WithdrawalAcknowledgment != null)
+            _isConfirmingWithdrawal = false;
+        UpdateTokensView();
+    }
+
+    private void WithdrawalDoneButton_Click(object sender, RoutedEventArgs e)
+    {
+        _isConfirmingWithdrawal = false;
+        _companionManager.Store.ResetWithdrawalState();
+        UpdateTokensView();
+    }
+
+    /// <summary>
+    /// Paints the tokens page from the store. The page has two faces — the plan list, and
+    /// the "finish in the browser" state it switches to once checkout has been handed off —
+    /// and which one shows is the store's business, not the panel's, because the panel is
+    /// closed at the moment that changes.
+    /// </summary>
+    private void UpdateTokensView()
+    {
+        var store = _companionManager.Store;
+
+        bool handedOff = store.HasBrowserCheckoutOpen;
+        TokensPlansView.Visibility = handedOff ? Visibility.Collapsed : Visibility.Visible;
+        TokensCheckoutView.Visibility = handedOff ? Visibility.Visible : Visibility.Collapsed;
+
+        foreach (var (id, card) in _productCards)
+        {
+            bool busy = store.IsCreatingCheckout && id == _pendingProductId;
+            card.Spinner.IsActive = busy;
+            card.Spinner.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
+            card.Card.IsEnabled = !store.IsCreatingCheckout;
+        }
+
+        bool hasCheckoutError = !string.IsNullOrWhiteSpace(store.CheckoutError);
+        CheckoutErrorText.Text = store.CheckoutError ?? "";
+        CheckoutErrorText.Visibility = hasCheckoutError ? Visibility.Visible : Visibility.Collapsed;
+
+        // The withdrawal control is one of three things at a time: an offer, a
+        // confirmation, or a receipt.
+        bool acknowledged = store.WithdrawalAcknowledgment != null;
+        WithdrawalTriggerButton.Visibility =
+            !acknowledged && !_isConfirmingWithdrawal ? Visibility.Visible : Visibility.Collapsed;
+        WithdrawalConfirmCard.Visibility =
+            !acknowledged && _isConfirmingWithdrawal ? Visibility.Visible : Visibility.Collapsed;
+        WithdrawalAcknowledgedCard.Visibility =
+            acknowledged ? Visibility.Visible : Visibility.Collapsed;
+
+        WithdrawalSubmitButton.Content =
+            store.IsSubmittingWithdrawal ? "Submitting…" : "Submit withdrawal request";
+        WithdrawalSubmitButton.IsEnabled = !store.IsSubmittingWithdrawal;
+        WithdrawalCancelButton.IsEnabled = !store.IsSubmittingWithdrawal;
+
+        bool hasWithdrawalError = !string.IsNullOrWhiteSpace(store.WithdrawalError);
+        WithdrawalErrorText.Text = store.WithdrawalError ?? "";
+        WithdrawalErrorText.Visibility = hasWithdrawalError ? Visibility.Visible : Visibility.Collapsed;
+
+        if (store.WithdrawalAcknowledgment is { } ack)
+        {
+            WithdrawalAcknowledgmentText.Text = ack.Message;
+            bool hasReference = !string.IsNullOrWhiteSpace(ack.Reference);
+            WithdrawalReferenceText.Text = hasReference ? $"Reference: {ack.Reference}" : "";
+            WithdrawalReferenceText.Visibility = hasReference ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        if (TokensPage.Visibility == Visibility.Visible) FitWindowToContent();
+    }
+
     private void ClearMemoryButton_Click(object sender, RoutedEventArgs e)
     {
         _companionManager.Memory.ClearAll();
@@ -665,6 +934,7 @@ public sealed partial class CompanionPanelWindow : Window
         HomePage.Visibility = page == PanelPage.Home ? Visibility.Visible : Visibility.Collapsed;
         MemoryPage.Visibility = page == PanelPage.Memory ? Visibility.Visible : Visibility.Collapsed;
         ConnectionsPage.Visibility = page == PanelPage.Connections ? Visibility.Visible : Visibility.Collapsed;
+        TokensPage.Visibility = page == PanelPage.Tokens ? Visibility.Visible : Visibility.Collapsed;
         SettingsPage.Visibility = page == PanelPage.Settings ? Visibility.Visible : Visibility.Collapsed;
 
         bool home = page == PanelPage.Home;
@@ -678,6 +948,7 @@ public sealed partial class CompanionPanelWindow : Window
             {
                 PanelPage.Memory => "Memory",
                 PanelPage.Connections => "Connect apps",
+                PanelPage.Tokens => "Get tokens",
                 _ => "Settings"
             };
 
@@ -685,6 +956,14 @@ public sealed partial class CompanionPanelWindow : Window
         // disconnected something on another device since we last looked.
         if (page == PanelPage.Connections)
             _ = _companionManager.Integrations.RefreshStatusAsync();
+
+        // Likewise for the balance: a purchase made in the browser is credited by
+        // Paddle's webhook, with nothing on screen at the time to hear about it.
+        if (page == PanelPage.Tokens)
+        {
+            _ = _companionManager.FetchCreditBalanceAsync();
+            UpdateTokensView();
+        }
 
         // Read the live registry state each time rather than trusting a cached
         // value — the installer, another Nayf window, or the user editing

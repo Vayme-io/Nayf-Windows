@@ -180,6 +180,9 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
     /// </summary>
     public NayfIntegrationsManager Integrations { get; }
 
+    /// <summary>Buying more tokens. Payment happens in the browser, through Paddle.</summary>
+    public NayfStoreManager Store { get; }
+
     private readonly DispatcherQueue _dispatcherQueue;
 
     // MARK: - Session state
@@ -270,6 +273,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
         _pushToTalkMonitor = new GlobalPushToTalkMonitor();
         AgentManager = new NayfAgentManager(_claudeAPI);
         Integrations = new NayfIntegrationsManager(authManager);
+        Store = new NayfStoreManager(authManager);
 
         WireUpEvents();
     }

@@ -411,6 +411,149 @@
                 </Border>
             </StackPanel>
 
+            <!-- ───────────── TOKENS PAGE ─────────────
+                 A checkout surface. Nothing is paid for here: picking a plan opens
+                 Paddle's page in the browser, and Paddle's webhook credits the tokens.
+                 The two views below are the before and after of that hand-off. -->
+            <StackPanel x:Name="TokensPage" Padding="24,4,24,16"
+                        Visibility="Collapsed" HorizontalAlignment="Stretch">
+
+                <!-- Plans. The cards are built in code from NayfPaddleProducts so the
+                     catalogue lives in one place instead of being restated in markup. -->
+                <StackPanel x:Name="TokensPlansView" Spacing="12">
+                    <StackPanel Spacing="7">
+                        <TextBlock Text="Monthly plans or one-time top-ups — tokens never expire."
+                                   Foreground="{StaticResource TextSecondary}" FontSize="12.5"
+                                   FontFamily="{StaticResource UiFont}" TextWrapping="Wrap"/>
+                        <Border Background="{StaticResource SurfaceLow}" CornerRadius="11"
+                                Padding="10,4,10,4" HorizontalAlignment="Left">
+                            <TextBlock x:Name="TokenBalancePillText" Text="Loading tokens…"
+                                       Foreground="{StaticResource TextTertiary}" FontSize="11"
+                                       FontWeight="Medium" FontFamily="{StaticResource UiFont}"/>
+                        </Border>
+                    </StackPanel>
+
+                    <StackPanel Spacing="7">
+                        <TextBlock Text="MONTHLY PLANS" Style="{StaticResource SectionLabel}"/>
+                        <StackPanel x:Name="SubscriptionsList" Spacing="8"/>
+                    </StackPanel>
+
+                    <StackPanel Spacing="7">
+                        <TextBlock Text="ONE-TIME TOP-UPS" Style="{StaticResource SectionLabel}"/>
+                        <StackPanel x:Name="TokenPacksList" Spacing="8"/>
+                    </StackPanel>
+
+                    <TextBlock x:Name="CheckoutErrorText" Visibility="Collapsed"
+                               Foreground="{StaticResource Danger}" FontSize="11.5"
+                               FontFamily="{StaticResource UiFont}" TextWrapping="Wrap"/>
+
+                    <!-- Right of withdrawal. Required to sit on the surface the purchase
+                         is made on, as a direct control with no forms to fill in
+                         (Swedish Konsumentverket rule). Three exclusive states. -->
+                    <Button x:Name="WithdrawalTriggerButton" Click="WithdrawalTriggerButton_Click"
+                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                            Background="{StaticResource SurfaceLow}" BorderThickness="0"
+                            CornerRadius="12" Padding="12,9,12,9">
+                        <StackPanel Orientation="Horizontal" Spacing="7">
+                            <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE10E;" FontSize="12"
+                                      Foreground="{StaticResource TextSecondary}"/>
+                            <TextBlock Text="Cancel a purchase (right of withdrawal)"
+                                       Foreground="{StaticResource TextSecondary}" FontSize="11.5"
+                                       FontWeight="Medium" FontFamily="{StaticResource UiFont}"/>
+                        </StackPanel>
+                    </Button>
+
+                    <Border x:Name="WithdrawalConfirmCard" Visibility="Collapsed"
+                            Background="{StaticResource SurfaceLow}" CornerRadius="12" Padding="14">
+                        <StackPanel Spacing="10">
+                            <TextBlock Text="Withdraw from a recent purchase"
+                                       Foreground="{StaticResource TextPrimary}" FontSize="13"
+                                       FontWeight="SemiBold" FontFamily="{StaticResource UiFont}"/>
+                            <TextBlock Text="If you bought within the last 14 days, you can withdraw and request a full refund. You'll get an automatic confirmation of receipt; we then review it and issue any refund through Paddle. Tokens already used may affect the amount."
+                                       Foreground="{StaticResource TextTertiary}" FontSize="11"
+                                       FontFamily="{StaticResource UiFont}" TextWrapping="Wrap"/>
+                            <TextBlock x:Name="WithdrawalErrorText" Visibility="Collapsed"
+                                       Foreground="{StaticResource Danger}" FontSize="10.5"
+                                       FontFamily="{StaticResource UiFont}" TextWrapping="Wrap"/>
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <Button x:Name="WithdrawalCancelButton" Content="Not now"
+                                        Click="WithdrawalCancelButton_Click"
+                                        Foreground="{StaticResource TextSecondary}" FontSize="12"
+                                        FontWeight="SemiBold" FontFamily="{StaticResource UiFont}"
+                                        BorderThickness="0" CornerRadius="15" Padding="14,7,14,7"
+                                        Background="{StaticResource SurfaceMid}"/>
+                                <Button x:Name="WithdrawalSubmitButton" Content="Submit withdrawal request"
+                                        Click="WithdrawalSubmitButton_Click"
+                                        Foreground="White" FontSize="12" FontWeight="SemiBold"
+                                        FontFamily="{StaticResource UiFont}" BorderThickness="0"
+                                        CornerRadius="15" Padding="14,7,14,7"
+                                        Background="{StaticResource AccentLink}"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <Border x:Name="WithdrawalAcknowledgedCard" Visibility="Collapsed"
+                            Background="#1A0A84FF" CornerRadius="12" Padding="14">
+                        <StackPanel Spacing="8">
+                            <StackPanel Orientation="Horizontal" Spacing="7">
+                                <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE930;" FontSize="14"
+                                          Foreground="{StaticResource AccentLink}"/>
+                                <TextBlock Text="Request received"
+                                           Foreground="{StaticResource TextPrimary}" FontSize="13"
+                                           FontWeight="SemiBold" FontFamily="{StaticResource UiFont}"/>
+                            </StackPanel>
+                            <TextBlock x:Name="WithdrawalAcknowledgmentText"
+                                       Foreground="{StaticResource TextTertiary}" FontSize="11"
+                                       FontFamily="{StaticResource UiFont}" TextWrapping="Wrap"/>
+                            <!-- Selectable: the reference is the only handle the user has
+                                 on the request if they need to chase it. -->
+                            <TextBlock x:Name="WithdrawalReferenceText" Visibility="Collapsed"
+                                       IsTextSelectionEnabled="True"
+                                       Foreground="{StaticResource TextTertiary}" FontSize="10"
+                                       FontFamily="Consolas" TextWrapping="Wrap"/>
+                            <Button x:Name="WithdrawalDoneButton" Content="Done"
+                                    Click="WithdrawalDoneButton_Click" HorizontalAlignment="Left"
+                                    Foreground="White" FontSize="12" FontWeight="SemiBold"
+                                    FontFamily="{StaticResource UiFont}" BorderThickness="0"
+                                    CornerRadius="15" Padding="16,7,16,7"
+                                    Background="{StaticResource AccentLink}"/>
+                        </StackPanel>
+                    </Border>
+
+                    <TextBlock Text="Payments processed securely by Paddle. You have a 14-day right of withdrawal on purchases."
+                               Foreground="{StaticResource TextTertiary}" FontSize="10"
+                               FontFamily="{StaticResource UiFont}" TextWrapping="Wrap"/>
+                </StackPanel>
+
+                <!-- After the browser opens. Payment happens where this app can't see it,
+                     so the user tells us when it's done and the balance is re-read. -->
+                <StackPanel x:Name="TokensCheckoutView" Visibility="Collapsed" Spacing="12"
+                            Padding="0,16,0,8" HorizontalAlignment="Stretch">
+                    <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE774;" FontSize="28"
+                              Foreground="{StaticResource AccentLink}" HorizontalAlignment="Center"/>
+                    <TextBlock Text="Finish your purchase in the browser"
+                               Foreground="{StaticResource TextPrimary}" FontSize="14"
+                               FontWeight="SemiBold" FontFamily="{StaticResource UiFont}"
+                               TextAlignment="Center" TextWrapping="Wrap"/>
+                    <TextBlock Text="Once you've paid, tap below — your balance updates in a few seconds."
+                               Foreground="{StaticResource TextSecondary}" FontSize="12"
+                               FontFamily="{StaticResource UiFont}"
+                               TextAlignment="Center" TextWrapping="Wrap"/>
+                    <Button x:Name="PurchaseCompletedButton" Content="I've completed my purchase"
+                            Click="PurchaseCompletedButton_Click"
+                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                            Foreground="White" FontSize="13" FontWeight="SemiBold"
+                            FontFamily="{StaticResource UiFont}" BorderThickness="0"
+                            CornerRadius="10" Padding="0,11,0,11"
+                            Background="{StaticResource AccentLink}"/>
+                    <Button x:Name="BackToPlansButton" Content="Back to plans"
+                            Click="BackToPlansButton_Click" HorizontalAlignment="Center"
+                            Style="{StaticResource BarAction}"
+                            Foreground="{StaticResource TextTertiary}" FontSize="11"
+                            FontFamily="{StaticResource UiFont}"/>
+                </StackPanel>
+            </StackPanel>
+
             <!-- ───────────── SETTINGS PAGE ───────────── -->
             <StackPanel x:Name="SettingsPage" Padding="24,4,24,16" Spacing="14"
                         Visibility="Collapsed" HorizontalAlignment="Stretch">

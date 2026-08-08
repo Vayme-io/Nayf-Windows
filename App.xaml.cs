@@ -10,6 +10,7 @@ public partial class App : Application
     private SystemTrayManager? _systemTrayManager;
     private CompanionManager? _companionManager;
     private OverlayWindowManager? _overlayWindowManager;
+    private NativeStatusPillWindow? _statusPillWindow;
     private CompanionPanelWindow? _companionPanelWindow;
     private AnchorWindow? _anchorWindow;
     private AuthManager? _authManager;
@@ -146,6 +147,10 @@ public partial class App : Application
             _overlayWindowManager.CreateOverlaysForAllMonitors();
             Log("Step", "Overlays created");
 
+            _statusPillWindow = new NativeStatusPillWindow(_companionManager);
+            _statusPillWindow.Start();
+            Log("Step", "StatusPill created");
+
             _companionPanelWindow = new CompanionPanelWindow(_companionManager);
             _companionPanelWindow.SignOutRequested += OnSignOutRequested;
             Log("Step", "PanelWindow created");
@@ -217,6 +222,7 @@ public partial class App : Application
         {
             _systemTrayManager?.Dispose();
             _overlayWindowManager?.Dispose();
+            _statusPillWindow?.Dispose();
             _companionManager?.Dispose();
             Exit();
         });

@@ -21,6 +21,16 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
 
     public ObservableCollection<AgentStep> AgentSteps { get; } = new();
 
+    private volatile string? _runningToolLabel;
+
+    /// <summary>
+    /// What Nayf is doing right now, in words the user would use — "Reading a file" —
+    /// or null when no tool is running. Kept as a plain volatile string rather than
+    /// read off <see cref="AgentSteps"/> because the status pill polls it from its own
+    /// render thread, and the step list belongs to the UI thread alone.
+    /// </summary>
+    public string? RunningToolLabel => _runningToolLabel;
+
     private AgentConfirmationRequest? _pendingConfirmationRequest;
     public AgentConfirmationRequest? PendingConfirmationRequest
     {
@@ -225,6 +235,7 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
         List<ConversationTurn>? conversationHistory = null)
     {
         UpdateOnUI(() => AgentSteps.Clear());
+        _runningToolLabel = null;
 
         var messages = BuildInitialMessages(userRequest, screenshots, conversationHistory);
         var fullFinalText = "";
@@ -291,6 +302,7 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
             foreach (var toolCall in turnResult.ToolCalls)
             {
                 var toolStep = AddStep($"Running: {toolCall.ToolName}", AgentStepStatus.Running);
+                _runningToolLabel = DescribeTool(toolCall.ToolName);
                 AgentToolResult toolResult;
 
                 try
@@ -303,6 +315,10 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
                 {
                     toolResult = AgentToolResult.Message($"Tool error: {ex.Message}");
                     UpdateStep(toolStep, AgentStepStatus.Failed, ex.Message);
+                }
+                finally
+                {
+                    _runningToolLabel = null;
                 }
 
                 // A screenshot must go back as an image block so Claude can see it;
@@ -396,6 +412,27 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
         messages.Add(new { role = "user", content });
         return messages;
     }
+
+    /// <summary>
+    /// Turns a tool name into something worth reading on screen. The panel's step list
+    /// shows the raw name for debugging; the status pill is the only thing the user
+    /// sees mid-task, so it says what's happening instead.
+    /// </summary>
+    private static string DescribeTool(string toolName) => toolName switch
+    {
+        "bash" => "Running a command",
+        "read_file" => "Reading a file",
+        "write_file" => "Writing a file",
+        "computer" => "Working on your screen",
+        "spotify_play" => "Playing on Spotify",
+        "google_calendar_list_events" => "Checking your calendar",
+        "google_calendar_create_event" => "Adding to your calendar",
+        "google_calendar_delete_event" => "Clearing your calendar",
+        "github_list_issues" => "Checking GitHub issues",
+        "github_list_pull_requests" => "Checking pull requests",
+        "github_create_issue" => "Opening a GitHub issue",
+        _ => "Working"
+    };
 
     private AgentStep AddStep(string label, AgentStepStatus status)
     {

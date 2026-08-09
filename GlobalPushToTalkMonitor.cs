@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using Microsoft.UI.Dispatching;
 
@@ -8,6 +9,14 @@ namespace NayfWindows;
 /// Installs a system-wide low-level keyboard hook to detect Ctrl+Alt press/release
 /// for push-to-talk. Uses WH_KEYBOARD_LL so it works even when the app is in
 /// the background. Mirrors Mac's CGEvent tap approach.
+///
+/// "Ctrl+Alt" here means Ctrl and the *left* Alt with nothing else held — no Shift,
+/// no Windows key, no letter. Right Alt is excluded because on European layouts it
+/// is AltGr, and the keyboard driver synthesises a left-Ctrl press alongside it, so
+/// counting it would fire push-to-talk every time the user typed @, $, {, [ or \.
+///
+/// "Nothing else held" can only be judged over time, not from a single event, which
+/// is what <see cref="ArmingDelay"/> and <see cref="_isDisarmed"/> are for.
 /// </summary>
 public sealed class GlobalPushToTalkMonitor : IDisposable
 {
@@ -18,15 +27,48 @@ public sealed class GlobalPushToTalkMonitor : IDisposable
     private readonly NativeMethods.LowLevelKeyboardProc _hookCallback;
     private readonly DispatcherQueue _dispatcherQueue;
 
-    private bool _isCtrlDown = false;
-    private bool _isAltDown = false;
     private bool _isPttActive = false;
+
+    /// <summary>
+    /// Non-modifier keys currently held. Ctrl+Alt+Del, Ctrl+Alt+arrow and every
+    /// other Ctrl+Alt shortcut passes through this hook, and none of them is a
+    /// request to start talking.
+    /// </summary>
+    private readonly HashSet<uint> _otherKeysDown = new();
+
+    /// <summary>
+    /// Set once Ctrl+Alt is joined by anything else, and cleared only when every
+    /// modifier is back up. Without it, releasing the V of Ctrl+Alt+V while still
+    /// holding the modifiers would land back on the bare chord and start listening.
+    /// </summary>
+    private bool _isDisarmed;
+
+    /// <summary>
+    /// How long Ctrl+Alt must be held *alone* before Nayf starts listening.
+    ///
+    /// A keyboard delivers one key per event, so Ctrl+Alt+V unavoidably passes
+    /// through Ctrl+Alt on its way. Reacting the instant the chord matches meant
+    /// every such shortcut started a recording and stopped it a frame later. This
+    /// waits long enough to see whether another key is on its way, while staying
+    /// short enough that push-to-talk still feels immediate — speech doesn't begin
+    /// for a few hundred milliseconds after the keys go down anyway.
+    /// </summary>
+    private static readonly TimeSpan ArmingDelay = TimeSpan.FromMilliseconds(250);
+
+    private readonly DispatcherQueueTimer _armingTimer;
 
     public GlobalPushToTalkMonitor()
     {
         _dispatcherQueue = DispatcherQueue.GetForCurrentThread();
         // Keep a strong reference so the delegate is not garbage collected while the hook is active
         _hookCallback = HookCallback;
+
+        // The hook is installed from this same thread, so its callback and this timer
+        // both run on the dispatcher — the state below needs no locking.
+        _armingTimer = _dispatcherQueue.CreateTimer();
+        _armingTimer.Interval = ArmingDelay;
+        _armingTimer.IsRepeating = false;
+        _armingTimer.Tick += (_, _) => OnArmingElapsed();
     }
 
     public void Start()
@@ -55,7 +97,10 @@ public sealed class GlobalPushToTalkMonitor : IDisposable
         if (_hookHandle == IntPtr.Zero) return;
         NativeMethods.UnhookWindowsHookEx(_hookHandle);
         _hookHandle = IntPtr.Zero;
+        _armingTimer.Stop();
         _isPttActive = false;
+        _isDisarmed = false;
+        _otherKeysDown.Clear();
     }
 
     private IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
@@ -66,40 +111,134 @@ public sealed class GlobalPushToTalkMonitor : IDisposable
             bool isKeyDown = (wParam == (IntPtr)NativeMethods.WM_KEYDOWN || wParam == (IntPtr)NativeMethods.WM_SYSKEYDOWN);
             bool isKeyUp = (wParam == (IntPtr)NativeMethods.WM_KEYUP || wParam == (IntPtr)NativeMethods.WM_SYSKEYUP);
 
-            // WH_KEYBOARD_LL reports the left/right-specific virtual key codes
-            // (VK_LCONTROL/VK_RCONTROL, VK_LMENU/VK_RMENU), not the generic
-            // VK_CONTROL/VK_MENU — check both forms.
-            if (kbStruct.vkCode == NativeMethods.VK_CONTROL ||
-                kbStruct.vkCode == NativeMethods.VK_LCONTROL ||
-                kbStruct.vkCode == NativeMethods.VK_RCONTROL)
-            {
-                _isCtrlDown = isKeyDown;
-            }
-            else if (kbStruct.vkCode == NativeMethods.VK_MENU ||
-                     kbStruct.vkCode == NativeMethods.VK_LMENU ||
-                     kbStruct.vkCode == NativeMethods.VK_RMENU) // Alt
-            {
-                _isAltDown = isKeyDown;
-            }
-
-            bool pttComboDown = _isCtrlDown && _isAltDown;
-
-            if (pttComboDown && !_isPttActive)
-            {
-                _isPttActive = true;
-                Logger.Log("GlobalPTT", "Combo pressed");
-                _dispatcherQueue.TryEnqueue(() => PushToTalkPressed?.Invoke());
-            }
-            else if (!pttComboDown && _isPttActive)
-            {
-                _isPttActive = false;
-                Logger.Log("GlobalPTT", "Combo released");
-                _dispatcherQueue.TryEnqueue(() => PushToTalkReleased?.Invoke());
-            }
+            if (isKeyDown || isKeyUp)
+                UpdateComboState(kbStruct.vkCode, isKeyDown);
         }
 
         return NativeMethods.CallNextHookEx(_hookHandle, nCode, wParam, lParam);
     }
+
+    /// <summary>
+    /// Recomputes whether the push-to-talk combo is held, given the key event being
+    /// delivered right now.
+    ///
+    /// Modifier state is read live from the system rather than accumulated across
+    /// events. Tracking it in fields meant that any press whose release this hook
+    /// never saw — a shortcut that hands off to the secure desktop, a window that
+    /// swallows the key-up, anything that takes focus mid-chord — left a modifier
+    /// latched down forever, and from then on Ctrl alone or Alt alone was enough to
+    /// start recording. Reading the real state can't go stale.
+    /// </summary>
+    private void UpdateComboState(uint vkCode, bool isKeyDown)
+    {
+        uint key = NormalizeToSide(vkCode);
+
+        // The event we're handling hasn't necessarily reached the async key state
+        // yet, so let it speak for its own key and query the system for the rest.
+        bool Down(int vk) => vk == (int)key ? isKeyDown : NativeMethods.IsKeyDown(vk);
+
+        // Only ever ask about a specific side. VK_CONTROL and VK_MENU answer for both
+        // at once, so they cannot be corrected by the override above — and on the
+        // AltGr key-up, VK_MENU still reads down while VK_RMENU already reads up,
+        // which is precisely the moment AltGr masquerades as Ctrl + left Alt.
+        bool ctrl = Down(NativeMethods.VK_LCONTROL) || Down(NativeMethods.VK_RCONTROL);
+        bool alt = Down(NativeMethods.VK_LMENU);
+        bool altGr = Down(NativeMethods.VK_RMENU);
+        bool shift = Down(NativeMethods.VK_LSHIFT) || Down(NativeMethods.VK_RSHIFT);
+        bool win = Down(NativeMethods.VK_LWIN) || Down(NativeMethods.VK_RWIN);
+
+        if (!IsModifier(key))
+        {
+            if (isKeyDown) _otherKeysDown.Add(vkCode);
+            else _otherKeysDown.Remove(vkCode);
+        }
+
+        // Once every modifier is up, forget any key whose release went missing —
+        // otherwise a single unseen key-up would wedge push-to-talk off for good —
+        // and take the chance to re-arm, since nothing is being held any more.
+        if (!ctrl && !alt && !altGr && !shift && !win)
+        {
+            _otherKeysDown.Clear();
+            _isDisarmed = false;
+        }
+
+        bool comboDown = ctrl && alt && !altGr && !shift && !win && _otherKeysDown.Count == 0;
+
+        // Ctrl+Alt plus anything else is somebody using a shortcut, not asking to talk.
+        if (ctrl && alt && !comboDown) _isDisarmed = true;
+
+        SetListening(comboDown && !_isDisarmed);
+    }
+
+    /// <summary>
+    /// Drives the press/release transition. Starting is deferred by
+    /// <see cref="ArmingDelay"/> so a chord still being typed never triggers it;
+    /// stopping is immediate, because a release is never ambiguous.
+    /// </summary>
+    private void SetListening(bool shouldListen)
+    {
+        if (!shouldListen)
+        {
+            _armingTimer.Stop();
+            if (!_isPttActive) return;
+
+            _isPttActive = false;
+            Logger.Log("GlobalPTT", "Combo released");
+            _dispatcherQueue.TryEnqueue(() => PushToTalkReleased?.Invoke());
+            return;
+        }
+
+        if (_isPttActive || _armingTimer.IsRunning) return;
+        _armingTimer.Start();
+    }
+
+    /// <summary>
+    /// The chord survived the arming delay. Re-check it against live key state
+    /// before committing — the keys may have gone up while we waited.
+    /// </summary>
+    private void OnArmingElapsed()
+    {
+        _armingTimer.Stop();
+        if (_isPttActive || _isDisarmed || !IsComboHeldNow()) return;
+
+        _isPttActive = true;
+        Logger.Log("GlobalPTT", "Combo pressed");
+        PushToTalkPressed?.Invoke();
+    }
+
+    /// <summary>Reads the combo straight from the system, with no event in flight.</summary>
+    private bool IsComboHeldNow()
+    {
+        bool ctrl = NativeMethods.IsKeyDown(NativeMethods.VK_LCONTROL) ||
+                    NativeMethods.IsKeyDown(NativeMethods.VK_RCONTROL);
+        bool alt = NativeMethods.IsKeyDown(NativeMethods.VK_LMENU);
+        bool altGr = NativeMethods.IsKeyDown(NativeMethods.VK_RMENU);
+        bool shift = NativeMethods.IsKeyDown(NativeMethods.VK_LSHIFT) ||
+                     NativeMethods.IsKeyDown(NativeMethods.VK_RSHIFT);
+        bool win = NativeMethods.IsKeyDown(NativeMethods.VK_LWIN) ||
+                   NativeMethods.IsKeyDown(NativeMethods.VK_RWIN);
+
+        return ctrl && alt && !altGr && !shift && !win && _otherKeysDown.Count == 0;
+    }
+
+    /// <summary>
+    /// Maps a side-agnostic modifier onto its left-hand key. A real keyboard always
+    /// reports a side through this hook; the bare codes only arrive from injected
+    /// input, and Windows applies those to the left key too.
+    /// </summary>
+    private static uint NormalizeToSide(uint vkCode) => (int)vkCode switch
+    {
+        NativeMethods.VK_CONTROL => NativeMethods.VK_LCONTROL,
+        NativeMethods.VK_MENU => NativeMethods.VK_LMENU,
+        NativeMethods.VK_SHIFT => NativeMethods.VK_LSHIFT,
+        _ => vkCode
+    };
+
+    private static bool IsModifier(uint vkCode) => (int)vkCode is
+        NativeMethods.VK_CONTROL or NativeMethods.VK_LCONTROL or NativeMethods.VK_RCONTROL or
+        NativeMethods.VK_MENU or NativeMethods.VK_LMENU or NativeMethods.VK_RMENU or
+        NativeMethods.VK_SHIFT or NativeMethods.VK_LSHIFT or NativeMethods.VK_RSHIFT or
+        NativeMethods.VK_LWIN or NativeMethods.VK_RWIN;
 
     public void Dispose()
     {
@@ -123,7 +262,18 @@ public static class NativeMethods
     public const int VK_LCONTROL = 0xA2;
     public const int VK_RCONTROL = 0xA3;
     public const int VK_LMENU = 0xA4;
-    public const int VK_RMENU = 0xA5;
+    public const int VK_RMENU = 0xA5;   // AltGr on European layouts
+    public const int VK_SHIFT = 0x10;
+    public const int VK_LSHIFT = 0xA0;
+    public const int VK_RSHIFT = 0xA1;
+    public const int VK_LWIN = 0x5B;
+    public const int VK_RWIN = 0x5C;
+
+    [DllImport("user32.dll")]
+    public static extern short GetAsyncKeyState(int vKey);
+
+    /// <summary>True while the key is physically held, regardless of focus.</summary>
+    public static bool IsKeyDown(int vKey) => (GetAsyncKeyState(vKey) & 0x8000) != 0;
 
     // Window style constants
     public const int GWL_EXSTYLE = -20;

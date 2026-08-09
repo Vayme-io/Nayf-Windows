@@ -754,8 +754,14 @@
                 <Border x:Name="AgentConfirmContainer" CornerRadius="12" Padding="14,12,14,12" Visibility="Collapsed"
                         Background="#33140F" BorderBrush="#66FF453A" BorderThickness="1">
                     <StackPanel Spacing="10">
-                        <TextBlock Text="Allow Nayf to run this command?" Foreground="{StaticResource TextPrimary}"
-                                   FontSize="13" FontWeight="SemiBold" FontFamily="{StaticResource UiFont}"/>
+                        <StackPanel Spacing="3">
+                            <TextBlock Text="Allow Nayf to run this command?" Foreground="{StaticResource TextPrimary}"
+                                       FontSize="13" FontWeight="SemiBold" FontFamily="{StaticResource UiFont}"/>
+                            <!-- Why this particular command needs approval. Without it the user
+                                 is asked to judge a wall of shell syntax with nothing to go on. -->
+                            <TextBlock x:Name="AgentConfirmReason" Text="" Foreground="{StaticResource TextSecondary}"
+                                       FontSize="12" FontFamily="{StaticResource UiFont}" TextWrapping="Wrap"/>
+                        </StackPanel>
                         <Border Background="#22000000" CornerRadius="8" Padding="10,8,10,8">
                             <TextBlock x:Name="AgentConfirmCommand" Text="" Foreground="#FFB0A8" FontSize="11"
                                        FontFamily="Consolas" TextWrapping="Wrap" MaxLines="4" TextTrimming="CharacterEllipsis"/>

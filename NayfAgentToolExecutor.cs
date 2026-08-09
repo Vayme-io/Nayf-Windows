@@ -241,11 +241,12 @@ public sealed class NayfAgentToolExecutor
         if (!input.TryGetValue("command", out var commandObj)) return "Missing 'command' parameter";
         var command = commandObj?.ToString() ?? "";
 
-        if (IsDestructiveCommand(command))
+        var riskReason = DescribeCommandRisk(command);
+        if (riskReason != null)
         {
             var confirmation = new AgentConfirmationRequest
             {
-                CommandDescription = $"Run destructive command: {command}",
+                CommandDescription = riskReason,
                 CommandText = command
             };
             if (ConfirmationRequested != null)
@@ -499,20 +500,161 @@ public sealed class NayfAgentToolExecutor
         catch (Exception ex) { return $"Command failed: {ex.Message}"; }
     }
 
-    private static bool IsDestructiveCommand(string command)
+    /// <summary>Commands that delete files or erase their contents.</summary>
+    private static readonly HashSet<string> DeletionCommands = new(StringComparer.OrdinalIgnoreCase)
     {
-        var lower = command.ToLowerInvariant();
-        string[] destructivePatterns =
-        [
-            "remove-item", "del ", "rd ", "rmdir", "rm -",
-            "format-", "stop-process", "kill ",
-            "reg delete", "regedit",
-            "net user", "net localgroup",
-            "shutdown", "restart-computer",
-            "clear-content", "> "
-        ];
-        foreach (var pattern in destructivePatterns)
-            if (lower.Contains(pattern)) return true;
+        "remove-item", "ri", "rm", "rmdir", "rd", "del", "erase",
+        "clear-content", "clc", "clear-item", "remove-itemproperty", "remove-psdrive"
+    };
+
+    /// <summary>
+    /// Commands that operate on disks. "format" alone is the disk formatter —
+    /// unrelated to Format-Table, Format-List and the other output formatters,
+    /// which are how PowerShell prints almost anything.
+    /// </summary>
+    private static readonly HashSet<string> DiskCommands = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "format", "format-volume", "clear-disk", "initialize-disk",
+        "remove-partition", "set-partition", "diskpart"
+    };
+
+    private static readonly HashSet<string> ProcessCommands = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "stop-process", "spps", "kill", "taskkill", "stop-service"
+    };
+
+    private static readonly HashSet<string> PowerCommands = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "shutdown", "restart-computer", "stop-computer"
+    };
+
+    private static readonly HashSet<string> PermissionCommands = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "icacls", "takeown", "set-acl", "set-executionpolicy"
+    };
+
+    /// <summary>
+    /// Explains why a command needs the user's approval, or returns null when it can
+    /// just run.
+    ///
+    /// Matching is on the command that *starts* each statement, never on the raw text.
+    /// A plain substring search reads far too much as dangerous: "format-" matches
+    /// Format-Table, the most common way to print anything in PowerShell; "del " sits
+    /// inside "model "; "rd " inside "keyboard "; "kill " inside "skill ". Nayf ended
+    /// up asking permission to list a folder, which teaches the user to approve
+    /// without reading — the opposite of what a confirmation is for.
+    /// </summary>
+    private static string? DescribeCommandRisk(string command)
+    {
+        foreach (var statement in SplitIntoStatements(command))
+        {
+            var verb = LeadingCommandName(statement);
+            if (verb.Length == 0) continue;
+
+            if (DeletionCommands.Contains(verb))
+                return "This permanently deletes files or erases their contents.";
+            if (DiskCommands.Contains(verb))
+                return "This modifies a disk volume or irreversibly erases data.";
+            if (ProcessCommands.Contains(verb))
+                return "This force-stops a running program or service.";
+            if (PowerCommands.Contains(verb))
+                return "This shuts down or restarts your PC.";
+            if (PermissionCommands.Contains(verb))
+                return "This changes who is allowed to access files on your PC.";
+
+            // These two are only destructive with particular subcommands: `reg query`
+            // and `net view` read, while `reg delete` and `net user` change the machine.
+            if (verb.Equals("reg", StringComparison.OrdinalIgnoreCase) &&
+                MentionsWord(statement, "delete", "import", "restore"))
+                return "This changes the Windows registry.";
+            if (verb.Equals("regedit", StringComparison.OrdinalIgnoreCase))
+                return "This changes the Windows registry.";
+            if (verb.Equals("net", StringComparison.OrdinalIgnoreCase) &&
+                MentionsWord(statement, "user", "localgroup"))
+                return "This changes the user accounts on your PC.";
+        }
+
+        if (MentionsWord(command, "runas"))
+            return "This runs with administrator privileges.";
+        if (HasOverwritingRedirect(command))
+            return "This overwrites a file's contents.";
+
+        return null;
+    }
+
+    /// <summary>
+    /// Splits a command line into the individual statements a shell would run.
+    ///
+    /// Separators inside a quoted string are split on too, which can only ever add a
+    /// confirmation, never skip one — the safe direction to be wrong in.
+    /// </summary>
+    private static List<string> SplitIntoStatements(string command)
+    {
+        var statements = command.Split(
+            ["|", ";", "&&", "||", "\r\n", "\n"],
+            StringSplitOptions.RemoveEmptyEntries);
+
+        var trimmed = new List<string>(statements.Length);
+        foreach (var statement in statements) trimmed.Add(statement.Trim());
+        return trimmed;
+    }
+
+    /// <summary>
+    /// The command name a statement starts with, stripped of the grouping and
+    /// call-operator punctuation PowerShell allows in front of it.
+    /// </summary>
+    private static string LeadingCommandName(string statement)
+    {
+        var text = statement.TrimStart('(', '{', '&', '.', '$', ' ', '\t', '"', '\'');
+
+        int end = 0;
+        while (end < text.Length && !char.IsWhiteSpace(text[end])) end++;
+        var name = text[..end];
+
+        // `C:\Windows\System32\shutdown.exe` should still read as "shutdown".
+        int slash = name.LastIndexOfAny(['\\', '/']);
+        if (slash >= 0) name = name[(slash + 1)..];
+        if (name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) name = name[..^4];
+
+        return name.Trim('"', '\'');
+    }
+
+    /// <summary>True when any of the words appears as a whole word, not inside another.</summary>
+    private static bool MentionsWord(string text, params string[] words)
+    {
+        foreach (var word in words)
+        {
+            int index = 0;
+            while ((index = text.IndexOf(word, index, StringComparison.OrdinalIgnoreCase)) >= 0)
+            {
+                bool startsWord = index == 0 || !char.IsLetterOrDigit(text[index - 1]);
+                int after = index + word.Length;
+                bool endsWord = after >= text.Length || !char.IsLetterOrDigit(text[after]);
+                if (startsWord && endsWord) return true;
+                index = after;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// True when the command redirects into a file, replacing what was there. Appending
+    /// with &gt;&gt; keeps the file, and redirecting a stream to $null or to another
+    /// stream (2&gt;&amp;1) writes no file at all.
+    /// </summary>
+    private static bool HasOverwritingRedirect(string command)
+    {
+        for (int i = 0; i < command.Length; i++)
+        {
+            if (command[i] != '>') continue;
+            if (i > 0 && command[i - 1] == '>') continue;
+            if (i + 1 < command.Length && command[i + 1] == '>') continue;
+
+            var target = command[(i + 1)..].TrimStart();
+            if (target.StartsWith('&')) continue;
+            if (target.StartsWith("$null", StringComparison.OrdinalIgnoreCase)) continue;
+            return true;
+        }
         return false;
     }
 

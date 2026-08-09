@@ -311,6 +311,7 @@ public sealed partial class CompanionPanelWindow : Window
         else
         {
             AgentConfirmCommand.Text = request.CommandText;
+            AgentConfirmReason.Text = request.CommandDescription;
             AgentConfirmContainer.Visibility = Visibility.Visible;
         }
     }

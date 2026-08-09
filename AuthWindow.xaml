@@ -41,9 +41,14 @@
                     <TextBlock Text="EMAIL"
                                Foreground="#8E8E93" FontSize="11" FontWeight="SemiBold"
                                CharacterSpacing="80" FontFamily="Segoe UI Variable"/>
+                    <!-- The vertical padding is what centres the text, not
+                         VerticalContentAlignment: WinUI's TextBox and PasswordBox
+                         templates position both the text and the placeholder from
+                         Padding alone and never bind VerticalContentAlignment, so
+                         with 0 here the text sits against the top of the box. -->
                     <TextBox x:Name="EmailBox"
                              PlaceholderText="you@example.com" FontSize="14"
-                             Height="40" CornerRadius="10" Padding="12,0,12,0"
+                             Height="40" CornerRadius="10" Padding="12,9,12,9"
                              Background="#0FFFFFFF" BorderBrush="#1FFFFFFF" BorderThickness="1"/>
                 </StackPanel>
 
@@ -54,7 +59,7 @@
                                CharacterSpacing="80" FontFamily="Segoe UI Variable"/>
                     <PasswordBox x:Name="PasswordBox"
                                  PlaceholderText="••••••••" FontSize="14"
-                                 Height="40" CornerRadius="10" Padding="12,0,12,0"
+                                 Height="40" CornerRadius="10" Padding="12,9,12,9"
                                  Background="#0FFFFFFF" BorderBrush="#1FFFFFFF" BorderThickness="1"/>
                 </StackPanel>
 

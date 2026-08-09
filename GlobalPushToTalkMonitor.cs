@@ -17,11 +17,18 @@ namespace NayfWindows;
 ///
 /// "Nothing else held" can only be judged over time, not from a single event, which
 /// is what <see cref="ArmingDelay"/> and <see cref="_isDisarmed"/> are for.
+///
+/// The same hook carries a second chord, Alt+T, for typing a request instead of
+/// speaking it. That one is momentary — it fires once on key-down and has no
+/// release to wait for.
 /// </summary>
 public sealed class GlobalPushToTalkMonitor : IDisposable
 {
     public event Action? PushToTalkPressed;
     public event Action? PushToTalkReleased;
+
+    /// <summary>Alt+T: the user wants to type their request rather than speak it.</summary>
+    public event Action? TextInputRequested;
 
     private IntPtr _hookHandle = IntPtr.Zero;
     private readonly NativeMethods.LowLevelKeyboardProc _hookCallback;
@@ -42,6 +49,12 @@ public sealed class GlobalPushToTalkMonitor : IDisposable
     /// holding the modifiers would land back on the bare chord and start listening.
     /// </summary>
     private bool _isDisarmed;
+
+    /// <summary>
+    /// True between the Alt+T key-down we acted on and the matching key-up, so both
+    /// ends of that one press are swallowed together.
+    /// </summary>
+    private bool _textChordHeld;
 
     /// <summary>
     /// How long Ctrl+Alt must be held *alone* before Nayf starts listening.
@@ -100,6 +113,7 @@ public sealed class GlobalPushToTalkMonitor : IDisposable
         _armingTimer.Stop();
         _isPttActive = false;
         _isDisarmed = false;
+        _textChordHeld = false;
         _otherKeysDown.Clear();
     }
 
@@ -111,8 +125,10 @@ public sealed class GlobalPushToTalkMonitor : IDisposable
             bool isKeyDown = (wParam == (IntPtr)NativeMethods.WM_KEYDOWN || wParam == (IntPtr)NativeMethods.WM_SYSKEYDOWN);
             bool isKeyUp = (wParam == (IntPtr)NativeMethods.WM_KEYUP || wParam == (IntPtr)NativeMethods.WM_SYSKEYUP);
 
-            if (isKeyDown || isKeyUp)
-                UpdateComboState(kbStruct.vkCode, isKeyDown);
+            // Swallowing the key stops Alt+T from reaching the app underneath as
+            // well, where it would trip whatever T is the menu mnemonic for.
+            if ((isKeyDown || isKeyUp) && UpdateComboState(kbStruct.vkCode, isKeyDown))
+                return (IntPtr)1;
         }
 
         return NativeMethods.CallNextHookEx(_hookHandle, nCode, wParam, lParam);
@@ -129,7 +145,8 @@ public sealed class GlobalPushToTalkMonitor : IDisposable
     /// latched down forever, and from then on Ctrl alone or Alt alone was enough to
     /// start recording. Reading the real state can't go stale.
     /// </summary>
-    private void UpdateComboState(uint vkCode, bool isKeyDown)
+    /// <returns>True if this key event should be swallowed rather than passed on.</returns>
+    private bool UpdateComboState(uint vkCode, bool isKeyDown)
     {
         uint key = NormalizeToSide(vkCode);
 
@@ -146,6 +163,10 @@ public sealed class GlobalPushToTalkMonitor : IDisposable
         bool altGr = Down(NativeMethods.VK_RMENU);
         bool shift = Down(NativeMethods.VK_LSHIFT) || Down(NativeMethods.VK_RSHIFT);
         bool win = Down(NativeMethods.VK_LWIN) || Down(NativeMethods.VK_RWIN);
+
+        // Whether this key was already down before the event — holding a key makes the
+        // keyboard repeat its key-down, and one press should mean one chord.
+        bool isRepeat = isKeyDown && _otherKeysDown.Contains(vkCode);
 
         if (!IsModifier(key))
         {
@@ -168,6 +189,46 @@ public sealed class GlobalPushToTalkMonitor : IDisposable
         if (ctrl && alt && !comboDown) _isDisarmed = true;
 
         SetListening(comboDown && !_isDisarmed);
+
+        return UpdateTextChordState(vkCode, isKeyDown, isRepeat, ctrl, alt, altGr, shift, win);
+    }
+
+    /// <summary>
+    /// The Alt+T chord. Unlike push-to-talk there is nothing to wait for: the request
+    /// to type is complete the moment the key goes down, so it fires there and then.
+    ///
+    /// Left Alt only — right Alt is AltGr, which the layout turns into Ctrl+Alt, so
+    /// AltGr+T would fire this on every keyboard that has one.
+    /// </summary>
+    /// <returns>True if this key event should be swallowed rather than passed on.</returns>
+    private bool UpdateTextChordState(uint vkCode, bool isKeyDown, bool isRepeat,
+        bool ctrl, bool alt, bool altGr, bool shift, bool win)
+    {
+        if ((int)vkCode != NativeMethods.VK_T) return false;
+
+        if (!isKeyDown)
+        {
+            if (!_textChordHeld) return false;
+            _textChordHeld = false;
+            return true;
+        }
+
+        // Repeats belong to a press already handled — swallow them so the app
+        // underneath doesn't start receiving a stream of T's mid-chord.
+        if (_textChordHeld) return true;
+
+        // T has to be the only non-modifier held, or this is the tail of some
+        // longer shortcut that happens to pass through Alt+T.
+        if (isRepeat || !alt || altGr || ctrl || shift || win || _otherKeysDown.Count != 1)
+            return false;
+
+        _textChordHeld = true;
+        Logger.Log("GlobalPTT", "Text chord pressed");
+
+        // Never call out from inside the hook: Windows unhooks callbacks that overrun
+        // LowLevelHooksTimeout, and showing a window is nowhere near fast enough.
+        _dispatcherQueue.TryEnqueue(() => TextInputRequested?.Invoke());
+        return true;
     }
 
     /// <summary>
@@ -268,6 +329,7 @@ public static class NativeMethods
     public const int VK_RSHIFT = 0xA1;
     public const int VK_LWIN = 0x5B;
     public const int VK_RWIN = 0x5C;
+    public const int VK_T = 0x54;
 
     [DllImport("user32.dll")]
     public static extern short GetAsyncKeyState(int vKey);
@@ -431,6 +493,53 @@ public static class NativeMethods
 
     [DllImport("user32.dll")]
     public static extern IntPtr GetForegroundWindow();
+
+    // Windows refuses SetForegroundWindow from a process the user hasn't just
+    // interacted with. Sharing an input queue with the current foreground thread
+    // for the duration of the call is what lifts that — see ForceForeground.
+    [DllImport("user32.dll")]
+    public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+
+    [DllImport("user32.dll")]
+    public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+    [DllImport("kernel32.dll")]
+    public static extern uint GetCurrentThreadId();
+
+    [DllImport("user32.dll")]
+    public static extern bool BringWindowToTop(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr SetFocus(IntPtr hWnd);
+
+    /// <summary>
+    /// Takes the foreground reliably, even when the request came from a global
+    /// hotkey rather than a click on one of our own windows.
+    /// </summary>
+    public static void ForceForeground(IntPtr hwnd)
+    {
+        IntPtr foreground = GetForegroundWindow();
+        if (foreground == hwnd)
+        {
+            SetFocus(hwnd);
+            return;
+        }
+
+        uint targetThread = foreground == IntPtr.Zero ? 0 : GetWindowThreadProcessId(foreground, out _);
+        uint thisThread = GetCurrentThreadId();
+        bool attached = targetThread != 0 && targetThread != thisThread &&
+                        AttachThreadInput(thisThread, targetThread, true);
+        try
+        {
+            SetForegroundWindow(hwnd);
+            BringWindowToTop(hwnd);
+            SetFocus(hwnd);
+        }
+        finally
+        {
+            if (attached) AttachThreadInput(thisThread, targetThread, false);
+        }
+    }
 
     [DllImport("user32.dll")]
     public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);

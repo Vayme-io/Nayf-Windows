@@ -283,6 +283,10 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
         _pushToTalkMonitor.PushToTalkPressed += OnPushToTalkPressed;
         _pushToTalkMonitor.PushToTalkReleased += OnPushToTalkReleased;
 
+        // The monitor owns the hook; the window that answers this lives in App, which
+        // has no reason to know about the hook. Re-raising keeps the two apart.
+        _pushToTalkMonitor.TextInputRequested += () => TextInputRequested?.Invoke();
+
         _buddyDictationManager.AudioPowerLevelChanged += level =>
             UpdateOnUI(() => AudioPowerLevel = level);
 
@@ -329,6 +333,41 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
             OnPushToTalkPressed();
         else if (VoiceState == CompanionVoiceState.Listening)
             OnPushToTalkReleased();
+    }
+
+    /// <summary>The Alt+T chord fired — something should offer a place to type.</summary>
+    public event Action? TextInputRequested;
+
+    /// <summary>
+    /// Sends a typed request. Past this point nothing distinguishes it from a spoken
+    /// one: same screenshots, same tools, same spoken answer — only the transcription
+    /// step is skipped, because the user already gave us the words.
+    /// </summary>
+    public async void SendTypedRequest(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return;
+
+        // Typing over a turn already in flight would leave two responses talking at
+        // once, so the earlier one has to finish or be cancelled first.
+        if (VoiceState != CompanionVoiceState.Idle)
+        {
+            Logger.Log("CompanionManager", $"Typed request ignored, VoiceState={VoiceState}");
+            return;
+        }
+
+        Logger.Log("CompanionManager", "Typed request received");
+        StreamingResponseText = "";
+        DetectedElementPosition = null;
+        DetectedElementBubbleText = null;
+
+        // Nothing else sets this for a typed turn — push-to-talk normally does it on
+        // release — and without it the TTS callbacks have no Processing state to
+        // move out of, so the pill would spin for the rest of the session.
+        SetVoiceState(CompanionVoiceState.Processing);
+
+        var request = text.Trim();
+        UpdateOnUI(() => LastTranscript = request);
+        await SendTranscriptToClaudeAsync(request);
     }
 
     /// <summary>

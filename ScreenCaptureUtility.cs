@@ -86,7 +86,20 @@ public static class ScreenCaptureUtility
                 IntPtr bitmapDC = graphics.GetHdc();
                 try
                 {
-                    BitBlt(bitmapDC, 0, 0, width, height, desktopDC, x, y, SRCCOPY);
+                    // Serialised so that two overlapping captures cannot have one put
+                    // Nayf's windows back while the other is still reading the screen.
+                    lock (CaptureExclusionLock)
+                    {
+                        SetOwnWindowCaptureExclusion(true);
+                        try
+                        {
+                            BitBlt(bitmapDC, 0, 0, width, height, desktopDC, x, y, SRCCOPY);
+                        }
+                        finally
+                        {
+                            SetOwnWindowCaptureExclusion(false);
+                        }
+                    }
                 }
                 finally
                 {
@@ -122,6 +135,83 @@ public static class ScreenCaptureUtility
             NativeMethods.ReleaseDC(IntPtr.Zero, desktopDC);
         }
     }
+
+    /// <summary>
+    /// Takes Nayf's own windows out of the screen for the duration of one capture, so
+    /// the model is shown the user's screen rather than Nayf's reaction to it — the
+    /// cursor buddy, the status pill, the typed-request field, and the annotations Nayf
+    /// draws itself. That last one is the reason this matters: without it the model sees
+    /// its own highlight on the next screenshot and reads it as part of the user's UI.
+    ///
+    /// The Mac does this by filtering its own windows out of the SCContentFilter
+    /// (<c>CompanionScreenCaptureUtility.swift:201-204</c>). BitBlt takes no such filter,
+    /// but WDA_EXCLUDEFROMCAPTURE removes a window from the composited surface that every
+    /// capture path reads from, which reaches the same result without rewriting capture.
+    ///
+    /// Applied and taken back per capture rather than left on permanently, because the
+    /// affinity hides the window from *all* capture — the user's screen recordings and
+    /// video calls included. Nayf being invisible in a Teams share is not what was asked
+    /// for, and the Mac's filter is scoped to its own captures too.
+    ///
+    /// Swept across the process's windows rather than set once by each window as it is
+    /// created: the list of Nayf's windows keeps growing, and one that forgets to opt in
+    /// fails silently — the screenshot simply comes back with Nayf in it. Measured on
+    /// Windows 11: the affinity takes effect on the BitBlt immediately following it with
+    /// no settling delay, and can be set from a thread that does not own the window,
+    /// which this is — the buddy and the pill each run their own message loop, and
+    /// capture runs on the thread pool.
+    /// </summary>
+    private static void SetOwnWindowCaptureExclusion(bool excluded)
+    {
+        uint affinity = excluded ? WDA_EXCLUDEFROMCAPTURE : WDA_NONE;
+        uint ownProcessId = (uint)Environment.ProcessId;
+        int count = 0;
+
+        EnumWindows((hwnd, _) =>
+        {
+            NativeMethods.GetWindowThreadProcessId(hwnd, out uint processId);
+            if (processId != ownProcessId) return true;
+
+            if (SetWindowDisplayAffinity(hwnd, affinity)) count++;
+            // Read the error before anything else has a chance to overwrite it.
+            else ReportExclusionFailure(hwnd, Marshal.GetLastWin32Error());
+            return true;
+        }, IntPtr.Zero);
+
+        if (!excluded || _loggedExclusion) return;
+        _loggedExclusion = true;
+        Logger.Log("ScreenCapture", $"Hiding {count} of Nayf's own windows from capture");
+    }
+
+    /// <summary>
+    /// WDA_EXCLUDEFROMCAPTURE needs Windows 10 2004; the project's floor is 1809, where
+    /// the call fails and Nayf stays visible to itself. Worth saying once per window —
+    /// but only once, since a capture happens on every turn.
+    /// </summary>
+    private static void ReportExclusionFailure(IntPtr hwnd, int error)
+    {
+        lock (_reportedExclusionFailures)
+        {
+            if (!_reportedExclusionFailures.Add(hwnd)) return;
+        }
+        Logger.Log("ScreenCapture",
+            $"Could not hide window {hwnd:X} from capture (error {error}); it will appear in screenshots");
+    }
+
+    private static readonly object CaptureExclusionLock = new();
+    private static readonly HashSet<IntPtr> _reportedExclusionFailures = new();
+    private static bool _loggedExclusion;
+
+    private const uint WDA_NONE = 0x00;
+    private const uint WDA_EXCLUDEFROMCAPTURE = 0x11;
+
+    private delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    private static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool SetWindowDisplayAffinity(IntPtr hwnd, uint dwAffinity);
 
     /// <summary>
     /// Returns a new bitmap scaled so its longest edge is at most

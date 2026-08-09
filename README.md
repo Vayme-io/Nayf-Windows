@@ -25,6 +25,7 @@ This is a direct Windows port of the macOS Swift/SwiftUI app, with identical arc
 | Full-screen `NSWindow` overlay | WinUI 3 transparent `WS_EX_TRANSPARENT \| WS_EX_LAYERED` window |
 | `CGEvent` tap global hotkey | Win32 `SetWindowsHookEx(WH_KEYBOARD_LL)` |
 | `ScreenCaptureKit` | Win32 `BitBlt` GDI screen capture |
+| `SCContentFilter(excludingWindows:)` | `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)` |
 | `AVAudioEngine` microphone | **NAudio** `WaveInEvent` |
 | `AXUIElement` selected text | UI Automation COM interop |
 | `zsh -l -c` bash commands | `powershell.exe -NonInteractive` |
@@ -39,7 +40,8 @@ This is a direct Windows port of the macOS Swift/SwiftUI app, with identical arc
 | `App.xaml.cs` | Entry point — creates system tray, overlay windows, companion panel |
 | `CompanionManager.cs` | Central state machine — voice state, Claude API, TTS, conversation history |
 | `SystemTrayManager.cs` | Win32 tray icon with message loop on dedicated STA thread |
-| `GlobalPushToTalkMonitor.cs` | Low-level keyboard hook for Ctrl+Alt PTT |
+| `GlobalPushToTalkMonitor.cs` | Low-level keyboard hook for Ctrl+Alt PTT and Alt+T typing |
+| `TextInputWindow.xaml/.cs` | Alt+T field for typing a request instead of speaking it |
 | `OverlayWindow.xaml/.cs` | Per-monitor transparent click-through overlay with blue cursor |
 | `CompanionPanelWindow.xaml/.cs` | Tray dropdown panel with voice state, model picker, history |
 | `ClaudeAPI.cs` | Claude streaming SSE client + agent tool-use turn executor |
@@ -49,7 +51,7 @@ This is a direct Windows port of the macOS Swift/SwiftUI app, with identical arc
 | `NayfAgentManager.cs` | Agentic tool-use loop orchestrator |
 | `NayfAgentToolExecutor.cs` | Tool executor: PowerShell, file I/O, computer control |
 | `SelectedTextReader.cs` | UI Automation COM interop for reading selected text |
-| `ScreenCaptureUtility.cs` | Multi-monitor GDI BitBlt screenshot capture → JPEG |
+| `ScreenCaptureUtility.cs` | Multi-monitor GDI BitBlt screenshot capture → JPEG, with Nayf's own windows hidden |
 | `NayfConfig.cs` | Worker URL and all configuration constants |
 
 ## Prerequisites
@@ -87,11 +89,16 @@ dotnet run
 
 Or open `NayfWindows.sln` in Visual Studio 2025.
 
-## Keyboard shortcut
+## Keyboard shortcuts
 
 **Ctrl + Alt** — hold to record, release to send
 
 This mirrors the macOS **Ctrl + Option** shortcut.
+
+**Alt + T** — type a request instead of speaking it
+
+Enter sends, Shift+Enter starts a new line, Escape closes and keeps the draft.
+A typed request takes the same path as a spoken one and is answered out loud.
 
 ## Permissions
 

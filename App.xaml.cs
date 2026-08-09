@@ -12,6 +12,7 @@ public partial class App : Application
     private OverlayWindowManager? _overlayWindowManager;
     private NativeStatusPillWindow? _statusPillWindow;
     private CompanionPanelWindow? _companionPanelWindow;
+    private TextInputWindow? _textInputWindow;
     private AnchorWindow? _anchorWindow;
     private AuthManager? _authManager;
     private AuthWindow? _authWindow;
@@ -175,6 +176,17 @@ public partial class App : Application
             _companionPanelWindow = new CompanionPanelWindow(_companionManager);
             _companionPanelWindow.SignOutRequested += OnSignOutRequested;
             Log("Step", "PanelWindow created");
+
+            // Kept alive for the life of the app and only ever hidden — closing a
+            // WinUI window destroys it, and the last one closing takes the app down.
+            _textInputWindow = new TextInputWindow();
+            _textInputWindow.RequestSubmitted += text => _companionManager?.SendTypedRequest(text);
+            _companionManager.TextInputRequested += () =>
+                _uiDispatcher?.TryEnqueue(() =>
+                    // Read the foreground window here rather than inside the window:
+                    // by the time it activates, the answer is Nayf itself.
+                    _textInputWindow?.ShowForRequest(NativeMethods.GetForegroundWindow()));
+            Log("Step", "TextInputWindow created");
 
             // Auto-show the panel when the user needs to enable speech
             // recognition, so the banner with the settings link is visible.

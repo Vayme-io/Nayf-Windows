@@ -91,9 +91,28 @@ public partial class App : Application
         {
             Log("Step", "Authentication succeeded");
             _authSucceeded = true;
-            _authWindow?.Close();
+
+            // Tear the window down on a later turn of the dispatcher rather than
+            // here. This handler runs on the sign-in window's own submit stack, and
+            // closing the window from inside it destroys the XAML island that stack
+            // is still unwinding through — an access violation inside
+            // Microsoft.UI.Xaml.dll, which no catch block in this app can see.
+            var window = _authWindow;
             _authWindow = null;
-            StartCompanion();
+            if (window is null) return;
+
+            var dispatcher = window.DispatcherQueue;
+            dispatcher.TryEnqueue(() =>
+            {
+                // Bring the companion up *before* dismissing the sign-in window.
+                // WinUI starts shutting the app down the moment its last window
+                // closes, so something has to outlive this one: closing first tears
+                // XAML down underneath every window StartCompanion goes on to
+                // create, and that fault lands in Microsoft.UI.Xaml.dll as an
+                // access violation rather than as an exception anything can catch.
+                StartCompanion();
+                dispatcher.TryEnqueue(window.Close);
+            });
         };
 
         // If the user closes the sign-in window without authenticating, quit.

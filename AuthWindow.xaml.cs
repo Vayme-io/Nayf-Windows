@@ -30,6 +30,7 @@ public sealed partial class AuthWindow : Window
 
     private DesktopAcrylicController? _acrylicController;
     private SystemBackdropConfiguration? _backdropConfig;
+    private bool _isClosing;
 
     /// <summary>Raised once the user successfully signs in or signs up.</summary>
     public event Action? AuthenticationSucceeded;
@@ -47,8 +48,10 @@ public sealed partial class AuthWindow : Window
         RootGrid.KeyDown += OnFieldKeyDown;
 
         // Size the window to fit its content and keep it centred.
-        ContentStack.SizeChanged += (_, _) => FitWindowToContent();
+        ContentStack.SizeChanged += OnContentSizeChanged;
     }
+
+    private void OnContentSizeChanged(object sender, SizeChangedEventArgs e) => FitWindowToContent();
 
     private void SetupWindow()
     {
@@ -91,9 +94,13 @@ public sealed partial class AuthWindow : Window
             SystemBackdrop = new DesktopAcrylicBackdrop();
         }
 
-        // Release the backdrop material when the window goes away.
+        // Release the backdrop material when the window goes away, and stop resizing
+        // first: layout can still settle as the window is destroyed, and resizing one
+        // that no longer has a live HWND faults in the XAML layer instead of throwing.
         Closed += (_, _) =>
         {
+            _isClosing = true;
+            ContentStack.SizeChanged -= OnContentSizeChanged;
             _acrylicController?.Dispose();
             _acrylicController = null;
         };
@@ -121,6 +128,8 @@ public sealed partial class AuthWindow : Window
     /// <summary>Resizes the window to fit its content and re-centres it.</summary>
     private void FitWindowToContent()
     {
+        if (_isClosing) return;
+
         double dipWidth = ContentStack.ActualWidth > 0 ? ContentStack.ActualWidth : ContentStack.Width;
         double dipHeight = ContentStack.ActualHeight;
         if (dipWidth <= 0 || dipHeight <= 0) return;

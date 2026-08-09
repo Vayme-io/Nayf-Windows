@@ -68,11 +68,23 @@ public sealed class AuthManager : INotifyPropertyChanged
     {
         try
         {
-            if (!File.Exists(_sessionFilePath)) return false;
+            // Both branches below end at the sign-in window, so record which one it
+            // was: "never had a session" and "had one we couldn't use" look identical
+            // from outside, and telling them apart is the whole diagnosis when
+            // someone reports being asked to log in again.
+            if (!File.Exists(_sessionFilePath))
+            {
+                Logger.Log("AuthManager", "No stored session on disk.");
+                return false;
+            }
 
             var json = await File.ReadAllTextAsync(_sessionFilePath);
             var stored = JsonSerializer.Deserialize<StoredSession>(json);
-            if (stored?.RefreshToken is null) return false;
+            if (stored?.RefreshToken is null)
+            {
+                Logger.Log("AuthManager", "Stored session has no refresh token.");
+                return false;
+            }
 
             _refreshToken = stored.RefreshToken;
             _accessToken = stored.AccessToken;
@@ -161,14 +173,25 @@ public sealed class AuthManager : INotifyPropertyChanged
             var url = $"{NayfConfig.SupabaseURL}/auth/v1/token?grant_type=refresh_token";
             var body = JsonSerializer.Serialize(new { refresh_token = _refreshToken });
             var session = await PostAuthAsync(url, body);
-            ApplySession(session);
+            if (!ApplySession(session))
+                throw new AuthException("The server returned a session without tokens.");
             return true;
         }
         catch (Exception ex)
         {
             Logger.Log("AuthManager", $"Token refresh failed: {ex.Message}");
-            // Refresh token is stale/revoked — force re-login.
-            SignOut();
+
+            // Only sign out when the server actually refuses the token. A timeout,
+            // a DNS failure or a 5xx says nothing about whether it is still good —
+            // and SignOut deletes the stored session, so treating those as a
+            // rejection means opening Nayf before the network is up costs the user
+            // their login permanently. Leave the session alone and try again later.
+            if (IsTokenRejection(ex))
+            {
+                Logger.Log("AuthManager", "Refresh token rejected — signing out.");
+                SignOut();
+            }
+
             return false;
         }
         finally
@@ -176,6 +199,15 @@ public sealed class AuthManager : INotifyPropertyChanged
             _refreshLock.Release();
         }
     }
+
+    /// <summary>
+    /// True only when Supabase itself turned the refresh token down. 408 and 429 are
+    /// excluded: they are the server asking us to come back later, not a verdict on
+    /// the token.
+    /// </summary>
+    private static bool IsTokenRejection(Exception ex)
+        => ex is AuthException { StatusCode: { } status } &&
+           (int)status is >= 400 and < 500 and not 408 and not 429;
 
     private async Task<SessionResponse> PostAuthAsync(string url, string jsonBody)
     {
@@ -187,16 +219,21 @@ public sealed class AuthManager : INotifyPropertyChanged
         var responseText = await response.Content.ReadAsStringAsync();
 
         if (!response.IsSuccessStatusCode)
-            throw new AuthException(ParseErrorMessage(responseText, response.StatusCode));
+            throw new AuthException(ParseErrorMessage(responseText, response.StatusCode),
+                response.StatusCode);
 
         var session = JsonSerializer.Deserialize<SessionResponse>(responseText);
         return session ?? throw new AuthException("Unexpected empty response from the server.");
     }
 
-    private void ApplySession(SessionResponse session)
+    /// <summary>
+    /// Adopts and persists a session from the server. Returns false — without
+    /// touching the current one — if the response carried no usable tokens.
+    /// </summary>
+    private bool ApplySession(SessionResponse session)
     {
         if (string.IsNullOrEmpty(session.AccessToken) || string.IsNullOrEmpty(session.RefreshToken))
-            return;
+            return false;
 
         _accessToken = session.AccessToken;
         _refreshToken = session.RefreshToken;
@@ -207,6 +244,7 @@ public sealed class AuthManager : INotifyPropertyChanged
         IsAuthenticated = true;
 
         PersistSession();
+        return true;
     }
 
     private void PersistSession()
@@ -295,5 +333,9 @@ public sealed class AuthManager : INotifyPropertyChanged
 /// <summary>Thrown when an auth operation fails, carrying a user-facing message.</summary>
 public sealed class AuthException : Exception
 {
-    public AuthException(string message) : base(message) { }
+    /// <summary>The HTTP status the server replied with, when there was one.</summary>
+    public System.Net.HttpStatusCode? StatusCode { get; }
+
+    public AuthException(string message, System.Net.HttpStatusCode? statusCode = null)
+        : base(message) => StatusCode = statusCode;
 }

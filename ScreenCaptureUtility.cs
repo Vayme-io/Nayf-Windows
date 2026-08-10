@@ -90,14 +90,14 @@ public static class ScreenCaptureUtility
                     // Nayf's windows back while the other is still reading the screen.
                     lock (CaptureExclusionLock)
                     {
-                        SetOwnWindowCaptureExclusion(true);
+                        var excluded = ExcludeOwnWindowsFromCapture();
                         try
                         {
                             BitBlt(bitmapDC, 0, 0, width, height, desktopDC, x, y, SRCCOPY);
                         }
                         finally
                         {
-                            SetOwnWindowCaptureExclusion(false);
+                            RestoreOwnWindowsToCapture(excluded);
                         }
                     }
                 }
@@ -160,27 +160,47 @@ public static class ScreenCaptureUtility
     /// no settling delay, and can be set from a thread that does not own the window,
     /// which this is — the buddy and the pill each run their own message loop, and
     /// capture runs on the thread pool.
+    ///
+    /// Only windows that are actually on screen are touched. A hidden window cannot appear
+    /// in a screenshot, so excluding it buys nothing — and several of Nayf's windows are
+    /// hidden shells that have never painted a frame (OverlayWindow is one per monitor,
+    /// created only to satisfy WinUI's XAML partial class and hidden immediately). Their
+    /// composition surface is blank, so anything that prompts the compositor to present one
+    /// puts a white rectangle on the user's screen.
     /// </summary>
-    private static void SetOwnWindowCaptureExclusion(bool excluded)
+    /// <returns>The windows actually excluded, to be passed back to
+    /// <see cref="RestoreOwnWindowsToCapture"/>.</returns>
+    private static List<IntPtr> ExcludeOwnWindowsFromCapture()
     {
-        uint affinity = excluded ? WDA_EXCLUDEFROMCAPTURE : WDA_NONE;
         uint ownProcessId = (uint)Environment.ProcessId;
-        int count = 0;
+        var excluded = new List<IntPtr>();
 
         EnumWindows((hwnd, _) =>
         {
             NativeMethods.GetWindowThreadProcessId(hwnd, out uint processId);
-            if (processId != ownProcessId) return true;
+            if (processId != ownProcessId || !IsWindowVisible(hwnd)) return true;
 
-            if (SetWindowDisplayAffinity(hwnd, affinity)) count++;
+            if (SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE)) excluded.Add(hwnd);
             // Read the error before anything else has a chance to overwrite it.
             else ReportExclusionFailure(hwnd, Marshal.GetLastWin32Error());
             return true;
         }, IntPtr.Zero);
 
-        if (!excluded || _loggedExclusion) return;
+        if (_loggedExclusion) return excluded;
         _loggedExclusion = true;
-        Logger.Log("ScreenCapture", $"Hiding {count} of Nayf's own windows from capture");
+        Logger.Log("ScreenCapture", $"Hiding {excluded.Count} of Nayf's own windows from capture");
+        return excluded;
+    }
+
+    /// <summary>
+    /// Puts back exactly the windows this capture took out, rather than clearing the
+    /// affinity process-wide: a second capture may be running concurrently, and a window
+    /// shown after the sweep was never excluded in the first place.
+    /// </summary>
+    private static void RestoreOwnWindowsToCapture(List<IntPtr> excluded)
+    {
+        foreach (IntPtr hwnd in excluded)
+            SetWindowDisplayAffinity(hwnd, WDA_NONE);
     }
 
     /// <summary>
@@ -212,6 +232,9 @@ public static class ScreenCaptureUtility
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool SetWindowDisplayAffinity(IntPtr hwnd, uint dwAffinity);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsWindowVisible(IntPtr hwnd);
 
     /// <summary>
     /// Returns a new bitmap scaled so its longest edge is at most

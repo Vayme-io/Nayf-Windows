@@ -136,6 +136,81 @@ public class ClaudeAPI
     }
 
     /// <summary>
+    /// One short spoken acknowledgment, so something can be said while the main turn is
+    /// still reasoning. The main call cannot supply this: thinking blocks stream before
+    /// any text block, so its first words arrive far too late to open with.
+    ///
+    /// Deliberately given none of what makes the main call slow — no tools, no
+    /// screenshot, no history, no memory block. Just the transcript, non-streaming,
+    /// because there is nothing to stream in one sentence.
+    /// </summary>
+    public async Task<string> FetchAcknowledgmentAsync(
+        string transcript, string authToken, CancellationToken cancellationToken)
+    {
+        var requestBody = new
+        {
+            model = Model,
+            max_tokens = 64,
+            system = AcknowledgmentSystemPrompt,
+            messages = new[] { new { role = "user", content = transcript } }
+        };
+
+        var json = JsonSerializer.Serialize(requestBody);
+        using var httpContent = new StringContent(json, Encoding.UTF8, "application/json");
+        using var request = new HttpRequestMessage(HttpMethod.Post, _apiUrl) { Content = httpContent };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", authToken);
+
+        // Short and fixed: an acknowledgment that can't beat the main turn has no value,
+        // so give up rather than hold the real answer behind a stalled connection.
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(15));
+        var ct = timeout.Token;
+
+        using var response = await _httpClient.SendAsync(request, ct);
+        response.EnsureSuccessStatusCode();
+
+        var body = await response.Content.ReadAsStringAsync(ct);
+        using var doc = JsonDocument.Parse(body);
+        if (!doc.RootElement.TryGetProperty("content", out var content)) return "";
+
+        var text = new StringBuilder();
+        foreach (var block in content.EnumerateArray())
+        {
+            if (block.TryGetProperty("type", out var type) && type.GetString() == "text" &&
+                block.TryGetProperty("text", out var textEl))
+                text.Append(textEl.GetString());
+        }
+        return text.ToString().Trim();
+    }
+
+    /// <summary>
+    /// Two rules here are load-bearing rather than stylistic. The line must announce that
+    /// Nayf is going away to work, because what follows it is silence — without that the
+    /// user hears a complete-sounding reply and is then confused by the pause. And it must
+    /// promise nothing concrete: it is written without seeing the screen, so any specific
+    /// commitment it makes may be wrong by the time the real turn looks.
+    /// </summary>
+    private const string AcknowledgmentSystemPrompt =
+        """
+        You write a single short spoken line that acknowledges what the user just asked for,
+        in Nayf's voice: warm, casual, lowercase, never corporate. One sentence, max 12 words.
+
+        Echo back what they want so it sounds like you listened, AND make clear you're about
+        to go away and work on it for a moment — the user will hear this line and then
+        silence while you think, so it must set that expectation ("let me think this
+        through", "gimme a moment to work this out"). Without that they assume you're
+        finished and get confused by the pause.
+
+        NEVER answer the question. NEVER explain how you'll do it. NEVER promise a specific
+        outcome or step. NEVER ask a question. Output the sentence only — no quotes, no tags.
+
+        Examples:
+        "ok, let me take a proper look at your timeline."
+        "got it — give me a sec to think this one through."
+        "sure, let me read the screen and work it out."
+        """;
+
+    /// <summary>
     /// Executes one turn of an agentic tool-use loop, returning both any text
     /// content and any tool calls Claude wants to make.
     /// </summary>

@@ -154,6 +154,11 @@ public sealed class NativeStatusPillWindow : IDisposable
     private int _bitmapWidth, _bitmapHeight;
     private float _scale = 1f;
 
+    // Rasterised titles, keyed by their text. Only ever touched from the render thread.
+    private readonly Dictionary<string, Bitmap> _titleSprites = new();
+    private float _spriteFontPx;
+    private int _spriteWidth, _spriteHeight;
+
     private const int WS_EX_LAYERED     = 0x00080000;
     private const int WS_EX_TRANSPARENT = 0x00000020;
     private const int WS_EX_TOOLWINDOW  = 0x00000080;
@@ -410,7 +415,11 @@ public sealed class NativeStatusPillWindow : IDisposable
         // A running task always wins â€” it's the most informative thing on offer.
         string title = runningTool != null
             ? runningTool + "â€¦"
-            : state switch
+            // Below a running tool, above the bare state: once Nayf has said out loud that
+            // it's on it, repeating "Thinking" back at the user reads as stuck. Same accent
+            // and indicator either way -- this is a deeper phase of Processing, not a new
+            // state.
+            : _companionManager.DeepThinkingLabel ?? state switch
             {
                 CompanionVoiceState.Listening => "Listening",
                 CompanionVoiceState.Processing => "Thinking",
@@ -560,28 +569,136 @@ public sealed class NativeStatusPillWindow : IDisposable
     {
         if (alpha <= 0 || title.Length == 0) return;
 
-        // Sized in pixels, not points, so 13 here is the Mac's 13pt SF Pro rather than
-        // whatever 13 points happens to work out to on this monitor.
+        var sprite = TitleSprite(title, (int)MathF.Ceiling(width), (int)MathF.Ceiling(height));
+        if (sprite == null) return;
+
+        // The two titles cross-fade during a state change, so the sprite is composited at
+        // a fraction of its own alpha rather than drawn outright.
+        using var attributes = new ImageAttributes();
+        var fade = new ColorMatrix { Matrix33 = Math.Clamp(alpha, 0, 255) / 255f };
+        attributes.SetColorMatrix(fade);
+
+        // Whole pixels only. The sprite's crispness comes from glyphs aligned to the pixel
+        // grid, and landing it on a half pixel would resample that straight back out.
+        var target = new Rectangle((int)MathF.Round(x), (int)MathF.Round(top),
+                                   sprite.Width, sprite.Height);
+        g.DrawImage(sprite, target, 0, 0, sprite.Width, sprite.Height, GraphicsUnit.Pixel, attributes);
+    }
+
+    /// <summary>
+    /// Rasterises one title through GDI instead of GDI+, and hands back a straight-ARGB
+    /// sprite of it.
+    ///
+    /// At 100% scaling the label has around twelve pixels of cap height, half what the
+    /// Mac's panel gives the same design, so the rasteriser cannot add detail — it can
+    /// only choose how to spend those pixels. GDI+ spends them on smoothing and the label
+    /// reads soft; GDI's own grayscale rasteriser spends them on contrast and it reads
+    /// blocky. ClearType is asked for here to sample coverage three times per pixel
+    /// horizontally, and <see cref="CoverageToAlpha"/> then averages each triplet back
+    /// down to one value: the extra horizontal resolution survives as a better-estimated
+    /// edge, while the colour fringes — which a layered window would composite as dirt —
+    /// average away before they ever reach the alpha channel.
+    ///
+    /// GDI cannot draw with an alpha channel at all, hence the white-on-black mask.
+    ///
+    /// Cached because building one costs a bitmap, a DC and a full pixel walk, and the
+    /// title changes a few times per turn against sixty frames a second.
+    /// </summary>
+    private Bitmap? TitleSprite(string title, int width, int height)
+    {
+        if (width <= 0 || height <= 0) return null;
+
+        // Font size follows the monitor, so a move between displays invalidates every
+        // sprite built for the old one.
         float fontPx = TitleFontSize * _scale;
-        using var font = new Font(TitleFamily, fontPx, FontStyle.Regular, GraphicsUnit.Pixel);
-
-        // Centre on the font's own ascent/descent rather than on the line box, which
-        // carries extra leading and would sit the label visibly low in the bar.
-        float em = TitleFamily.GetEmHeight(FontStyle.Regular);
-        float ascent = TitleFamily.GetCellAscent(FontStyle.Regular) / em * fontPx;
-        float descent = TitleFamily.GetCellDescent(FontStyle.Regular) / em * fontPx;
-        float y = top + (height - (ascent + descent)) / 2f;
-
-        using var brush = new SolidBrush(
-            Color.FromArgb(Math.Clamp(alpha, 0, 255), TitleColor));
-        using var format = new StringFormat
+        if (fontPx != _spriteFontPx || width != _spriteWidth || height != _spriteHeight)
         {
-            Alignment = StringAlignment.Near,
-            LineAlignment = StringAlignment.Near,
-            Trimming = StringTrimming.EllipsisCharacter,
-            FormatFlags = StringFormatFlags.NoWrap
-        };
-        g.DrawString(title, font, brush, new RectangleF(x, y, width, height), format);
+            foreach (var stale in _titleSprites.Values) stale.Dispose();
+            _titleSprites.Clear();
+            _spriteFontPx = fontPx;
+            _spriteWidth = width;
+            _spriteHeight = height;
+        }
+
+        if (_titleSprites.TryGetValue(title, out var cached)) return cached;
+
+        var sprite = new Bitmap(width, height, PixelFormat.Format32bppArgb);
+        using (var sg = Graphics.FromImage(sprite))
+        {
+            // Opaque black, so every byte GDI leaves behind is glyph coverage and nothing
+            // else — the alpha byte it zeroes included.
+            sg.Clear(Color.Black);
+
+            IntPtr hdc = sg.GetHdc();
+            try
+            {
+                IntPtr font = CreateFontW(-(int)MathF.Round(fontPx), 0, 0, 0, FW_SEMIBOLD,
+                                          0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY,
+                                          0, TitleFamily.Name);
+                if (font == IntPtr.Zero) return null;
+
+                IntPtr previousFont = SelectObject(hdc, font);
+                SetBkMode(hdc, TRANSPARENT_BK);
+                SetTextColor(hdc, 0x00FFFFFF);
+
+                // DrawString used to inset the text by about a sixth of an em inside its
+                // layout rectangle. That padding is a GDI+ quirk rather than a design
+                // choice, but reproducing it is what keeps the pill's left padding looking
+                // exactly as it did before the label changed rasterisers.
+                var box = new NativeMethods.RECT
+                {
+                    Left = (int)MathF.Round(fontPx / 6f),
+                    Top = 0,
+                    Right = width,
+                    Bottom = height
+                };
+
+                // Centred by GDI on its own cell metrics. The old code did the arithmetic
+                // itself off GDI+'s ascent and descent, which no longer describe the face
+                // GDI actually mapped -- integer heights mean it is a whole pixel smaller.
+                DrawTextW(hdc, title, title.Length, ref box,
+                          DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+
+                SelectObject(hdc, previousFont);
+                DeleteObject(font);
+            }
+            finally { sg.ReleaseHdc(hdc); }
+        }
+
+        CoverageToAlpha(sprite);
+        _titleSprites[title] = sprite;
+        return sprite;
+    }
+
+    /// <summary>
+    /// Turns the white-on-black mask GDI produced into a straight-ARGB sprite: coverage
+    /// becomes the alpha channel and every pixel takes the title colour. Straight rather
+    /// than premultiplied because GDI+ composites it, and GDI+ premultiplies on the way
+    /// out — the same reasoning as <see cref="Scaled"/>.
+    /// </summary>
+    private static void CoverageToAlpha(Bitmap sprite)
+    {
+        var area = new Rectangle(0, 0, sprite.Width, sprite.Height);
+        var data = sprite.LockBits(area, ImageLockMode.ReadWrite, PixelFormat.Format32bppArgb);
+        try
+        {
+            var pixels = new byte[data.Stride * sprite.Height];
+            Marshal.Copy(data.Scan0, pixels, 0, pixels.Length);
+
+            for (int i = 0; i < pixels.Length; i += 4)
+            {
+                // ClearType wrote one coverage per colour stripe. Averaging the three is
+                // what turns that back into a single edge estimate — better resolved than
+                // grayscale antialiasing would give, and with the fringes cancelled out.
+                pixels[i + 3] = (byte)((pixels[i] + pixels[i + 1] + pixels[i + 2] + 1) / 3);
+                pixels[i]     = TitleColor.B;
+                pixels[i + 1] = TitleColor.G;
+                pixels[i + 2] = TitleColor.R;
+            }
+
+            Marshal.Copy(pixels, 0, data.Scan0, pixels.Length);
+        }
+        finally { sprite.UnlockBits(data); }
     }
 
     private void DrawIndicator(Graphics g, PillLook look, float centerX, float centerY, int alpha, double t)
@@ -776,6 +893,8 @@ public sealed class NativeStatusPillWindow : IDisposable
     {
         _renderTimer?.Dispose();
         _topmostTimer?.Dispose();
+        foreach (var sprite in _titleSprites.Values) sprite.Dispose();
+        _titleSprites.Clear();
         if (_hwnd != IntPtr.Zero)
         {
             NativeMethods.DestroyWindow(_hwnd);
@@ -791,6 +910,28 @@ public sealed class NativeStatusPillWindow : IDisposable
     [DllImport("gdi32.dll")] private static extern IntPtr SelectObject(IntPtr hdc, IntPtr h);
     [DllImport("gdi32.dll")] private static extern bool DeleteObject(IntPtr h);
     [DllImport("gdi32.dll")] private static extern bool DeleteDC(IntPtr hdc);
+
+    // Title rasterisation — see TitleSprite for why the label goes through GDI.
+    [DllImport("gdi32.dll", CharSet = CharSet.Unicode)]
+    private static extern IntPtr CreateFontW(int height, int width, int escapement,
+        int orientation, int weight, uint italic, uint underline, uint strikeOut,
+        uint charSet, uint outPrecision, uint clipPrecision, uint quality,
+        uint pitchAndFamily, string faceName);
+    [DllImport("gdi32.dll")] private static extern int SetTextColor(IntPtr hdc, int color);
+    [DllImport("gdi32.dll")] private static extern int SetBkMode(IntPtr hdc, int mode);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int DrawTextW(IntPtr hdc, string text, int count,
+        ref NativeMethods.RECT rect, uint format);
+
+    private const int FW_SEMIBOLD = 600;
+    private const uint DEFAULT_CHARSET = 1;
+    private const uint CLEARTYPE_QUALITY = 5;
+    private const int TRANSPARENT_BK = 1;
+    private const uint DT_LEFT = 0x0000;
+    private const uint DT_VCENTER = 0x0004;
+    private const uint DT_SINGLELINE = 0x0020;
+    private const uint DT_NOPREFIX = 0x0800;
+    private const uint DT_END_ELLIPSIS = 0x8000;
     [DllImport("user32.dll")] private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 
     [DllImport("shcore.dll")]

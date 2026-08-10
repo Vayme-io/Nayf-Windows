@@ -84,6 +84,18 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
         Logger.Log("CompanionManager", $"model={model} (screenCoords={turnUsesScreenCoordinates})");
     }
 
+    /// <summary>
+    /// Set once the acknowledgment has been spoken and the real turn is still going, so
+    /// the pill can say the waiting is deliberate rather than repeat "Thinking" at
+    /// someone who has just been told Nayf is on it. Null whenever it does not apply.
+    /// </summary>
+    private string? _deepThinkingLabel;
+    public string? DeepThinkingLabel
+    {
+        get => _deepThinkingLabel;
+        private set { _deepThinkingLabel = value; OnPropertyChanged(); }
+    }
+
     private NayfCursorColor _selectedCursorColor = NayfSettings.LoadCursorColor();
     public NayfCursorColor SelectedCursorColor
     {
@@ -160,6 +172,50 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
     /// two races overwrite each other's model.
     /// </summary>
     private readonly ClaudeAPI _lightClaudeAPI;
+
+    /// <summary>
+    /// Writes the spoken acknowledgment. Separate for the same reason as
+    /// <see cref="_lightClaudeAPI"/>, and more urgently: it runs *concurrently with* the
+    /// turn it belongs to, so a shared instance would have the two reassigning
+    /// <see cref="ClaudeAPI.Model"/> underneath each other.
+    /// </summary>
+    private readonly ClaudeAPI _ackClaudeAPI;
+
+    // Guards the handover between the acknowledgment and the real answer: whoever gets
+    // there first wins, and the loser stays quiet.
+    private readonly object _ackGate = new();
+
+    /// <summary>
+    /// The acknowledgment of the most recent turn, kept only so <see cref="Dispose"/> can
+    /// cancel one still in flight. A turn works from its own local, never from this field.
+    /// </summary>
+    private AckHandover? _latestAck;
+
+    /// <summary>
+    /// One turn's acknowledgment. Per turn rather than a set of fields on the manager
+    /// because two turns overlap whenever the user interrupts, and shared flags would have
+    /// the incoming turn resetting the outgoing one's handover halfway through it.
+    /// </summary>
+    private sealed class AckHandover
+    {
+        public readonly CancellationTokenSource Cts;
+        public Task Work = Task.CompletedTask;
+
+        // Both guarded by _ackGate.
+        public bool MainTurnHasFinalAnswer;
+        public bool DidSpeak;
+
+        public AckHandover(CancellationTokenSource cts) => Cts = cts;
+    }
+
+    /// <summary>
+    /// True while the acknowledgment itself is coming out of the speaker. The voice
+    /// state machine ignores playback callbacks during this: the ack is Nayf clearing its
+    /// throat, not the answer, and letting it drive the state would drop the pill to Idle
+    /// with the real turn still running.
+    /// </summary>
+    private volatile bool _ackSpeaking;
+
     private readonly ElevenLabsTTSClient _elevenLabsTTSClient;
     private readonly BuddyDictationManager _buddyDictationManager;
     private readonly GlobalPushToTalkMonitor _pushToTalkMonitor;
@@ -268,6 +324,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
 
         _claudeAPI = new ClaudeAPI(NayfConfig.ChatEndpoint, NayfConfig.ScreenModel);
         _lightClaudeAPI = new ClaudeAPI(NayfConfig.ChatEndpoint, NayfConfig.LightModel);
+        _ackClaudeAPI = new ClaudeAPI(NayfConfig.ChatEndpoint, NayfConfig.AckModel);
         _elevenLabsTTSClient = new ElevenLabsTTSClient(NayfConfig.TTSEndpoint);
         _buddyDictationManager = new BuddyDictationManager();
         _pushToTalkMonitor = new GlobalPushToTalkMonitor();
@@ -296,13 +353,18 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
         // Keep the "thinking" spinner up until audio actually starts — only
         // then flip to Responding (cursor animates with the voice).
         _elevenLabsTTSClient.PlaybackStarted += () =>
+        {
+            if (_ackSpeaking) return;
             UpdateOnUI(() =>
             {
                 if (VoiceState == CompanionVoiceState.Processing)
                     SetVoiceState(CompanionVoiceState.Responding);
             });
+        };
 
         _elevenLabsTTSClient.PlaybackStopped += () =>
+        {
+            if (_ackSpeaking) return;
             UpdateOnUI(() =>
             {
                 // Reset from either state — Processing covers the case where TTS
@@ -311,6 +373,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
                     VoiceState == CompanionVoiceState.Processing)
                     SetVoiceState(CompanionVoiceState.Idle);
             });
+        };
     }
 
     public void StartAsync()
@@ -559,6 +622,10 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
             return;
         }
 
+        // Alongside the turn, not before it — the acknowledgment exists to fill the wait,
+        // so it must not add to it.
+        var ack = StartAcknowledgment(transcript, authToken, ct);
+
         try
         {
             Logger.Log("CompanionManager", "Sending to Claude…");
@@ -584,6 +651,18 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
 
             Logger.Log("CompanionManager", $"Claude responded ({responseText.Length} chars)");
 
+            // The answer is in, so the acknowledgment has lost its job. If it hasn't
+            // started talking yet it never will — cancelling also aborts an in-flight
+            // request, so a slow ack can't hold the real answer up behind it.
+            bool ackAlreadySpeaking;
+            lock (_ackGate)
+            {
+                ack.MainTurnHasFinalAnswer = true;
+                ackAlreadySpeaking = ack.DidSpeak;
+            }
+            if (!ackAlreadySpeaking) ack.Cts.Cancel();
+            UpdateOnUI(() => DeepThinkingLabel = null);
+
             // A response consumed tokens — refresh the displayed balance.
             _ = FetchCreditBalanceAsync();
 
@@ -603,6 +682,13 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
             // Speak the response (strip POINT tags from TTS)
             var ttsText = System.Text.RegularExpressions.Regex.Replace(
                 responseText, @"\[POINT:[^\]]+\]", "").Trim();
+
+            // Let the acknowledgment finish first. SpeakAsync stops whatever is playing,
+            // so without this the answer would cut its own preamble off mid-word.
+            try { await ack.Work; }
+            catch (Exception ex) { Logger.Log("Ack", $"wait failed: {ex.Message}"); }
+            if (ct.IsCancellationRequested) return;
+
             if (string.IsNullOrEmpty(ttsText))
             {
                 // Nothing to speak (e.g. response was only a POINT tag) — done.
@@ -625,6 +711,109 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
             SetVoiceState(CompanionVoiceState.Idle);
         }
     }
+
+    /// <summary>
+    /// Starts the spoken acknowledgment for this turn, running beside it rather than
+    /// ahead of it. Only agent-loop turns get one: dictation and text improvement produce
+    /// no spoken answer, so there is no wait to fill.
+    ///
+    /// The grace delay is the whole design. A turn that answers in under a second needs no
+    /// preamble, and speaking one would make Nayf slower to listen to than it actually is.
+    /// So the request goes out immediately — that latency is unavoidable — but the decision
+    /// to *say* it is deferred until the real turn has had its chance to win outright.
+    ///
+    /// Its cancellation is linked to the turn's, so that a turn the user interrupts takes
+    /// its acknowledgment down with it instead of leaving one talking about a request
+    /// nobody is answering any more.
+    /// </summary>
+    private AckHandover StartAcknowledgment(string transcript, string authToken, CancellationToken turnCt)
+    {
+        var handover = new AckHandover(CancellationTokenSource.CreateLinkedTokenSource(turnCt));
+        _latestAck = handover;
+        var ct = handover.Cts.Token;
+
+        UpdateOnUI(() => DeepThinkingLabel = null);
+
+        handover.Work = Task.Run(async () =>
+        {
+            try
+            {
+                var ackCall = _ackClaudeAPI.FetchAcknowledgmentAsync(transcript, authToken, ct);
+                await Task.Delay(AcknowledgmentGraceMs, ct);
+                var ack = await ackCall;
+
+                lock (_ackGate)
+                {
+                    if (handover.MainTurnHasFinalAnswer || string.IsNullOrWhiteSpace(ack)) return;
+                    handover.DidSpeak = true;
+                }
+
+                Logger.Log("Ack", $"speaking: {ack}");
+                UpdateOnUI(() => SetVoiceState(CompanionVoiceState.Responding));
+                await SpeakAcknowledgmentAsync(ack, authToken, ct);
+
+                // Having just promised to go and work on it, say the silence that follows is
+                // deliberate rather than dropping the pill back to a bare "Thinking".
+                bool stillWorking;
+                lock (_ackGate) stillWorking = !handover.MainTurnHasFinalAnswer;
+                if (stillWorking)
+                    UpdateOnUI(() =>
+                    {
+                        SetVoiceState(CompanionVoiceState.Processing);
+                        DeepThinkingLabel = "Thinking deeper";
+                    });
+            }
+            catch (OperationCanceledException) { /* the real answer got there first */ }
+            catch (Exception ex) { Logger.Log("Ack", $"skipped: {ex.Message}"); }
+        }, ct);
+
+        return handover;
+    }
+
+    /// <summary>
+    /// Speaks the acknowledgment and returns when the audio has actually finished, rather
+    /// than when it starts — <see cref="ElevenLabsTTSClient.SpeakAsync"/> returns as soon
+    /// as the first samples are queued, and the caller needs to know when the speaker is
+    /// free again.
+    /// </summary>
+    private async Task SpeakAcknowledgmentAsync(string ack, string authToken, CancellationToken ct)
+    {
+        var finished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        bool started = false;
+
+        void OnStarted() => started = true;
+        void OnStopped()
+        {
+            // SpeakAsync stops any current audio before it plays its own, so ignore a stop
+            // that arrives before this acknowledgment ever reached the speaker.
+            if (!started) return;
+            finished.TrySetResult();
+        }
+
+        _ackSpeaking = true;
+        _elevenLabsTTSClient.PlaybackStarted += OnStarted;
+        _elevenLabsTTSClient.PlaybackStopped += OnStopped;
+        try
+        {
+            await _elevenLabsTTSClient.SpeakAsync(ack, authToken, ct);
+            // No audio ever played — TTS failed or came back empty. Nothing to wait for.
+            if (!started) return;
+            using (ct.Register(() => finished.TrySetCanceled(ct)))
+                await finished.Task;
+        }
+        finally
+        {
+            _elevenLabsTTSClient.PlaybackStarted -= OnStarted;
+            _elevenLabsTTSClient.PlaybackStopped -= OnStopped;
+            _ackSpeaking = false;
+        }
+    }
+
+    /// <summary>
+    /// How long the real turn gets to finish before the acknowledgment is worth speaking.
+    /// Tuned against real turns: below this, the answer generally arrives first anyway.
+    /// </summary>
+    private const int AcknowledgmentGraceMs = 700;
 
     private void ParseAndApplyPointTags(string responseText, List<CapturedScreenshot>? screenshots)
     {
@@ -778,6 +967,12 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
         VoiceState = state;
         if (state == CompanionVoiceState.Idle)
             AudioPowerLevel = 0f;
+
+        // "Thinking deeper" only means anything while Nayf is actually thinking. Every
+        // other state — speaking, listening, waiting on the user, idle — has to clear it,
+        // or it outranks the real status in the pill and sticks there.
+        if (state != CompanionVoiceState.Processing)
+            DeepThinkingLabel = null;
     }
 
     private void UpdateOnUI(Action action)
@@ -797,6 +992,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
         _buddyDictationManager.Dispose();
         _elevenLabsTTSClient.Dispose();
         _currentResponseCts?.Cancel();
+        _latestAck?.Cts.Cancel();
         _watchdogCts?.Cancel();
         _micPermissionPollCts?.Cancel();
         _creditsHttp.Dispose();

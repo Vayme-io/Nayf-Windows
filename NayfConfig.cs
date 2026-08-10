@@ -52,6 +52,13 @@ public static class NayfConfig
     public const string DefaultModel = LightModel;
 
     /// <summary>
+    /// Writes the spoken acknowledgment that plays while the real turn is still
+    /// reasoning. It has one sentence to produce and no screenshot to read, so the
+    /// smallest model is the right one — anything slower defeats the point of it.
+    /// </summary>
+    public const string AckModel = "claude-haiku-4-5-20251001";
+
+    /// <summary>
     /// Global push-to-talk keyboard shortcut — Ctrl+Alt matches the Mac's Ctrl+Option.
     /// </summary>
     public const int PushToTalkVirtualKey = 0x12; // VK_MENU (Alt key)

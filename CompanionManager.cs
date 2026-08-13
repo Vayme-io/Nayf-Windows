@@ -17,7 +17,7 @@ namespace NayfWindows;
 /// Exposes observable properties for the panel and overlay UIs.
 /// Mirrors CompanionManager.swift.
 /// </summary>
-public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
+public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotationSource, IDisposable
 {
     public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -35,6 +35,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
         CompanionVoiceState.Listening => "Listening…",
         CompanionVoiceState.Processing => "Processing…",
         CompanionVoiceState.Responding => "Responding…",
+        CompanionVoiceState.AwaitingUserStep => "Your turn — go ahead",
         _ => "Press Ctrl+Alt to speak"
     };
 
@@ -85,6 +86,40 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
     }
 
     /// <summary>
+    /// True when the user is asking to be TAUGHT — "show me how", "walk me through" —
+    /// rather than asking Nayf to DO something for them.
+    ///
+    /// This decides capability, not quality. A teaching turn runs hands-off, with no tool
+    /// that can click, type, or run a command, because the user performing each action
+    /// themselves is the whole point. Everything else keeps the full toolset.
+    ///
+    /// A keyword list is normally the wrong way to read intent, and it is used here because
+    /// missing is cheap in one direction only: an unusually-phrased teaching request behaves
+    /// the way it always has, while every phrasing that is recognised becomes hands-off. It
+    /// can never hand actuation to a turn that would not already have had it.
+    /// </summary>
+    private static bool IsTeachingRequest(string transcript)
+    {
+        var normalized = transcript.ToLowerInvariant();
+        string[] teachingCues =
+        {
+            // English
+            "show me how", "show me the", "teach me", "walk me through", "guide me",
+            "how do i", "how do you", "how can i", "how would i", "how to",
+            "step by step", "one step at a time", "click by click", "next step",
+            "what do i do", "what should i do", "where do i",
+            // Swedish — the user's other language.
+            "visa mig", "lär mig", "hur gör jag", "hur gör man", "steg för steg",
+            "vad gör jag", "var hittar jag"
+        };
+
+        foreach (var cue in teachingCues)
+            if (normalized.Contains(cue, StringComparison.Ordinal)) return true;
+
+        return false;
+    }
+
+    /// <summary>
     /// Set once the acknowledgment has been spoken and the real turn is still going, so
     /// the pill can say the waiting is deliberate rather than repeat "Thinking" at
     /// someone who has just been told Nayf is on it. Null whenever it does not apply.
@@ -123,6 +158,31 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
         get => _detectedElementBubbleText;
         private set { _detectedElementBubbleText = value; OnPropertyChanged(); }
     }
+
+    // Screen annotations — the outlines and arrows Nayf draws over the desktop while
+    // explaining something. Observed by AnnotationOverlayWindow, one per monitor.
+    private IReadOnlyList<ScreenAnnotation> _screenAnnotations = Array.Empty<ScreenAnnotation>();
+
+    /// <summary>
+    /// The marks currently on screen, in virtual screen coordinates.
+    ///
+    /// Replaced wholesale, never mutated in place: the overlays read this from their own render
+    /// threads, and swapping a reference means they always see one complete list or the other
+    /// rather than a half-updated one.
+    /// </summary>
+    public IReadOnlyList<ScreenAnnotation> ScreenAnnotations
+    {
+        get => _screenAnnotations;
+        private set { _screenAnnotations = value; OnPropertyChanged(); }
+    }
+
+    /// <summary>
+    /// Raised after <see cref="ScreenAnnotations"/> is replaced.
+    ///
+    /// The overlays stop rendering once every mark has finished animating, so unlike the cursor
+    /// — which they poll for at 60 fps — a new annotation has to wake them. This is that nudge.
+    /// </summary>
+    public event Action? ScreenAnnotationsChanged;
 
     // True when Windows refused to start speech recognition because the user
     // hasn't enabled "Online speech recognition" in the privacy settings yet.
@@ -270,10 +330,15 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
 
         Agentic capabilities:
         You also have tools to perform real actions on the user's PC — run PowerShell
-        commands (the "bash" tool runs PowerShell), read or write files, take screenshots,
-        and control the mouse and keyboard. Use these when the user asks you to actually DO
-        something, not just explain how. Examples: "clean up my downloads folder", "create a
-        folder called projects on my desktop", "write that script and run it".
+        commands (the "bash" tool runs PowerShell), read or write files, and take
+        screenshots. Use these when the user asks you to actually DO something, not just
+        explain how. Examples: "clean up my downloads folder", "create a folder called
+        projects on my desktop", "write that script and run it".
+
+        You never control the mouse or the keyboard. You cannot click, type, drag, scroll,
+        or press keys for the user, in any mode — there is no tool for it and asking for one
+        is refused. The cursor on that screen belongs to the user. When something needs
+        clicking, show them where and let them click it.
 
         When the user asks you to do something, just do it — don't describe what you're about
         to do and ask for confirmation first; the user already asked, so that's the go-ahead.
@@ -304,14 +369,62 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
         arguments and already scope to them. github_create_issue needs owner and repo; ask
         which repository if it isn't clear rather than guessing one.
 
-        Controlling other apps by mouse/keyboard:
-        Drive the app's UI, verifying with screenshots each step:
-        1. Open the app: bash `Start-Process <app>`.
-        2. Take a screenshot to see the layout.
-        3. Use the key tool for shortcuts (it accepts combos like "ctrl+l", "enter",
-           "ctrl+shift+p") and the type tool to enter text.
-        4. left_click using the coordinates you see in the LATEST screenshot, then take a
-           fresh screenshot to confirm the result. Never reuse old coordinates or guess.
+        Tasks that would mean using another app's UI:
+        Do the part you can do without touching their screen, then hand the screen back.
+        1. Anything achievable from PowerShell, do with bash — launching an app, moving
+           files, settings, installed software. That is the whole job most of the time.
+        2. If it can only be done in the app's interface, don't drive it. Open the app with
+           bash `Start-Process <app>`, take a screenshot to see where things actually are,
+           then tell them what to click and mark it with a [POINT] tag.
+        3. For anything longer than a single click, offer to walk them through it step by
+           step rather than listing the steps at them.
+        Never describe a click you performed, and never claim to have clicked something.
+        """;
+
+    /// <summary>
+    /// Appended on a walkthrough turn. Two jobs: undo the prompt above, which describes
+    /// tools this turn does not have — left in, the model reads that it can click and type,
+    /// tries to, and spends its steps being refused rather than teaching — and explain the
+    /// one thing it can do instead, which is hand the user a step and wait.
+    /// </summary>
+    private const string WalkthroughPromptSuffix =
+        """
+        This turn is a guided walkthrough.
+
+        You never touch the user's screen. You do not click, type, drag, scroll, or move
+        anything on their behalf. The user performs every action themselves — that is the
+        entire point of the product. Your job is to show and to say: point with the cursor,
+        draw the shape that fits, speak one short instruction, then wait. If you find
+        yourself wanting to act, don't — point at it instead.
+
+        You have two tools. take_screenshot shows you where the user actually is.
+        request_user_step hands them one thing to do and waits until they have done it.
+
+        The rhythm is always the same: take a screenshot, look at what is really on screen,
+        write ONE short sentence telling them what to do, and call request_user_step in the
+        same message. That sentence is spoken aloud as your cursor flies to the point and
+        the outline traces. The call comes back when they have done it, or when they have
+        said something about it — which may well be a question, in which case answer it and
+        show the SAME step again, worded differently. Do not advance until they are through.
+
+        One action per step. One sentence per step. Never bundle two things into one step,
+        and never describe a step you have not shown.
+
+        What each mark means, so use the one that matches:
+        - The cursor flying to a point means "click exactly here".
+        - The outline means "this is the thing". Give w and h as the target's visual bounds
+          including its padding — the whole button, not just its text — because the outline
+          is traced in exactly those bounds and a wrong size looks wrong on screen.
+        - An arrow means "drag from here to there", so send to_x and to_y only for a drag.
+
+        Use wait_for "click" when the step is a single click on the point you gave. Use
+        "continue" for a drag, for typing, or for anything with no one click to watch for.
+
+        Coordinates are in the pixel space of the screenshot you are looking at, so take a
+        fresh one for each step rather than reusing coordinates from an earlier screen.
+
+        Don't use [POINT] tags here — request_user_step does the pointing, and unlike a tag
+        it waits. When the walkthrough is done, say so in one short sentence and stop.
         """;
 
     public CompanionManager(AuthManager authManager)
@@ -339,6 +452,11 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
     {
         _pushToTalkMonitor.PushToTalkPressed += OnPushToTalkPressed;
         _pushToTalkMonitor.PushToTalkReleased += OnPushToTalkReleased;
+        _pushToTalkMonitor.MouseClicked += OnMouseClicked;
+
+        // The agent loop calls this to hand a walkthrough step over and wait. It lives here
+        // because a step is cursor, marks and voice — none of which the loop knows about.
+        AgentManager.UserStepRequested = PresentWalkthroughStepAsync;
 
         // The monitor owns the hook; the window that answers this lives in App, which
         // has no reason to know about the hook. Re-raising keeps the two apart.
@@ -392,10 +510,13 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
     /// </summary>
     public void ToggleTapToTalk()
     {
-        if (VoiceState == CompanionVoiceState.Idle)
-            OnPushToTalkPressed();
-        else if (VoiceState == CompanionVoiceState.Listening)
+        // Recording stops; anything else starts a new one — including mid-answer, where
+        // the button interrupts exactly as the chord does. A mic button that goes dead the
+        // moment Nayf starts talking would be the one place it can't be told to stop.
+        if (VoiceState == CompanionVoiceState.Listening)
             OnPushToTalkReleased();
+        else
+            OnPushToTalkPressed();
     }
 
     /// <summary>The Alt+T chord fired — something should offer a place to type.</summary>
@@ -410,6 +531,15 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
     {
         if (string.IsNullOrWhiteSpace(text)) return;
 
+        // Mid-walkthrough, typing is how the user answers the step they are on — "done",
+        // "which window?" — not a new request. Same words and same handling as if they had
+        // said them out loud; Claude reads the answer either way.
+        if (TryResumeWalkthrough(WalkthroughResumeReason.Typed, text.Trim()))
+        {
+            UpdateOnUI(() => LastTranscript = text.Trim());
+            return;
+        }
+
         // Typing over a turn already in flight would leave two responses talking at
         // once, so the earlier one has to finish or be cancelled first.
         if (VoiceState != CompanionVoiceState.Idle)
@@ -422,6 +552,9 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
         StreamingResponseText = "";
         DetectedElementPosition = null;
         DetectedElementBubbleText = null;
+        // A new question wipes the last answer's marks — they described a screen the user has
+        // since moved on from.
+        ClearScreenAnnotations();
 
         // Nothing else sets this for a typed turn — push-to-talk normally does it on
         // release — and without it the TTS callbacks have no Processing state to
@@ -522,16 +655,47 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
     private async void OnPushToTalkPressed()
     {
         Logger.Log("CompanionManager", $"OnPushToTalkPressed, VoiceState={VoiceState}");
-        if (VoiceState != CompanionVoiceState.Idle) return;
+
+        // Every state is let in but one. Listening means this press has nothing to start —
+        // the chord is being held down, or the panel's mic button was pressed twice.
+        // Everything else is the user cutting in, which is a thing they are allowed to do.
+        if (VoiceState == CompanionVoiceState.Listening) return;
 
         // Instant audible feedback as the status pill springs up. After the guard, not
         // before it: a press Nayf is going to ignore shouldn't sound like it was heard.
         NayfSoundPlayer.Shared.PlayPushToTalkActivate();
 
+        // Claimed before anything is torn down. The outgoing turn passes through states on
+        // its way out — playback stopping, a response cancelling — and each of those would
+        // otherwise drop the pill back to Idle a moment after this press put it up.
         SetVoiceState(CompanionVoiceState.Listening);
         StreamingResponseText = "";
-        DetectedElementPosition = null;
-        DetectedElementBubbleText = null;
+
+        // Thinking or halfway through a sentence, whatever is in flight goes now. Someone
+        // who starts talking over Nayf is not adding to the last question, they are
+        // replacing it — and "stop" only means anything if the thing being asked to stop
+        // is actually stopped rather than left to finish and then answer.
+        //
+        // EXCEPT while a walkthrough step is waiting on them. There, this press IS the
+        // answer to the step, and the paused agent loop is suspended inside the very task
+        // that would be cancelled — it would wake up, see the cancellation and throw,
+        // leaving the walkthrough dead and its marks stranded on screen.
+        if (_pendingStep == null) CancelTurnInFlight();
+
+        // The voice stops either way. Mid-step or mid-answer, talking over someone who has
+        // just started speaking is the one thing a push-to-talk press must never leave
+        // Nayf doing.
+        _elevenLabsTTSClient.StopPlayback();
+
+        // Mid-step the marks are not last turn's leftovers — they are the step the user is
+        // still on, and they may well be holding the chord to ask about the very thing that
+        // is outlined. Wiping it as they open their mouth takes the question with it.
+        if (_pendingStep == null)
+        {
+            DetectedElementPosition = null;
+            DetectedElementBubbleText = null;
+            ClearScreenAnnotations();
+        }
 
         try
         {
@@ -552,8 +716,31 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
                 MicrophonePermissionNeeded = true;
             }
 
-            SetVoiceState(CompanionVoiceState.Idle);
+            SetVoiceState(RestingState);
         }
+    }
+
+    /// <summary>
+    /// Calls off the turn that is running right now — the agent loop, whatever tool it was
+    /// in the middle of, and the acknowledgment that was going to speak for it.
+    ///
+    /// One cancellation reaches all three: the tool executor is handed the turn's token and
+    /// the acknowledgment's is linked to it. So this is the single place a turn is stopped,
+    /// whether it was still thinking or already talking.
+    /// </summary>
+    private void CancelTurnInFlight()
+    {
+        if (_currentResponseCts == null) return;
+
+        Logger.Log("CompanionManager", "Barge-in — cancelling the turn in flight");
+        _currentResponseCts.Cancel();
+        _currentResponseCts = null;
+
+        // A destructive command still waiting on a yes/no belongs to that turn too. Its
+        // answer would go back to a loop that has stopped reading, and left up, the prompt
+        // would sit there over the next conversation asking about a command nobody is
+        // running any more.
+        AgentManager.CancelPendingConfirmation();
     }
 
     private async void OnPushToTalkReleased()
@@ -576,17 +763,34 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
         catch (Exception ex)
         {
             Logger.Log("CompanionManager", $"Transcription failed: {ex}");
-            SetVoiceState(CompanionVoiceState.Idle);
+            SetVoiceState(RestingState);
+            return;
+        }
+
+        // The user can cut in while the recognizer is still finalizing — it waits up to a
+        // couple of seconds for its last result. By then that press has taken the state and
+        // opened a new recording, so these words belong to an utterance already replaced.
+        // Sending them would put two turns in flight over one microphone.
+        if (VoiceState != CompanionVoiceState.Processing)
+        {
+            Logger.Log("CompanionManager", $"Transcript dropped, VoiceState={VoiceState}");
             return;
         }
 
         if (string.IsNullOrWhiteSpace(transcript))
         {
-            SetVoiceState(CompanionVoiceState.Idle);
+            SetVoiceState(RestingState);
             return;
         }
 
         UpdateOnUI(() => LastTranscript = transcript);
+
+        // Spoken mid-walkthrough, this is the answer to the step rather than a new request.
+        // Whether it means "done" or "hang on, which one?" is Claude's to read — it has the
+        // step, the screen and the language the user is speaking; a keyword test here has
+        // none of those.
+        if (TryResumeWalkthrough(WalkthroughResumeReason.Spoke, transcript)) return;
+
         await SendTranscriptToClaudeAsync(transcript);
     }
 
@@ -636,7 +840,17 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
             // Voice turns always carry screenshots and can point/draw → screen model.
             RouteModel(turnUsesScreenCoordinates: true);
 
+            // Someone asking to be shown how is asking to do it themselves. That turn gets
+            // no tool that can act on their screen — not as a policy the model is asked to
+            // observe, but as a set of tools it does not have.
+            var toolMode = IsTeachingRequest(transcript)
+                ? NayfToolMode.GuidedWalkthrough
+                : NayfToolMode.AgentTask;
+            Logger.Log("CompanionManager", $"toolMode={toolMode}");
+
             var systemPrompt = BuildSystemPrompt();
+            if (toolMode == NayfToolMode.GuidedWalkthrough)
+                systemPrompt += "\n\n" + WalkthroughPromptSuffix;
             var memoryBlock = Memory.ContextBlock();
             if (memoryBlock.Length > 0) systemPrompt += "\n\n" + memoryBlock;
 
@@ -647,7 +861,8 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
                 authToken,
                 delta => UpdateOnUI(() => StreamingResponseText += delta),
                 ct,
-                _conversationHistory);
+                _conversationHistory,
+                toolMode);
 
             Logger.Log("CompanionManager", $"Claude responded ({responseText.Length} chars)");
 
@@ -759,6 +974,12 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
                 if (stillWorking)
                     UpdateOnUI(() =>
                     {
+                        // Tested inside the hop, not before it. Stopping the audio is what
+                        // releases this path, so a barge-in arrives here as a stop and a
+                        // cancellation at almost the same moment — and reading the token on
+                        // the UI thread puts the check after the press either way. Without
+                        // it, "Thinking deeper" lands on top of someone who is talking.
+                        if (ct.IsCancellationRequested) return;
                         SetVoiceState(CompanionVoiceState.Processing);
                         DeepThinkingLabel = "Thinking deeper";
                     });
@@ -863,6 +1084,245 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
         }
     }
 
+    // MARK: - Guided walkthrough
+
+    /// <summary>
+    /// The three beats of a step, in seconds from the moment it appears.
+    ///
+    /// Kept together because they are one piece of timing rather than three independent
+    /// numbers: the cursor arrives, the outline says which thing it arrived at, and the
+    /// arrow — if there is one — says where that thing goes. Read as a sequence, it spells
+    /// out the instruction in the order a person would point it out. Tune them as a set.
+    /// </summary>
+    private static class WalkthroughBeats
+    {
+        /// <summary>The cursor leaves for the target immediately.</summary>
+        public const double CursorFlight = 0.0;
+
+        /// <summary>
+        /// The outline starts tracing — and the instruction starts being spoken. The words
+        /// land over the drawing rather than after it; waiting for the full sequence to
+        /// finish leaves a second and a half of silence with a shape on screen.
+        /// </summary>
+        public const double Outline = 0.35;
+
+        /// <summary>A drag's arrow draws, once the outline has finished.</summary>
+        public const double Arrow = 1.05;
+    }
+
+    /// <summary>
+    /// The step currently on screen, or null when Nayf isn't waiting on the user.
+    ///
+    /// Doubles as the marker that a spoken or typed answer belongs to the walkthrough
+    /// rather than starting a new turn — it outlives the voice state, which passes through
+    /// Listening and Processing on the way to delivering that answer.
+    /// </summary>
+    private PendingWalkthroughStep? _pendingStep;
+
+    private sealed class PendingWalkthroughStep
+    {
+        public required WalkthroughStep Step { get; init; }
+
+        public TaskCompletionSource<WalkthroughReply> Completion { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
+
+    /// <summary>
+    /// Where the voice pipeline comes to rest. Normally Idle — but with a step still on
+    /// screen the user is mid-walkthrough, and dropping to Idle would take the pill down
+    /// and leave them looking at an outline nothing is waiting for.
+    /// </summary>
+    private CompanionVoiceState RestingState =>
+        _pendingStep != null ? CompanionVoiceState.AwaitingUserStep : CompanionVoiceState.Idle;
+
+    /// <summary>
+    /// Shows one walkthrough step and waits for the user to do it. Called by the agent loop,
+    /// which stays suspended inside this for however long the user takes.
+    /// </summary>
+    private async Task<WalkthroughReply> PresentWalkthroughStepAsync(
+        WalkthroughStep step, CancellationToken ct)
+    {
+        var pending = new PendingWalkthroughStep { Step = step };
+
+        // Built before the hop to the UI thread: each annotation starts its own animation
+        // clock when it is constructed, and the beats are measured from here.
+        var annotations = BuildStepAnnotations(step);
+
+        UpdateOnUI(() =>
+        {
+            _pendingStep = pending;
+
+            // Beat 1. Setting the target is what launches the cursor — the overlay picks
+            // the change up on its next frame and flies there.
+            DetectedElementPosition = step.ClickPoint;
+            DetectedElementBubbleText = step.Label;
+
+            ShowScreenAnnotations(annotations);
+            SetVoiceState(CompanionVoiceState.AwaitingUserStep);
+        });
+
+        // Only for a step that ends in a click. Everything else is finished by the user
+        // saying so, and a hook watching for a click nobody is waiting for is pure cost.
+        if (step.WaitFor == WalkthroughWaitFor.Click)
+            _pushToTalkMonitor.StartWatchingClicks();
+
+        _ = SpeakStepInstructionAsync(step, ct);
+
+        try
+        {
+            using (ct.Register(() => pending.Completion.TrySetCanceled(ct)))
+                return await pending.Completion.Task;
+        }
+        finally
+        {
+            // Also on the cancelled path: an interrupted walkthrough must not leave a hook
+            // installed or an outline drawn around a step nobody is on any more.
+            _pushToTalkMonitor.StopWatchingClicks();
+            UpdateOnUI(() =>
+            {
+                if (ReferenceEquals(_pendingStep, pending)) _pendingStep = null;
+                ClearScreenAnnotations();
+            });
+        }
+    }
+
+    /// <summary>
+    /// The marks for one step: the outline that says "this is the thing", and — only for a
+    /// drag — the arrow that says where it goes.
+    ///
+    /// A click step gets no arrow. The cursor has already flown to the spot, and a second
+    /// mark pointing at the same place would be saying something the step doesn't mean.
+    /// </summary>
+    private static IReadOnlyList<ScreenAnnotation> BuildStepAnnotations(WalkthroughStep step)
+    {
+        var bounds = OutlineBoundsFor(step);
+
+        // Classified on the target itself, not on the padded rectangle drawn around it.
+        // A 16px icon on a 4K screen is ~39 real pixels — an ellipse — and the 4px of
+        // clearance would otherwise push it over the threshold into a rounded box.
+        var kind = ScreenAnnotation.HighlightKindFor(step.TargetBounds ?? bounds);
+
+        var outline = ScreenAnnotation.Outline(bounds, step.Label, WalkthroughBeats.Outline, kind);
+        var annotations = new List<ScreenAnnotation> { outline };
+
+        if (step.DragTo is { } destination)
+        {
+            annotations.Add(ScreenAnnotation.ArrowTo(
+                destination,
+                ScreenAnnotation.ArrowOrigin(bounds, outline.Kind, destination),
+                label: null,
+                appearDelay: WalkthroughBeats.Arrow));
+        }
+
+        return annotations;
+    }
+
+    /// <summary>
+    /// What to draw the outline around: the target's own bounds pushed out a few pixels so
+    /// the line sits just off the control rather than on top of its border, or a small ring
+    /// around the click point when Claude gave no size — a slightly generous circle still
+    /// reads as "this one", where a zero-size rectangle draws nothing at all.
+    /// </summary>
+    private static System.Drawing.RectangleF OutlineBoundsFor(WalkthroughStep step)
+    {
+        const float outlinePadding = 4f;
+        const float fallbackDiameter = 34f;
+
+        if (step.TargetBounds is { Width: > 1, Height: > 1 } target)
+        {
+            target.Inflate(outlinePadding, outlinePadding);
+            return target;
+        }
+
+        return new System.Drawing.RectangleF(
+            step.ClickPoint.X - fallbackDiameter / 2f,
+            step.ClickPoint.Y - fallbackDiameter / 2f,
+            fallbackDiameter,
+            fallbackDiameter);
+    }
+
+    /// <summary>
+    /// Says the step's one sentence, starting at beat 2.
+    ///
+    /// Fired without being awaited: the step is waiting on the user, not on the speaker,
+    /// and someone who already knows where to click should be able to click it while Nayf
+    /// is still talking.
+    /// </summary>
+    private async Task SpeakStepInstructionAsync(WalkthroughStep step, CancellationToken ct)
+    {
+        var line = System.Text.RegularExpressions.Regex
+            .Replace(step.Spoken ?? "", @"\[POINT:[^\]]+\]", "").Trim();
+        if (line.Length == 0) return;
+
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(WalkthroughBeats.Outline), ct);
+
+            var authToken = await _authManager.CurrentAccessTokenAsync();
+            if (authToken == null || ct.IsCancellationRequested) return;
+
+            await _elevenLabsTTSClient.SpeakAsync(line, authToken, ct);
+        }
+        catch (OperationCanceledException) { /* the user moved on */ }
+        catch (Exception ex)
+        {
+            Logger.Log("Walkthrough", $"step speech failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Finishes the step the user was on, letting the walkthrough carry on from where it
+    /// paused. Returns false when nothing was waiting — in which case whatever the user
+    /// said is a new request and belongs on the normal path.
+    /// </summary>
+    private bool TryResumeWalkthrough(WalkthroughResumeReason reason, string? transcript = null)
+    {
+        var pending = _pendingStep;
+        if (pending == null) return false;
+        if (!pending.Completion.TrySetResult(new WalkthroughReply(reason, transcript))) return false;
+
+        _pendingStep = null;
+
+        // Back to Processing: the loop is running again, and the pill should stop telling
+        // the user it is their turn.
+        SetVoiceState(CompanionVoiceState.Processing);
+        return true;
+    }
+
+    /// <summary>
+    /// A click landed somewhere while a step was waiting for one.
+    ///
+    /// Only a click on the thing Nayf pointed at counts. Advancing on any click anywhere
+    /// means the user's own taskbar, a stray click in another window, or their attempt to
+    /// focus the app all skip a step they never performed — and the walkthrough carries on
+    /// describing a screen that never changed.
+    /// </summary>
+    private void OnMouseClicked(System.Drawing.Point point)
+    {
+        var pending = _pendingStep;
+        if (pending == null || pending.Step.WaitFor != WalkthroughWaitFor.Click) return;
+        if (!IsClickOnTarget(pending.Step, point)) return;
+
+        TryResumeWalkthrough(WalkthroughResumeReason.Clicked);
+    }
+
+    /// <summary>
+    /// True when a click is close enough to count as the step being done: inside the
+    /// target's bounds, or near the point Nayf pointed at when it was given no bounds.
+    /// </summary>
+    private static bool IsClickOnTarget(WalkthroughStep step, System.Drawing.Point point)
+    {
+        const float clickProximityRadius = 40f;
+
+        if (step.TargetBounds is { Width: > 1, Height: > 1 } bounds &&
+            bounds.Contains(point.X, point.Y))
+            return true;
+
+        float dx = point.X - step.ClickPoint.X;
+        float dy = point.Y - step.ClickPoint.Y;
+        return MathF.Sqrt(dx * dx + dy * dy) <= clickProximityRadius;
+    }
+
     /// <summary>
     /// Clears the detected-element pointing target once the overlay buddy has
     /// finished navigating to it, flown back, and resumed following the cursor.
@@ -873,6 +1333,35 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
         {
             DetectedElementPosition = null;
             DetectedElementBubbleText = null;
+        });
+    }
+
+    /// <summary>
+    /// Puts a set of marks on screen, replacing whatever was there.
+    ///
+    /// The animation clock starts when each <see cref="ScreenAnnotation"/> is constructed, not
+    /// here, so a caller staging a sequence gives each one an <c>AppearDelay</c> and hands them
+    /// over together in a single call.
+    /// </summary>
+    public void ShowScreenAnnotations(IReadOnlyList<ScreenAnnotation> annotations)
+    {
+        UpdateOnUI(() =>
+        {
+            ScreenAnnotations = annotations;
+            ScreenAnnotationsChanged?.Invoke();
+        });
+        Logger.Log("Annotations", $"showing {annotations.Count} annotation(s)");
+    }
+
+    /// <summary>Takes every mark off the screen.</summary>
+    public void ClearScreenAnnotations()
+    {
+        if (ScreenAnnotations.Count == 0) return;
+
+        UpdateOnUI(() =>
+        {
+            ScreenAnnotations = Array.Empty<ScreenAnnotation>();
+            ScreenAnnotationsChanged?.Invoke();
         });
     }
 
@@ -897,7 +1386,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IDisposable
             .ContinueWith(_ =>
             {
                 if (!ct.IsCancellationRequested)
-                    UpdateOnUI(() => SetVoiceState(CompanionVoiceState.Idle));
+                    UpdateOnUI(() => SetVoiceState(RestingState));
             }, ct, TaskContinuationOptions.OnlyOnRanToCompletion, TaskScheduler.Default);
     }
 

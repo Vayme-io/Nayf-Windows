@@ -30,9 +30,19 @@ public sealed class GlobalPushToTalkMonitor : IDisposable
     /// <summary>Alt+T: the user wants to type their request rather than speak it.</summary>
     public event Action? TextInputRequested;
 
+    /// <summary>
+    /// Where the user let go of the left mouse button, in virtual-screen pixels. Raised
+    /// only between <see cref="StartWatchingClicks"/> and <see cref="StopWatchingClicks"/>,
+    /// and never in place of the click — the app underneath still receives it.
+    /// </summary>
+    public event Action<System.Drawing.Point>? MouseClicked;
+
     private IntPtr _hookHandle = IntPtr.Zero;
     private readonly NativeMethods.LowLevelKeyboardProc _hookCallback;
     private readonly DispatcherQueue _dispatcherQueue;
+
+    private IntPtr _mouseHookHandle = IntPtr.Zero;
+    private readonly NativeMethods.LowLevelMouseProc _mouseHookCallback;
 
     private bool _isPttActive = false;
 
@@ -75,6 +85,7 @@ public sealed class GlobalPushToTalkMonitor : IDisposable
         _dispatcherQueue = DispatcherQueue.GetForCurrentThread();
         // Keep a strong reference so the delegate is not garbage collected while the hook is active
         _hookCallback = HookCallback;
+        _mouseHookCallback = MouseHookCallback;
 
         // The hook is installed from this same thread, so its callback and this timer
         // both run on the dispatcher — the state below needs no locking.
@@ -107,6 +118,10 @@ public sealed class GlobalPushToTalkMonitor : IDisposable
 
     public void Stop()
     {
+        // Directly, not via StopWatchingClicks: Stop runs at shutdown, and by then the
+        // dispatcher may never get round to a queued item.
+        UnhookMouse();
+
         if (_hookHandle == IntPtr.Zero) return;
         NativeMethods.UnhookWindowsHookEx(_hookHandle);
         _hookHandle = IntPtr.Zero;
@@ -115,6 +130,68 @@ public sealed class GlobalPushToTalkMonitor : IDisposable
         _isDisarmed = false;
         _textChordHeld = false;
         _otherKeysDown.Clear();
+    }
+
+    /// <summary>
+    /// Starts reporting clicks through <see cref="MouseClicked"/>.
+    ///
+    /// The hook is installed only while something is actually waiting for a click. A
+    /// low-level mouse hook is called for every mouse *move* on the machine as well, and
+    /// there is no reason for Nayf's process to be woken thousands of times a minute for
+    /// the rest of the session.
+    /// </summary>
+    public void StartWatchingClicks()
+    {
+        // The hook's callback runs on whichever thread installed it, which has to be one
+        // that pumps messages — so it is installed from the dispatcher like the keyboard
+        // one, whoever calls this.
+        _dispatcherQueue.TryEnqueue(() =>
+        {
+            if (_mouseHookHandle != IntPtr.Zero) return;
+
+            _mouseHookHandle = NativeMethods.SetWindowsHookEx(
+                NativeMethods.WH_MOUSE_LL,
+                _mouseHookCallback,
+                NativeMethods.GetModuleHandle(null),
+                0
+            );
+
+            if (_mouseHookHandle == IntPtr.Zero)
+                Logger.Log("GlobalPTT", $"Failed to install mouse hook, error={Marshal.GetLastWin32Error()}");
+            else
+                Logger.Log("GlobalPTT", "Mouse hook installed");
+        });
+    }
+
+    /// <summary>Stops reporting clicks and takes the hook back out.</summary>
+    public void StopWatchingClicks() => _dispatcherQueue.TryEnqueue(UnhookMouse);
+
+    private void UnhookMouse()
+    {
+        if (_mouseHookHandle == IntPtr.Zero) return;
+        NativeMethods.UnhookWindowsHookEx(_mouseHookHandle);
+        _mouseHookHandle = IntPtr.Zero;
+        Logger.Log("GlobalPTT", "Mouse hook removed");
+    }
+
+    /// <summary>
+    /// Watches for the click that finishes a walkthrough step.
+    ///
+    /// It never swallows anything. The click is the user operating their own application —
+    /// the whole point of the step — and Nayf is only noting that it happened.
+    /// </summary>
+    private IntPtr MouseHookCallback(int nCode, IntPtr wParam, IntPtr lParam)
+    {
+        if (nCode >= 0 && (int)wParam == (int)NativeMethods.WM_LBUTTONUP)
+        {
+            var mouseStruct = Marshal.PtrToStructure<NativeMethods.MSLLHOOKSTRUCT>(lParam);
+            var point = new System.Drawing.Point(mouseStruct.pt.X, mouseStruct.pt.Y);
+
+            // Same rule as the text chord: never call out from inside a hook.
+            _dispatcherQueue.TryEnqueue(() => MouseClicked?.Invoke(point));
+        }
+
+        return NativeMethods.CallNextHookEx(_mouseHookHandle, nCode, wParam, lParam);
     }
 
     private IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
@@ -435,6 +512,27 @@ public static class NativeMethods
 
     [DllImport("user32.dll", SetLastError = true)]
     public static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
+
+    public const int WH_MOUSE_LL = 14;
+
+    /// <summary>
+    /// The mouse equivalent of <see cref="KBDLLHOOKSTRUCT"/>. <c>pt</c> is already in
+    /// virtual-screen pixels, which is the space annotations are drawn in.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MSLLHOOKSTRUCT
+    {
+        public POINT pt;
+        public uint mouseData;
+        public uint flags;
+        public uint time;
+        public IntPtr dwExtraInfo;
+    }
+
+    public delegate IntPtr LowLevelMouseProc(int nCode, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr SetWindowsHookEx(int idHook, LowLevelMouseProc lpfn, IntPtr hMod, uint dwThreadId);
 
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]

@@ -18,15 +18,32 @@ public sealed class BuddyDictationManager : IDisposable
     public event Action<string>? PartialTranscriptUpdated;
     public event Action<float>? AudioPowerLevelChanged;
 
-    private WindowsSpeechTranscriptionProvider? _speechProvider;
     private MMDevice? _meterDevice;
     private System.Threading.Timer? _meterTimer;
     private CancellationTokenSource? _sessionCts;
-    private bool _isRecording = false;
     private readonly object _recordingLock = new();
 
-    private string _currentPartialTranscript = "";
-    private readonly List<string> _finalizedSegments = new();
+    /// <summary>The recording in progress, or null between utterances.</summary>
+    private DictationSession? _activeSession;
+
+    /// <summary>
+    /// One utterance: its recognizer, and the words that recognizer has produced.
+    ///
+    /// Per session rather than fields on the manager because a barge-in overlaps two of
+    /// them — the new recording opens while the previous one is still finalizing, which
+    /// Windows speech takes up to a couple of seconds to do. Shared fields would have the
+    /// outgoing session's teardown disposing the incoming session's recognizer, and its
+    /// last words landing in the incoming session's transcript.
+    /// </summary>
+    private sealed class DictationSession
+    {
+        public required WindowsSpeechTranscriptionProvider Provider { get; init; }
+
+        // Written from the recognizer's threads, read by whoever stops the session, so
+        // both are guarded by locking the session itself.
+        public readonly List<string> FinalizedSegments = new();
+        public string CurrentPartialTranscript = "";
+    }
 
     public BuddyDictationManager() { }
 
@@ -36,25 +53,58 @@ public sealed class BuddyDictationManager : IDisposable
     /// </summary>
     public async Task StartRecordingAsync()
     {
+        DictationSession session;
         lock (_recordingLock)
         {
-            if (_isRecording) return;
-            _isRecording = true;
+            if (_activeSession != null) return;
+            session = new DictationSession { Provider = new WindowsSpeechTranscriptionProvider() };
+            _activeSession = session;
         }
 
-        _finalizedSegments.Clear();
-        _currentPartialTranscript = "";
         _sessionCts = new CancellationTokenSource();
 
-        // Start Windows speech recognition
-        _speechProvider = new WindowsSpeechTranscriptionProvider();
-        _speechProvider.TranscriptReceived += OnTranscriptFinalized;
-        _speechProvider.PartialTranscriptReceived += OnPartialTranscript;
-        await _speechProvider.StartSessionAsync(_sessionCts.Token);
+        session.Provider.TranscriptReceived += text =>
+        {
+            lock (session)
+            {
+                session.FinalizedSegments.Add(text);
+                session.CurrentPartialTranscript = "";
+            }
+        };
+
+        session.Provider.PartialTranscriptReceived += text =>
+        {
+            lock (session) session.CurrentPartialTranscript = text;
+
+            // A session that has already been stopped can still speak. Its words are the
+            // previous utterance's, and showing them would caption what is being said now
+            // with what was said before it.
+            if (IsCurrentSession(session)) PartialTranscriptUpdated?.Invoke(text);
+        };
+
+        try
+        {
+            await session.Provider.StartSessionAsync(_sessionCts.Token);
+        }
+        catch
+        {
+            // The recognizer never opened, so nothing is recording. Give the slot back
+            // rather than leaving every later press queued behind a session that failed to
+            // start — which is what a press that appears to do nothing at all looks like.
+            lock (_recordingLock)
+                if (ReferenceEquals(_activeSession, session)) _activeSession = null;
+            session.Provider.Dispose();
+            throw;
+        }
 
         // Start mic capture just for audio power level visualization —
         // the actual transcription is handled by Windows.Media.SpeechRecognition
         StartMicrophonePowerMonitor();
+    }
+
+    private bool IsCurrentSession(DictationSession session)
+    {
+        lock (_recordingLock) return ReferenceEquals(_activeSession, session);
     }
 
     /// <summary>
@@ -63,26 +113,32 @@ public sealed class BuddyDictationManager : IDisposable
     /// </summary>
     public async Task<string?> StopRecordingAndGetTranscriptAsync()
     {
+        DictationSession session;
         lock (_recordingLock)
         {
-            if (!_isRecording) return null;
-            _isRecording = false;
+            if (_activeSession == null) return null;
+            session = _activeSession;
+
+            // Handed back before the wait below, so a user who cuts in gets a new
+            // recording immediately instead of queueing behind this one's last words.
+            _activeSession = null;
         }
 
         StopMicrophonePowerMonitor();
 
-        if (_speechProvider != null)
-        {
-            await _speechProvider.EndSessionAsync();
-            _speechProvider.TranscriptReceived -= OnTranscriptFinalized;
-            _speechProvider.PartialTranscriptReceived -= OnPartialTranscript;
-            _speechProvider.Dispose();
-            _speechProvider = null;
-        }
+        // The final result usually arrives during this call, so the handlers stay attached
+        // until it returns — they write into this session's own transcript, never into
+        // whatever recording has started in the meantime.
+        await session.Provider.EndSessionAsync();
+        session.Provider.Dispose();
 
-        var fullTranscript = string.Join(" ", _finalizedSegments).Trim();
-        if (string.IsNullOrWhiteSpace(fullTranscript))
-            fullTranscript = _currentPartialTranscript.Trim();
+        string fullTranscript;
+        lock (session)
+        {
+            fullTranscript = string.Join(" ", session.FinalizedSegments).Trim();
+            if (string.IsNullOrWhiteSpace(fullTranscript))
+                fullTranscript = session.CurrentPartialTranscript.Trim();
+        }
 
         return string.IsNullOrWhiteSpace(fullTranscript) ? null : fullTranscript;
     }
@@ -129,18 +185,6 @@ public sealed class BuddyDictationManager : IDisposable
         _meterDevice = null;
     }
 
-    private void OnTranscriptFinalized(string text)
-    {
-        _finalizedSegments.Add(text);
-        _currentPartialTranscript = "";
-    }
-
-    private void OnPartialTranscript(string text)
-    {
-        _currentPartialTranscript = text;
-        PartialTranscriptUpdated?.Invoke(text);
-    }
-
     private static float CalculateAudioPower(byte[] buffer, int bytesRecorded, WaveFormat? format)
     {
         if (bytesRecorded < 4) return 0f;
@@ -171,6 +215,6 @@ public sealed class BuddyDictationManager : IDisposable
     {
         _sessionCts?.Cancel();
         StopMicrophonePowerMonitor();
-        _speechProvider?.Dispose();
+        _activeSession?.Provider.Dispose();
     }
 }

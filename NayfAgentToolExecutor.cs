@@ -21,20 +21,58 @@ public sealed class AgentToolResult
     public static AgentToolResult Message(string text) => new() { Text = text };
 }
 
+/// <summary>What the current interaction is allowed to do on the user's machine.</summary>
+public enum NayfToolMode
+{
+    /// <summary>
+    /// Teaching. Nayf shows and speaks; the user performs every action themselves.
+    /// Looking and pointing only — never actuation.
+    /// </summary>
+    GuidedWalkthrough,
+
+    /// <summary>Background automation the user asked Nayf to carry out. Nayf acts.</summary>
+    AgentTask
+}
+
 /// <summary>
-/// Executes all agent tool types: PowerShell commands, file reads/writes,
-/// and computer control (screenshot, mouse, keyboard).
+/// Executes all agent tool types: PowerShell commands, file reads/writes, and screenshots.
 /// Mirrors NayfAgentToolExecutor.swift.
 /// Destructive shell commands require user confirmation before execution.
+///
+/// Nothing here drives the mouse or the keyboard. Nayf points at what the user should
+/// click and the user clicks it — in every mode, not just while teaching.
 /// </summary>
 public sealed class NayfAgentToolExecutor
 {
     public event Func<AgentConfirmationRequest, Task>? ConfirmationRequested;
 
-    // Maps the last screenshot's image space to real screen pixels so clicks land
-    // correctly (screenshots are downscaled and may be on a non-primary monitor).
-    private float _shotScaleX = 1f, _shotScaleY = 1f;
-    private int _shotOffsetX, _shotOffsetY;
+    /// <summary>
+    /// Scopes what this run may do. Set by <see cref="NayfAgentManager"/> before each turn.
+    /// Defaults to the hands-off mode, so a caller that forgets to set it cannot act.
+    /// </summary>
+    public NayfToolMode ToolMode { get; set; } = NayfToolMode.GuidedWalkthrough;
+
+    /// <summary>
+    /// Tools that change something on the user's machine.
+    ///
+    /// A walkthrough is never offered these, and is refused them here as well. The two
+    /// checks are not redundant: the tool list is a request the model can ignore, and a
+    /// model that names a tool it was never given must still not reach the user's screen.
+    /// </summary>
+    private static readonly HashSet<string> ActuationToolNames = new(StringComparer.Ordinal)
+    {
+        "bash", "write_file", "spotify_play",
+        "google_calendar_create_event", "google_calendar_delete_event", "github_create_issue"
+    };
+
+    /// <summary>
+    /// The last screenshot handed to the model, or null if it hasn't asked for one yet.
+    ///
+    /// Kept because a step's coordinates were read off this image, and pointing at the real
+    /// spot means mapping them back to screen pixels — done by <see cref="NayfAgentManager"/>,
+    /// which draws the step. Nothing here turns a coordinate into a click.
+    /// </summary>
+    public CapturedScreenshot? LastScreenshot { get; private set; }
 
     /// <summary>Executes a tool call and returns the result for Claude's tool_result.</summary>
     public async Task<AgentToolResult> ExecuteToolAsync(
@@ -42,12 +80,25 @@ public sealed class NayfAgentToolExecutor
         CancellationToken cancellationToken = default,
         string? authToken = null)
     {
+        // A walkthrough teaches; it never touches the machine. The refusal is worded rather
+        // than silent because it goes back to the model as a tool result — this is the last
+        // chance to steer it into pointing at the step instead of performing it.
+        if (ToolMode == NayfToolMode.GuidedWalkthrough && ActuationToolNames.Contains(toolCall.ToolName))
+        {
+            Logger.Log("AgentTools", $"walkthrough: refused actuation tool '{toolCall.ToolName}'");
+            return AgentToolResult.Message(
+                "Not available while teaching — the user performs every action themselves. " +
+                "Don't click, type, drag, or run anything. Point at the spot, tell them what " +
+                "to do in one short sentence, and wait for them to do it.");
+        }
+
         return toolCall.ToolName switch
         {
+            "take_screenshot" => await TakeScreenshotAsync(),
             "bash" => AgentToolResult.Message(await ExecuteBashToolAsync(toolCall.InputJson, cancellationToken)),
             "read_file" => AgentToolResult.Message(ExecuteReadFileTool(toolCall.InputJson)),
             "write_file" => AgentToolResult.Message(ExecuteWriteFileTool(toolCall.InputJson)),
-            "computer" => await ExecuteComputerToolAsync(toolCall.InputJson, cancellationToken),
+            "computer" => await ExecuteComputerToolAsync(toolCall.InputJson),
             "spotify_play" => AgentToolResult.Message(await ExecuteSpotifyPlayAsync(toolCall.InputJson, authToken)),
             "google_calendar_list_events" => AgentToolResult.Message(await ExecuteGoogleCalendarListEventsAsync(toolCall.InputJson, authToken)),
             "google_calendar_create_event" => AgentToolResult.Message(await ExecuteGoogleCalendarCreateEventAsync(toolCall.InputJson, authToken)),
@@ -289,23 +340,26 @@ public sealed class NayfAgentToolExecutor
         catch (Exception ex) { return $"Error writing file: {ex.Message}"; }
     }
 
-    private async Task<AgentToolResult> ExecuteComputerToolAsync(
-        Dictionary<string, object> input,
-        CancellationToken cancellationToken)
+    /// <summary>
+    /// The old control-the-computer tool, now reduced to its one harmless action.
+    ///
+    /// It is no longer offered in any mode, and the code that moved the cursor, clicked,
+    /// typed and pressed keys is gone rather than gated — Nayf shows the user where to
+    /// click and they click it, in every mode, so there is nothing for that code to do.
+    /// Still handled here because the model has been asking for this tool for a long time
+    /// and may name it out of habit; being told to point is more use to it than "unknown
+    /// tool", and asking to look is answered rather than refused.
+    /// </summary>
+    private async Task<AgentToolResult> ExecuteComputerToolAsync(Dictionary<string, object> input)
     {
-        if (!input.TryGetValue("action", out var actionObj)) return AgentToolResult.Message("Missing 'action' parameter");
-        var action = actionObj?.ToString() ?? "";
+        var action = input.TryGetValue("action", out var actionObj) ? actionObj?.ToString() ?? "" : "";
+        if (action == "screenshot") return await TakeScreenshotAsync();
 
-        return action switch
-        {
-            "screenshot" => await TakeScreenshotAsync(),
-            "left_click" => AgentToolResult.Message(ExecuteMouseClick(input, false)),
-            "right_click" => AgentToolResult.Message(ExecuteMouseClick(input, true)),
-            "double_click" => AgentToolResult.Message(ExecuteMouseDoubleClick(input)),
-            "type" => AgentToolResult.Message(ExecuteTypeText(input)),
-            "key" => AgentToolResult.Message(ExecutePressKey(input)),
-            _ => AgentToolResult.Message($"Unknown computer action: {action}")
-        };
+        Logger.Log("AgentTools", $"refused computer action '{action}' — Nayf never actuates");
+        return AgentToolResult.Message(
+            "Nayf never controls the mouse or keyboard. Don't click, type, drag, or press " +
+            "keys on the user's behalf — there is no tool for it. Tell them what to click " +
+            "and point at it with a [POINT] tag, and let them do it themselves.");
     }
 
     private async Task<AgentToolResult> TakeScreenshotAsync()
@@ -316,19 +370,14 @@ public sealed class NayfAgentToolExecutor
             if (screenshots.Count == 0) return AgentToolResult.Message("No screenshot available");
 
             var shot = screenshots[0]; // primary display
-            // Remember how to convert image coordinates → screen pixels for clicks.
-            if (shot.ImageWidth > 0 && shot.ImageHeight > 0)
-            {
-                _shotScaleX = (float)shot.MonitorWidth / shot.ImageWidth;
-                _shotScaleY = (float)shot.MonitorHeight / shot.ImageHeight;
-                _shotOffsetX = shot.MonitorLeft;
-                _shotOffsetY = shot.MonitorTop;
-            }
+            // Kept for pointing: a step's coordinates are read off this image, and the
+            // monitor bounds on it are what map them back to the real screen.
+            if (shot.ImageWidth > 0 && shot.ImageHeight > 0) LastScreenshot = shot;
 
             return new AgentToolResult
             {
                 Text = $"Screenshot of the primary screen ({shot.ImageWidth}x{shot.ImageHeight}). " +
-                       "Click using coordinates within this image.",
+                       "Coordinates you read off this image are the pixel space you point in.",
                 ScreenshotJpeg = shot.ImageData
             };
         }
@@ -336,133 +385,6 @@ public sealed class NayfAgentToolExecutor
         {
             return AgentToolResult.Message($"Screenshot failed: {ex.Message}");
         }
-    }
-
-    private bool TryGetScreenPoint(Dictionary<string, object> input, out int x, out int y)
-    {
-        x = 0; y = 0;
-        if (!input.TryGetValue("coordinate", out var coordObj)) return false;
-        int ix = 0, iy = 0;
-        if (coordObj is JsonElement el && el.ValueKind == JsonValueKind.Array && el.GetArrayLength() >= 2)
-        {
-            ix = el[0].GetInt32();
-            iy = el[1].GetInt32();
-        }
-        else return false;
-
-        // Map from downscaled image space to actual screen pixels.
-        x = _shotOffsetX + (int)Math.Round(ix * _shotScaleX);
-        y = _shotOffsetY + (int)Math.Round(iy * _shotScaleY);
-        return true;
-    }
-
-    private string ExecuteMouseClick(Dictionary<string, object> input, bool rightClick)
-    {
-        if (!TryGetScreenPoint(input, out int x, out int y)) return "Missing/invalid 'coordinate' parameter";
-        try
-        {
-            SetCursorPos(x, y);
-            var ev = rightClick ? MOUSEEVENTF_RIGHTDOWN | MOUSEEVENTF_RIGHTUP
-                                : MOUSEEVENTF_LEFTDOWN | MOUSEEVENTF_LEFTUP;
-            mouse_event(ev, 0, 0, 0, 0);
-            return $"{(rightClick ? "Right" : "Left")} clicked at screen ({x}, {y})";
-        }
-        catch (Exception ex) { return $"Click failed: {ex.Message}"; }
-    }
-
-    private string ExecuteMouseDoubleClick(Dictionary<string, object> input)
-    {
-        if (!TryGetScreenPoint(input, out int x, out int y)) return "Missing/invalid 'coordinate' parameter";
-        try
-        {
-            SetCursorPos(x, y);
-            mouse_event(MOUSEEVENTF_LEFTDOWN | MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
-            mouse_event(MOUSEEVENTF_LEFTDOWN | MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
-            return $"Double clicked at screen ({x}, {y})";
-        }
-        catch (Exception ex) { return $"Double click failed: {ex.Message}"; }
-    }
-
-    private string ExecuteTypeText(Dictionary<string, object> input)
-    {
-        if (!input.TryGetValue("text", out var textObj)) return "Missing 'text' parameter";
-        var text = textObj?.ToString() ?? "";
-        try
-        {
-            foreach (char c in text)
-            {
-                var inputs = new INPUT[]
-                {
-                    new() { type = 1, u = new InputUnion { ki = new KEYBDINPUT { wVk = 0, wScan = c, dwFlags = 4 } } },
-                    new() { type = 1, u = new InputUnion { ki = new KEYBDINPUT { wVk = 0, wScan = c, dwFlags = 4 | 2 } } }
-                };
-                SendInput(2, inputs, System.Runtime.InteropServices.Marshal.SizeOf<INPUT>());
-            }
-            return $"Typed {text.Length} characters";
-        }
-        catch (Exception ex) { return $"Type failed: {ex.Message}"; }
-    }
-
-    /// <summary>
-    /// Presses a key or key combination, e.g. "enter", "ctrl+l", "ctrl+shift+p".
-    /// "cmd"/"win"/"command" are treated as Ctrl (Windows uses Ctrl for the
-    /// shortcuts Claude tends to reach for on the Mac).
-    /// </summary>
-    private string ExecutePressKey(Dictionary<string, object> input)
-    {
-        if (!input.TryGetValue("key", out var keyObj)) return "Missing 'key' parameter";
-        var keyName = (keyObj?.ToString() ?? "").Trim();
-        if (keyName.Length == 0) return "Empty 'key'";
-
-        try
-        {
-            var parts = keyName.Split('+', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            var modifiers = new List<byte>();
-            byte mainVk = 0;
-
-            foreach (var p in parts)
-            {
-                switch (p.ToLowerInvariant())
-                {
-                    case "ctrl": case "control": case "cmd": case "command": case "win": case "super": case "meta":
-                        modifiers.Add(0x11); break; // VK_CONTROL
-                    case "shift": modifiers.Add(0x10); break; // VK_SHIFT
-                    case "alt": case "option": modifiers.Add(0x12); break; // VK_MENU
-                    default: mainVk = KeyNameToVk(p); break;
-                }
-            }
-            if (mainVk == 0) return $"Unknown key: {keyName}";
-
-            foreach (var m in modifiers) keybd_event(m, 0, 0, 0);
-            keybd_event(mainVk, 0, 0, 0);
-            keybd_event(mainVk, 0, 2, 0); // KEYEVENTF_KEYUP
-            for (int i = modifiers.Count - 1; i >= 0; i--) keybd_event(modifiers[i], 0, 2, 0);
-            return $"Pressed: {keyName}";
-        }
-        catch (Exception ex) { return $"Key press failed: {ex.Message}"; }
-    }
-
-    private static byte KeyNameToVk(string key)
-    {
-        switch (key.ToLowerInvariant())
-        {
-            case "return": case "enter": return 0x0D;
-            case "escape": case "esc": return 0x1B;
-            case "tab": return 0x09;
-            case "backspace": return 0x08;
-            case "delete": case "del": return 0x2E;
-            case "space": case "spacebar": return 0x20;
-            case "up": return 0x26; case "down": return 0x28;
-            case "left": return 0x25; case "right": return 0x27;
-            case "home": return 0x24; case "end": return 0x23;
-            case "pageup": return 0x21; case "pagedown": return 0x22;
-        }
-        if (key.Length == 1 && key[0] >= 'a' && key[0] <= 'z') return (byte)(0x41 + (key[0] - 'a'));
-        if (key.Length == 1 && key[0] >= 'A' && key[0] <= 'Z') return (byte)(0x41 + (key[0] - 'A'));
-        if (key.Length == 1 && key[0] >= '0' && key[0] <= '9') return (byte)(0x30 + (key[0] - '0'));
-        if (key.Length >= 2 && key[0] == 'f' && int.TryParse(key.Substring(1), out int fn) && fn is >= 1 and <= 12)
-            return (byte)(0x70 + fn - 1);
-        return 0;
     }
 
     private static async Task<string> RunPowerShellCommandAsync(string command, CancellationToken cancellationToken)
@@ -658,45 +580,8 @@ public sealed class NayfAgentToolExecutor
         return false;
     }
 
-    // P/Invoke for mouse/keyboard control
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
-    private static extern bool SetCursorPos(int X, int Y);
-
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
-    private static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, uint dwExtraInfo);
-
-    private const uint MOUSEEVENTF_LEFTDOWN = 0x0002;
-    private const uint MOUSEEVENTF_LEFTUP = 0x0004;
-    private const uint MOUSEEVENTF_RIGHTDOWN = 0x0008;
-    private const uint MOUSEEVENTF_RIGHTUP = 0x0010;
-
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
-    private static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, uint dwExtraInfo);
-
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
-    private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
-
-    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
-    private struct INPUT
-    {
-        public uint type;
-        public InputUnion u;
-    }
-
-    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Explicit)]
-    private struct InputUnion
-    {
-        [System.Runtime.InteropServices.FieldOffset(0)]
-        public KEYBDINPUT ki;
-    }
-
-    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
-    private struct KEYBDINPUT
-    {
-        public ushort wVk;
-        public ushort wScan;
-        public uint dwFlags;
-        public uint time;
-        public IntPtr dwExtraInfo;
-    }
+    // There is deliberately no P/Invoke to SetCursorPos, mouse_event, keybd_event or
+    // SendInput in this file. Nayf shows the user where to click; the user clicks. The
+    // synthetic-input code that used to live here was removed rather than left behind a
+    // check, so no future edit can reach it by accident.
 }

@@ -424,6 +424,7 @@ public sealed class NativeStatusPillWindow : IDisposable
                 CompanionVoiceState.Listening => "Listening",
                 CompanionVoiceState.Processing => "Thinking",
                 CompanionVoiceState.Responding => "Speaking",
+                CompanionVoiceState.AwaitingUserStep => "Your turn",
                 _ => ""
             };
 
@@ -731,6 +732,9 @@ public sealed class NativeStatusPillWindow : IDisposable
     /// <summary>
     /// Teal while listening, purple while thinking, orange while speaking â€” the same
     /// three accents the Mac HUD uses, so the two apps read identically at a glance.
+    ///
+    /// Waiting on the user borrows the listening teal: both are the same message, that the
+    /// floor is theirs and Nayf is the one waiting.
     /// </summary>
     private static Color AccentFor(CompanionVoiceState state, string? runningTool)
     {
@@ -741,7 +745,8 @@ public sealed class NativeStatusPillWindow : IDisposable
 
         return state switch
         {
-            CompanionVoiceState.Listening => Color.FromArgb(38, 209, 189),
+            CompanionVoiceState.Listening or CompanionVoiceState.AwaitingUserStep
+                => Color.FromArgb(38, 209, 189),
             CompanionVoiceState.Responding => Color.FromArgb(255, 140, 56),
             _ => Color.FromArgb(158, 107, 245)
         };

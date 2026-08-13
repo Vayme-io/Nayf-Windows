@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
@@ -630,14 +631,80 @@ public sealed class NativeOverlayWindow : IDisposable
     private struct BLEND { public byte BlendOp, BlendFlags, SourceConstantAlpha, AlphaFormat; }
 }
 
-/// <summary>Creates a single overlay window spanning all monitors.</summary>
+/// <summary>
+/// Owns Nayf's on-screen drawing: the cursor buddy, plus one annotation window per monitor.
+///
+/// <para>The cursor is a single small window that roams across every display, so there is only
+/// ever one of it. Annotations are full-monitor surfaces, so there has to be one per monitor —
+/// a layered window can't span displays with different scaling, and a virtual-screen-sized
+/// bitmap would be mostly empty anyway.</para>
+/// </summary>
 public sealed class OverlayWindowManager : IDisposable
 {
-    private readonly NativeOverlayWindow _overlay;
+    private readonly CompanionManager _companionManager;
+    private readonly NativeOverlayWindow _cursorOverlay;
+    private readonly List<AnnotationOverlayWindow> _annotationOverlays = new();
+
     public OverlayWindowManager(CompanionManager companionManager)
-        => _overlay = new NativeOverlayWindow(companionManager);
-    public void CreateOverlaysForAllMonitors() => _overlay.Start();
-    public void Dispose() => _overlay.Dispose();
+    {
+        _companionManager = companionManager;
+        _cursorOverlay = new NativeOverlayWindow(companionManager);
+    }
+
+    public void CreateOverlaysForAllMonitors()
+    {
+        _cursorOverlay.Start();
+
+        foreach (var monitorBounds in EnumerateMonitorBounds())
+        {
+            var annotationOverlay = new AnnotationOverlayWindow(_companionManager, monitorBounds);
+            _annotationOverlays.Add(annotationOverlay);
+            annotationOverlay.Start();
+        }
+
+        Logger.Log("Annotations", $"created {_annotationOverlays.Count} annotation overlay(s)");
+    }
+
+    /// <summary>
+    /// Every monitor's bounds in virtual screen coordinates — the same space annotations are
+    /// authored in, so a window can place itself by subtracting its own origin.
+    /// </summary>
+    private static List<Rectangle> EnumerateMonitorBounds()
+    {
+        var bounds = new List<Rectangle>();
+
+        NativeMethods.EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero,
+            (hMonitor, hdc, ref rect, data) =>
+            {
+                var info = new NativeMethods.MONITORINFOEX
+                {
+                    cbSize = (uint)Marshal.SizeOf<NativeMethods.MONITORINFOEX>()
+                };
+                if (NativeMethods.GetMonitorInfo(hMonitor, ref info))
+                {
+                    var monitor = info.rcMonitor;
+                    bounds.Add(Rectangle.FromLTRB(monitor.Left, monitor.Top, monitor.Right, monitor.Bottom));
+                }
+                return true;
+            }, IntPtr.Zero);
+
+        if (bounds.Count == 0)
+        {
+            // No enumeration is better than no overlay — fall back to the primary display.
+            bounds.Add(new Rectangle(0, 0,
+                NativeMethods.GetSystemMetrics(NativeMethods.SM_CXSCREEN),
+                NativeMethods.GetSystemMetrics(NativeMethods.SM_CYSCREEN)));
+        }
+
+        return bounds;
+    }
+
+    public void Dispose()
+    {
+        foreach (var annotationOverlay in _annotationOverlays) annotationOverlay.Dispose();
+        _annotationOverlays.Clear();
+        _cursorOverlay.Dispose();
+    }
 }
 
 /// <summary>GDI+ rounded-rectangle helpers.</summary>

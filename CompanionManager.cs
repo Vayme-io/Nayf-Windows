@@ -279,7 +279,16 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
     private readonly ElevenLabsTTSClient _elevenLabsTTSClient;
     private readonly BuddyDictationManager _buddyDictationManager;
     private readonly GlobalPushToTalkMonitor _pushToTalkMonitor;
+    private readonly RegionFocusController _regionFocusController;
     private readonly AuthManager _authManager;
+
+    /// <summary>
+    /// A crop of whatever the user last circled with the region-focus hold. While it is set,
+    /// the NEXT question is answered about that crop instead of a fresh screenshot of the
+    /// whole screen. One-shot: read and cleared by the turn that uses it, so the question
+    /// after that goes back to looking at everything.
+    /// </summary>
+    private byte[]? _pendingFocusRegionImage;
     private readonly HttpClient _creditsHttp = new() { Timeout = TimeSpan.FromSeconds(10) };
     public readonly NayfAgentManager AgentManager;
 
@@ -441,6 +450,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
         _elevenLabsTTSClient = new ElevenLabsTTSClient(NayfConfig.TTSEndpoint);
         _buddyDictationManager = new BuddyDictationManager();
         _pushToTalkMonitor = new GlobalPushToTalkMonitor();
+        _regionFocusController = new RegionFocusController(this);
         AgentManager = new NayfAgentManager(_claudeAPI);
         Integrations = new NayfIntegrationsManager(authManager);
         Store = new NayfStoreManager(authManager);
@@ -453,6 +463,10 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
         _pushToTalkMonitor.PushToTalkPressed += OnPushToTalkPressed;
         _pushToTalkMonitor.PushToTalkReleased += OnPushToTalkReleased;
         _pushToTalkMonitor.MouseClicked += OnMouseClicked;
+
+        _pushToTalkMonitor.RegionFocusStarted += _regionFocusController.Begin;
+        _pushToTalkMonitor.RegionFocusFinished += _regionFocusController.Finish;
+        _pushToTalkMonitor.RegionFocusCancelled += _regionFocusController.Cancel;
 
         // The agent loop calls this to hand a walkthrough step over and wait. It lives here
         // because a step is cursor, marks and voice — none of which the loop knows about.
@@ -794,6 +808,58 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
         await SendTranscriptToClaudeAsync(transcript);
     }
 
+    // MARK: - Region focus
+
+    /// <summary>
+    /// The region-focus lasso just opened: start listening, so the user can ask about what
+    /// they are circling <i>while</i> they circle it. Whatever they say is paired with the
+    /// crop when they let go — drawing and asking are one gesture, not two.
+    /// </summary>
+    public void BeginRegionFocusVoiceCapture()
+    {
+        // Nothing to do if a recording is already open — this is the same guard the chord
+        // itself uses, and reaching the microphone twice is what it exists to prevent.
+        if (VoiceState == CompanionVoiceState.Listening) return;
+        OnPushToTalkPressed();
+    }
+
+    /// <summary>
+    /// Alt released and the crop is in hand. The crop is set <i>before</i> the recording is
+    /// stopped so it is already waiting when the transcript arrives; if the user drew in
+    /// silence there is no transcript and it simply stays pending for their next question.
+    /// </summary>
+    public void FinishRegionFocusVoiceCapture(byte[] regionImage)
+    {
+        _pendingFocusRegionImage = regionImage;
+        Logger.Log("CompanionManager", $"Region focus: {regionImage.Length / 1024} KB crop pending");
+        OnPushToTalkReleased();
+    }
+
+    /// <summary>
+    /// The lasso closed without a region — nothing drawn, Escape, or a capture that failed.
+    /// Drops the recording it opened without sending anything, and leaves any crop from an
+    /// earlier gesture alone: this one produced nothing, so it takes nothing away either.
+    /// </summary>
+    public async void CancelRegionFocusVoiceCapture()
+    {
+        if (VoiceState != CompanionVoiceState.Listening) return;
+
+        StopWatchdog();
+        SetVoiceState(RestingState);
+
+        try
+        {
+            // Stopped rather than abandoned: the recognizer holds the microphone until it is
+            // told the utterance is over. The transcript it returns is thrown away — the user
+            // never asked anything, they just moved their hand.
+            await _buddyDictationManager.StopRecordingAndGetTranscriptAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.Log("CompanionManager", $"Region focus: dropping recording failed: {ex.Message}");
+        }
+    }
+
     private async Task SendTranscriptToClaudeAsync(string transcript)
     {
         // Cancel any previous in-flight response
@@ -801,15 +867,28 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
         _currentResponseCts = new CancellationTokenSource();
         var ct = _currentResponseCts.Token;
 
+        // A circled region answers the question better than the whole screen does, and it is
+        // the reason the user circled it. One-shot — read and cleared here, so the question
+        // after this one goes back to looking at everything.
+        var focusRegionImage = _pendingFocusRegionImage;
+        _pendingFocusRegionImage = null;
+
         List<CapturedScreenshot>? screenshots = null;
-        try
+        if (focusRegionImage != null)
         {
-            screenshots = await ScreenCaptureUtility.CaptureAllScreensAsync();
-            Logger.Log("CompanionManager", $"Captured {screenshots?.Count ?? 0} screenshot(s)");
+            Logger.Log("CompanionManager", "Using the circled region instead of a screenshot");
         }
-        catch (Exception ex)
+        else
         {
-            Logger.Log("CompanionManager", $"Screen capture failed: {ex.Message}");
+            try
+            {
+                screenshots = await ScreenCaptureUtility.CaptureAllScreensAsync();
+                Logger.Log("CompanionManager", $"Captured {screenshots?.Count ?? 0} screenshot(s)");
+            }
+            catch (Exception ex)
+            {
+                Logger.Log("CompanionManager", $"Screen capture failed: {ex.Message}");
+            }
         }
 
         // Stay in Processing (the spinner) through the screenshot upload and
@@ -862,7 +941,8 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
                 delta => UpdateOnUI(() => StreamingResponseText += delta),
                 ct,
                 _conversationHistory,
-                toolMode);
+                toolMode,
+                focusRegionImage);
 
             Logger.Log("CompanionManager", $"Claude responded ({responseText.Length} chars)");
 
@@ -891,8 +971,11 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
             if (_conversationHistory.Count > NayfConfig.MaxConversationHistoryTurns)
                 _conversationHistory.RemoveAt(0);
 
-            // Parse any POINT tags in the response
-            ParseAndApplyPointTags(responseText, screenshots);
+            // Parse any POINT tags in the response — but not off a crop. A point read from a
+            // cropped image is in the crop's own pixel space, and nothing here can map that
+            // back to the screen. Sending the cursor to those coordinates would put it
+            // somewhere arbitrary; saying the answer without pointing is the honest version.
+            if (focusRegionImage == null) ParseAndApplyPointTags(responseText, screenshots);
 
             // Speak the response (strip POINT tags from TTS)
             var ttsText = System.Text.RegularExpressions.Regex.Replace(

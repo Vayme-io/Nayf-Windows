@@ -21,6 +21,11 @@ namespace NayfWindows;
 /// The same hook carries a second chord, Alt+T, for typing a request instead of
 /// speaking it. That one is momentary — it fires once on key-down and has no
 /// release to wait for.
+///
+/// And a third: Shift held on its own, which opens the region-focus lasso. It has the
+/// same shape as push-to-talk — a hold with a beginning and an end — but a stricter
+/// entry condition, because Shift is the busiest key on the keyboard: it leads every
+/// capital letter and every Shift+click, and neither of those is a request to draw.
 /// </summary>
 public sealed class GlobalPushToTalkMonitor : IDisposable
 {
@@ -29,6 +34,15 @@ public sealed class GlobalPushToTalkMonitor : IDisposable
 
     /// <summary>Alt+T: the user wants to type their request rather than speak it.</summary>
     public event Action? TextInputRequested;
+
+    /// <summary>Shift has been held on its own long enough to mean "let me circle something".</summary>
+    public event Action? RegionFocusStarted;
+
+    /// <summary>Shift released while the lasso was open — whatever was drawn is the region.</summary>
+    public event Action? RegionFocusFinished;
+
+    /// <summary>The lasso was abandoned: Escape, or Shift turning out to be part of a shortcut.</summary>
+    public event Action? RegionFocusCancelled;
 
     /// <summary>
     /// Where the user let go of the left mouse button, in virtual-screen pixels. Raised
@@ -80,6 +94,34 @@ public sealed class GlobalPushToTalkMonitor : IDisposable
 
     private readonly DispatcherQueueTimer _armingTimer;
 
+    /// <summary>True between the confirmed Alt hold and the release that ends it.</summary>
+    private bool _isRegionFocusActive;
+
+    /// <summary>
+    /// Set the moment Shift is joined by anything else, and cleared only when every modifier
+    /// is back up. Without it, releasing the A of Shift+A while still holding Shift would
+    /// land back on a bare Shift and start drawing over the document being typed into.
+    /// </summary>
+    private bool _regionInvalidated;
+
+    /// <summary>
+    /// True between the Escape key-down that closed a lasso and its key-up, so both ends of
+    /// that press are swallowed together and the app underneath never sees half of it.
+    /// </summary>
+    private bool _regionEscapeHeld;
+
+    /// <summary>
+    /// How long Shift must be held *alone* before the lasso opens.
+    ///
+    /// Longer than <see cref="ArmingDelay"/>, and longer than the Mac's 0.2s, because ⌥ does
+    /// nothing on its own whereas Shift is pressed constantly — it leads every capital letter
+    /// and every Shift+click. This delay is the gap between pressing Shift and pressing what
+    /// it modifies, and it has to be long enough to sit out an ordinary one.
+    /// </summary>
+    private static readonly TimeSpan RegionHoldDelay = TimeSpan.FromMilliseconds(400);
+
+    private readonly DispatcherQueueTimer _regionHoldTimer;
+
     public GlobalPushToTalkMonitor()
     {
         _dispatcherQueue = DispatcherQueue.GetForCurrentThread();
@@ -93,6 +135,11 @@ public sealed class GlobalPushToTalkMonitor : IDisposable
         _armingTimer.Interval = ArmingDelay;
         _armingTimer.IsRepeating = false;
         _armingTimer.Tick += (_, _) => OnArmingElapsed();
+
+        _regionHoldTimer = _dispatcherQueue.CreateTimer();
+        _regionHoldTimer.Interval = RegionHoldDelay;
+        _regionHoldTimer.IsRepeating = false;
+        _regionHoldTimer.Tick += (_, _) => OnRegionHoldElapsed();
     }
 
     public void Start()
@@ -126,9 +173,13 @@ public sealed class GlobalPushToTalkMonitor : IDisposable
         NativeMethods.UnhookWindowsHookEx(_hookHandle);
         _hookHandle = IntPtr.Zero;
         _armingTimer.Stop();
+        _regionHoldTimer.Stop();
         _isPttActive = false;
         _isDisarmed = false;
         _textChordHeld = false;
+        _isRegionFocusActive = false;
+        _regionInvalidated = false;
+        _regionEscapeHeld = false;
         _otherKeysDown.Clear();
     }
 
@@ -241,6 +292,12 @@ public sealed class GlobalPushToTalkMonitor : IDisposable
         bool shift = Down(NativeMethods.VK_LSHIFT) || Down(NativeMethods.VK_RSHIFT);
         bool win = Down(NativeMethods.VK_LWIN) || Down(NativeMethods.VK_RWIN);
 
+        // Region focus wants the two Shifts told apart, and it has to be asked here rather
+        // than inside that state machine: only this scope has Down(), and on the very event
+        // that starts the hold — left Shift going down — the async key state has not caught
+        // up yet, so querying the system directly answers "up" and the hold never begins.
+        bool leftShiftOnly = Down(NativeMethods.VK_LSHIFT) && !Down(NativeMethods.VK_RSHIFT);
+
         // Whether this key was already down before the event — holding a key makes the
         // keyboard repeat its key-down, and one press should mean one chord.
         bool isRepeat = isKeyDown && _otherKeysDown.Contains(vkCode);
@@ -258,6 +315,7 @@ public sealed class GlobalPushToTalkMonitor : IDisposable
         {
             _otherKeysDown.Clear();
             _isDisarmed = false;
+            _regionInvalidated = false;
         }
 
         bool comboDown = ctrl && alt && !altGr && !shift && !win && _otherKeysDown.Count == 0;
@@ -267,7 +325,133 @@ public sealed class GlobalPushToTalkMonitor : IDisposable
 
         SetListening(comboDown && !_isDisarmed);
 
-        return UpdateTextChordState(vkCode, isKeyDown, isRepeat, ctrl, alt, altGr, shift, win);
+        // Both chords get a say in whether the key is swallowed, and both must run: they
+        // watch different keys, and short-circuiting would leave one of them blind to an
+        // event the other happened to claim first.
+        bool swallowForRegion = UpdateRegionFocusState(
+            vkCode, isKeyDown, ctrl, alt, altGr, shift, win, leftShiftOnly);
+        bool swallowForText = UpdateTextChordState(vkCode, isKeyDown, isRepeat, ctrl, alt, altGr, shift, win);
+        return swallowForRegion || swallowForText;
+    }
+
+    /// <summary>
+    /// The region-focus hold: left Shift, by itself, for <see cref="RegionHoldDelay"/>.
+    ///
+    /// <para><b>Left Shift only.</b> Holding the *right* Shift for eight seconds is the
+    /// Windows accessibility shortcut that turns on Filter Keys, and a lasso is easily held
+    /// that long. Left Shift has no such timer on it.</para>
+    ///
+    /// <para><b>Nothing is swallowed except Escape.</b> Unlike Alt, releasing Shift on its own
+    /// does nothing to the app underneath, so there is nothing to suppress — and suppressing
+    /// it would be actively harmful, because an application that never sees the release goes
+    /// on believing Shift is down and types in capitals from then on.</para>
+    /// </summary>
+    /// <returns>True if this key event should be swallowed rather than passed on.</returns>
+    private bool UpdateRegionFocusState(uint vkCode, bool isKeyDown,
+        bool ctrl, bool alt, bool altGr, bool shift, bool win, bool leftShiftOnly)
+    {
+        // Second half of the Escape that closed a lasso, swallowed to match its key-down.
+        if ((int)vkCode == NativeMethods.VK_ESCAPE && !isKeyDown && _regionEscapeHeld)
+        {
+            _regionEscapeHeld = false;
+            return true;
+        }
+
+        bool shiftAlone = leftShiftOnly && !ctrl && !alt && !altGr && !win &&
+                          _otherKeysDown.Count == 0;
+
+        if (shift && !shiftAlone) _regionInvalidated = true;
+
+        if (shiftAlone && !_regionInvalidated)
+        {
+            if (!_isRegionFocusActive && !_regionHoldTimer.IsRunning) _regionHoldTimer.Start();
+            return false;
+        }
+
+        _regionHoldTimer.Stop();
+        if (!_isRegionFocusActive) return false;
+        _isRegionFocusActive = false;
+
+        // Shift going up is the user finishing their loop. Anything else arriving on top of it
+        // means they were reaching for a shortcut and the lasso was never the point.
+        if (!shift)
+        {
+            Logger.Log("GlobalPTT", "Region focus released");
+            _dispatcherQueue.TryEnqueue(() => RegionFocusFinished?.Invoke());
+            return false;
+        }
+
+        Logger.Log("GlobalPTT", "Region focus cancelled");
+        _dispatcherQueue.TryEnqueue(() => RegionFocusCancelled?.Invoke());
+
+        // Escape here means "not this after all", so it belongs to the lasso rather than to
+        // whatever is behind it — which would otherwise close its dialog at the same time.
+        if ((int)vkCode == NativeMethods.VK_ESCAPE && isKeyDown)
+        {
+            _regionEscapeHeld = true;
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// The Shift hold survived <see cref="RegionHoldDelay"/>. Re-read the keys before opening
+    /// anything, exactly as <see cref="OnArmingElapsed"/> does — the hold may have ended
+    /// while the delay ran, and an overlay put up for a key nobody is holding never comes down.
+    /// </summary>
+    private void OnRegionHoldElapsed()
+    {
+        _regionHoldTimer.Stop();
+
+        if (_isRegionFocusActive || _regionInvalidated || !IsShiftAloneHeldNow())
+        {
+            // Logged because every reason this fires and then declines is invisible from the
+            // outside: the user held the key, nothing appeared, and nothing said why.
+            Logger.Log("GlobalPTT",
+                $"Region hold declined (active={_isRegionFocusActive} " +
+                $"invalidated={_regionInvalidated} shiftAlone={IsShiftAloneHeldNow()} " +
+                $"otherKeys={_otherKeysDown.Count})");
+            return;
+        }
+
+        // A button already down means a Shift+drag is in progress — extending a selection,
+        // scrubbing a timeline, resizing from a handle. The Shift there belongs to the drag.
+        if (IsAnyMouseButtonDown())
+        {
+            _regionInvalidated = true;
+            Logger.Log("GlobalPTT", "Region hold declined (mouse button down)");
+            return;
+        }
+
+        _isRegionFocusActive = true;
+        Logger.Log("GlobalPTT", "Region focus hold confirmed");
+        RegionFocusStarted?.Invoke();
+    }
+
+    /// <summary>
+    /// Whether any mouse button is physically down. Read from the system rather than through
+    /// a hook: a low-level mouse hook fires on every mouse *move* on the machine, which is far
+    /// too high a price for a question asked once per Shift hold.
+    /// </summary>
+    internal static bool IsAnyMouseButtonDown() =>
+        NativeMethods.IsKeyDown(NativeMethods.VK_LBUTTON) ||
+        NativeMethods.IsKeyDown(NativeMethods.VK_RBUTTON) ||
+        NativeMethods.IsKeyDown(NativeMethods.VK_MBUTTON);
+
+    /// <summary>Reads the bare-Shift hold straight from the system, with no event in flight.</summary>
+    private bool IsShiftAloneHeldNow()
+    {
+        bool ctrl = NativeMethods.IsKeyDown(NativeMethods.VK_LCONTROL) ||
+                    NativeMethods.IsKeyDown(NativeMethods.VK_RCONTROL);
+        bool alt = NativeMethods.IsKeyDown(NativeMethods.VK_LMENU) ||
+                   NativeMethods.IsKeyDown(NativeMethods.VK_RMENU);
+        bool win = NativeMethods.IsKeyDown(NativeMethods.VK_LWIN) ||
+                   NativeMethods.IsKeyDown(NativeMethods.VK_RWIN);
+
+        return NativeMethods.IsKeyDown(NativeMethods.VK_LSHIFT) &&
+               !NativeMethods.IsKeyDown(NativeMethods.VK_RSHIFT) &&
+               !ctrl && !alt && !win && _otherKeysDown.Count == 0;
     }
 
     /// <summary>
@@ -407,6 +591,12 @@ public static class NativeMethods
     public const int VK_LWIN = 0x5B;
     public const int VK_RWIN = 0x5C;
     public const int VK_T = 0x54;
+    public const int VK_ESCAPE = 0x1B;
+
+    // Mouse buttons are virtual keys too, so GetAsyncKeyState reports them.
+    public const int VK_LBUTTON = 0x01;
+    public const int VK_RBUTTON = 0x02;
+    public const int VK_MBUTTON = 0x04;
 
     [DllImport("user32.dll")]
     public static extern short GetAsyncKeyState(int vKey);

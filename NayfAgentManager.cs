@@ -343,7 +343,8 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
         Action<string>? onTextDelta,
         CancellationToken cancellationToken = default,
         List<ConversationTurn>? conversationHistory = null,
-        NayfToolMode toolMode = NayfToolMode.GuidedWalkthrough)
+        NayfToolMode toolMode = NayfToolMode.GuidedWalkthrough,
+        byte[]? focusRegionImage = null)
     {
         UpdateOnUI(() => AgentSteps.Clear());
         _runningToolLabel = null;
@@ -353,7 +354,7 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
         _toolExecutor.ToolMode = toolMode;
         var tools = ToolsFor(toolMode);
 
-        var messages = BuildInitialMessages(userRequest, screenshots, conversationHistory);
+        var messages = BuildInitialMessages(userRequest, screenshots, conversationHistory, focusRegionImage);
         var fullFinalText = "";
         var lastAssistantText = "";
         var executedAnyTool = false;
@@ -687,7 +688,8 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
     private List<object> BuildInitialMessages(
         string userRequest,
         List<CapturedScreenshot>? screenshots,
-        List<ConversationTurn>? conversationHistory = null)
+        List<ConversationTurn>? conversationHistory = null,
+        byte[]? focusRegionImage = null)
     {
         var messages = new List<object>();
 
@@ -702,6 +704,30 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
         }
 
         var content = new List<object>();
+
+        // A crop the user circled stands in for the screenshots entirely — the caller sends
+        // one or the other, never both. It carries no pixel dimensions because there is
+        // nothing to map them onto: coordinates read off a crop mean nothing on the screen,
+        // and the label says to answer about the area rather than locate things in it.
+        if (focusRegionImage != null)
+        {
+            content.Add(new
+            {
+                type = "image",
+                source = new
+                {
+                    type = "base64",
+                    media_type = "image/jpeg",
+                    data = Convert.ToBase64String(focusRegionImage)
+                }
+            });
+            content.Add(new
+            {
+                type = "text",
+                text = "[A region the user circled on their screen to focus on — answer " +
+                       "specifically about THIS cropped area, not the whole screen.]"
+            });
+        }
 
         if (screenshots != null)
         {

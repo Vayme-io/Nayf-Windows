@@ -58,6 +58,38 @@ public static class ScreenCaptureUtility
         });
     }
 
+    /// <summary>
+    /// Captures one rectangle of the desktop, in virtual-screen pixels — the region the user
+    /// circled with the region-focus hold. Mirrors the Mac's
+    /// <c>CompanionScreenCaptureUtility.captureRegionAsJPEG</c>.
+    ///
+    /// The rectangle is clamped to the desktop first: a loop drawn off the edge of the screen
+    /// would otherwise ask BitBlt for pixels that do not exist, and come back black.
+    /// </summary>
+    public static Task<byte[]> CaptureRegionAsync(Rectangle region)
+    {
+        return Task.Run(() =>
+        {
+            int virtualLeft = NativeMethods.GetSystemMetrics(NativeMethods.SM_XVIRTUALSCREEN);
+            int virtualTop = NativeMethods.GetSystemMetrics(NativeMethods.SM_YVIRTUALSCREEN);
+            var desktop = new Rectangle(
+                virtualLeft, virtualTop,
+                NativeMethods.GetSystemMetrics(NativeMethods.SM_CXVIRTUALSCREEN),
+                NativeMethods.GetSystemMetrics(NativeMethods.SM_CYVIRTUALSCREEN));
+
+            var clamped = Rectangle.Intersect(region, desktop);
+            if (clamped.Width < 1 || clamped.Height < 1)
+                throw new InvalidOperationException($"Region {region} is off screen");
+
+            var (imageData, imgW, imgH) =
+                CaptureScreenRegion(clamped.X, clamped.Y, clamped.Width, clamped.Height);
+            Logger.Log("ScreenCapture",
+                $"Region {clamped.Width}x{clamped.Height} at {clamped.X},{clamped.Y} " +
+                $"-> {imgW}x{imgH}, {imageData.Length / 1024} KB");
+            return imageData;
+        });
+    }
+
     /// <summary>Captures the primary display only.</summary>
     public static Task<byte[]> CapturePrimaryScreenAsync()
     {

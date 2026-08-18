@@ -41,6 +41,12 @@ public sealed partial class CompanionPanelWindow : Window
     /// <summary>Raised when the user clicks Sign Out; the app handles the flow.</summary>
     public event Action? SignOutRequested;
 
+    /// <summary>
+    /// Raised when the user presses the power button. Handled by the app rather than here,
+    /// so quitting from the panel tears down exactly what quitting from the tray does.
+    /// </summary>
+    public event Action? QuitRequested;
+
     public CompanionPanelWindow(CompanionManager companionManager)
     {
         _companionManager = companionManager;
@@ -478,7 +484,8 @@ public sealed partial class CompanionPanelWindow : Window
 
     private void QuitButton_Click(object sender, RoutedEventArgs e)
     {
-        App.Current.Exit();
+        HidePanel();
+        QuitRequested?.Invoke();
     }
 
     /// <summary>

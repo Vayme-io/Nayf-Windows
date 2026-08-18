@@ -175,6 +175,7 @@ public partial class App : Application
 
             _companionPanelWindow = new CompanionPanelWindow(_companionManager);
             _companionPanelWindow.SignOutRequested += OnSignOutRequested;
+            _companionPanelWindow.QuitRequested += QuitApp;
             Log("Step", "PanelWindow created");
 
             // Kept alive for the life of the app and only ever hidden — closing a
@@ -248,17 +249,39 @@ public partial class App : Application
         ShowAuthWindow();
     }
 
+    /// <summary>
+    /// Shuts Nayf down. The one way out — the tray's Quit and the panel's power button
+    /// both come here, so neither can skip the teardown and leave a dead tray icon or a
+    /// keyboard hook behind.
+    /// </summary>
     private void QuitApp()
     {
         // Invoked from the tray thread (context-menu "Quit") — marshal to UI.
         _uiDispatcher?.TryEnqueue(() =>
         {
+            Log("Quit", "Shutting down");
+
             _systemTrayManager?.Dispose();
             _overlayWindowManager?.Dispose();
             _statusPillWindow?.Dispose();
             _companionManager?.Dispose();
             NayfSoundPlayer.DisposeShared();
+
+            // Before Exit(), which closes the windows: the anchor window turns every
+            // close down until told otherwise, this one included.
+            if (_anchorWindow != null) _anchorWindow.AllowClose = true;
+
             Exit();
+
+            // Exit() is a request, and any window left standing can refuse it. Nothing
+            // should now, but a user who has just told Nayf to quit and watched the
+            // teardown happen must not be left with it still running. Everything above
+            // has already been disposed, so there is nothing here left to lose.
+            _ = System.Threading.Tasks.Task.Delay(TimeSpan.FromSeconds(2)).ContinueWith(_ =>
+            {
+                Log("Quit", "Graceful exit didn't finish — terminating");
+                Environment.Exit(0);
+            });
         });
     }
 

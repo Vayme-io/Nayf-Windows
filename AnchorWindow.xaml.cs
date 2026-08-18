@@ -24,6 +24,17 @@ public sealed partial class AnchorWindow : Window
     /// <summary>Raised when the user clicks this window's taskbar button.</summary>
     public event Action? TaskbarActivated;
 
+    /// <summary>
+    /// Lets this window close. Set by the app when the user has actually asked Nayf to
+    /// quit, and only then.
+    ///
+    /// Closing is refused by default so a stray Alt+F4 or a taskbar "Close" doesn't take
+    /// Nayf down with it. But <c>Application.Exit()</c> shuts the app down by asking every
+    /// window to close, and a window that always refuses refuses that too — which is why
+    /// quitting used to do nothing at all.
+    /// </summary>
+    public bool AllowClose { get; set; }
+
     // Held in a field so the GC can't collect the delegate Windows calls back into.
     private readonly SubclassProc _subclassProc;
 
@@ -57,8 +68,10 @@ public sealed partial class AnchorWindow : Window
         presenter.SetBorderAndTitleBar(hasBorder: false, hasTitleBar: false);
         appWindow.SetPresenter(presenter);
 
-        // Block the close button so the user can't accidentally shut down the app
-        Closed += (_, e) => e.Handled = true;
+        // Refuse to close, so the user can't accidentally shut down the app — unless they
+        // have deliberately asked to quit, in which case this window closing is what ends
+        // the app: WinUI shuts down when the last window goes.
+        Closed += (_, e) => e.Handled = !AllowClose;
 
         _subclassProc = TaskbarButtonSubclass;
         SetWindowSubclass(hwnd, _subclassProc, IntPtr.Zero, IntPtr.Zero);

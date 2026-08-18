@@ -22,6 +22,18 @@ public sealed class WindowsSpeechTranscriptionProvider : IDisposable
     private TaskCompletionSource<bool>? _firstResultTcs;
 
     /// <summary>
+    /// How long <c>StopAsync</c> gets before it is left to finish on its own. It normally
+    /// returns in milliseconds, but a recognizer that has been fed noise instead of speech
+    /// can sit inside it for the better part of a minute — and the entire turn queues behind
+    /// that call, so the user watches Nayf think hard about a question it has not been handed
+    /// yet, and then answer nothing.
+    /// </summary>
+    private static readonly TimeSpan StopTimeout = TimeSpan.FromMilliseconds(1500);
+
+    /// <summary>A stop that ran past its deadline and still has hold of the recognizer.</summary>
+    private Task? _pendingStop;
+
+    /// <summary>
     /// Initializes the speech recognizer and starts a continuous recognition session.
     /// Call when push-to-talk begins.
     /// </summary>
@@ -75,9 +87,21 @@ public sealed class WindowsSpeechTranscriptionProvider : IDisposable
             gotResult = await Task.WhenAny(_firstResultTcs.Task, Task.Delay(2500)) == _firstResultTcs.Task;
         Logger.Log("WindowsSpeech", $"EndSession: gotResult={gotResult}");
 
+        var stop = StopRecognizerAsync(_recognizer);
+        if (await Task.WhenAny(stop, Task.Delay(StopTimeout)) == stop) return;
+
+        // Everything the recognizer heard is already in hand — results arrive on their own
+        // event rather than out of this call — so there is nothing left to wait for. It is
+        // left running and its teardown deferred until it returns.
+        Logger.Log("WindowsSpeech", "Stop is overrunning — leaving the recognizer to finish");
+        _pendingStop = stop;
+    }
+
+    private static async Task StopRecognizerAsync(SpeechRecognizer recognizer)
+    {
         try
         {
-            await _recognizer.ContinuousRecognitionSession.StopAsync();
+            await recognizer.ContinuousRecognitionSession.StopAsync();
         }
         catch (Exception ex)
         {
@@ -134,18 +158,36 @@ public sealed class WindowsSpeechTranscriptionProvider : IDisposable
 
     public void Dispose()
     {
-        if (_recognizer != null)
+        var recognizer = _recognizer;
+        if (recognizer == null) return;
+        _recognizer = null;
+
+        // A stop that overran its deadline is still inside this recognizer, and disposing it
+        // out from under an operation that has not returned turns a slow stop into a crash.
+        // So the teardown waits on the stop rather than racing it. Anything the recognizer
+        // says in the meantime is harmless: it lands in the transcript of an utterance that
+        // is already over, which is exactly where those words belong.
+        var pendingStop = _pendingStop;
+        _pendingStop = null;
+        if (pendingStop is { IsCompleted: false })
         {
-            try
-            {
-                _recognizer.ContinuousRecognitionSession.ResultGenerated -= OnResultGenerated;
-                _recognizer.ContinuousRecognitionSession.Completed -= OnSessionCompleted;
-                _recognizer.HypothesisGenerated -= OnHypothesisGenerated;
-                _recognizer.RecognitionQualityDegrading -= OnQualityDegrading;
-                _recognizer.Dispose();
-            }
-            catch { /* ignore disposal errors */ }
-            _recognizer = null;
+            _ = pendingStop.ContinueWith(_ => DisposeRecognizer(recognizer), TaskScheduler.Default);
+            return;
         }
+
+        DisposeRecognizer(recognizer);
+    }
+
+    private void DisposeRecognizer(SpeechRecognizer recognizer)
+    {
+        try
+        {
+            recognizer.ContinuousRecognitionSession.ResultGenerated -= OnResultGenerated;
+            recognizer.ContinuousRecognitionSession.Completed -= OnSessionCompleted;
+            recognizer.HypothesisGenerated -= OnHypothesisGenerated;
+            recognizer.RecognitionQualityDegrading -= OnQualityDegrading;
+            recognizer.Dispose();
+        }
+        catch { /* ignore disposal errors */ }
     }
 }

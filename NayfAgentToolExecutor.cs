@@ -103,8 +103,8 @@ public sealed class NayfAgentToolExecutor
             "google_calendar_list_events" => AgentToolResult.Message(await ExecuteGoogleCalendarListEventsAsync(toolCall.InputJson, authToken)),
             "google_calendar_create_event" => AgentToolResult.Message(await ExecuteGoogleCalendarCreateEventAsync(toolCall.InputJson, authToken)),
             "google_calendar_delete_event" => AgentToolResult.Message(await ExecuteGoogleCalendarDeleteEventAsync(toolCall.InputJson, authToken)),
-            "github_list_issues" => AgentToolResult.Message(await CallWorkerIntegrationAsync("/integrations/github/list_issues", new(), authToken)),
-            "github_list_pull_requests" => AgentToolResult.Message(await CallWorkerIntegrationAsync("/integrations/github/list_pull_requests", new(), authToken)),
+            "github_list_issues" => AgentToolResult.Message((await CallWorkerIntegrationAsync("/integrations/github/list_issues", new(), authToken)).Text),
+            "github_list_pull_requests" => AgentToolResult.Message((await CallWorkerIntegrationAsync("/integrations/github/list_pull_requests", new(), authToken)).Text),
             "github_create_issue" => AgentToolResult.Message(await ExecuteGitHubCreateIssueAsync(toolCall.InputJson, authToken)),
             _ => AgentToolResult.Message($"Unknown tool: {toolCall.ToolName}")
         };
@@ -149,6 +149,8 @@ public sealed class NayfAgentToolExecutor
         }
         catch (Exception ex) { return $"Found \"{name}\" but couldn't open Spotify: {ex.Message}"; }
 
+        NayfActionToast.ShowNowPlaying(name, artist);
+
         var suffix = artist.Length > 0 ? $" by {artist}" : "";
         return $"Now playing \"{name}\"{suffix} on Spotify.";
     }
@@ -175,7 +177,7 @@ public sealed class NayfAgentToolExecutor
             int.TryParse(maxResultsText, out int maxResults))
             body["maxResults"] = maxResults;
 
-        return await CallWorkerIntegrationAsync("/integrations/google/calendar/list_events", body, authToken);
+        return (await CallWorkerIntegrationAsync("/integrations/google/calendar/list_events", body, authToken)).Text;
     }
 
     /// <summary>Creates a Google Calendar event via the Worker. Requires summary + start + end.</summary>
@@ -199,7 +201,9 @@ public sealed class NayfAgentToolExecutor
         if (TryGetTrimmedString(input, "location") is { } location) body["location"] = location;
         if (TryGetTrimmedString(input, "timeZone") is { } timeZone) body["timeZone"] = timeZone;
 
-        return await CallWorkerIntegrationAsync("/integrations/google/calendar/create_event", body, authToken);
+        var result = await CallWorkerIntegrationAsync("/integrations/google/calendar/create_event", body, authToken);
+        if (!result.IsError) NayfActionToast.ShowCalendarEventAdded(summary, startDateTime);
+        return result.Text;
     }
 
     /// <summary>
@@ -214,7 +218,9 @@ public sealed class NayfAgentToolExecutor
             return "Missing required field: eventId (get it from google_calendar_list_events).";
 
         var body = new Dictionary<string, object> { ["eventId"] = eventId };
-        return await CallWorkerIntegrationAsync("/integrations/google/calendar/delete_event", body, authToken);
+        var result = await CallWorkerIntegrationAsync("/integrations/google/calendar/delete_event", body, authToken);
+        if (!result.IsError) NayfActionToast.ShowCalendarEventRemoved();
+        return result.Text;
     }
 
     // MARK: - GitHub
@@ -238,17 +244,31 @@ public sealed class NayfAgentToolExecutor
         };
         if (TryGetTrimmedString(input, "body") is { } issueBody) body["body"] = issueBody;
 
-        return await CallWorkerIntegrationAsync("/integrations/github/create_issue", body, authToken);
+        var result = await CallWorkerIntegrationAsync("/integrations/github/create_issue", body, authToken);
+        if (!result.IsError) NayfActionToast.ShowIssueCreated(title, owner, repo);
+        return result.Text;
     }
 
     // MARK: - Worker plumbing
+
+    /// <summary>
+    /// What a Worker integration call came back with: the text handed to the model either
+    /// way, and whether it describes a result or a failure.
+    /// </summary>
+    /// <remarks>
+    /// The flag exists because the failures are prose — "that integration isn't connected
+    /// yet" is a perfectly good sentence to give the model, and utterly indistinguishable
+    /// from a success by inspection. Anything that acts on a call having <i>worked</i>,
+    /// like the action toast, needs to be told rather than left to guess.
+    /// </remarks>
+    private readonly record struct IntegrationResult(string Text, bool IsError);
 
     /// <summary>
     /// POSTs a JSON body to a Worker integration route with the user's auth token, returning
     /// the response text. Translates a 409 ("not connected") into a clear, actionable message
     /// so the model asks the user to connect rather than reporting a bare failure.
     /// </summary>
-    private static async Task<string> CallWorkerIntegrationAsync(
+    private static async Task<IntegrationResult> CallWorkerIntegrationAsync(
         string path, Dictionary<string, object> body, string? authToken)
     {
         try
@@ -262,15 +282,18 @@ public sealed class NayfAgentToolExecutor
             using var response = await http.SendAsync(request);
             var responseText = await response.Content.ReadAsStringAsync();
 
-            if (response.IsSuccessStatusCode) return responseText;
+            if (response.IsSuccessStatusCode) return new IntegrationResult(responseText, IsError: false);
             if ((int)response.StatusCode == 409)
-                return "That integration isn't connected yet. Tell the user to open Nayf, click \"Connect apps\", and connect it — then they can ask again.";
+                return new IntegrationResult(
+                    "That integration isn't connected yet. Tell the user to open Nayf, click \"Connect apps\", and connect it — then they can ask again.",
+                    IsError: true);
 
-            return $"Integration request failed (HTTP {(int)response.StatusCode}): {responseText}";
+            return new IntegrationResult(
+                $"Integration request failed (HTTP {(int)response.StatusCode}): {responseText}", IsError: true);
         }
         catch (Exception ex)
         {
-            return $"Integration request error: {ex.Message}";
+            return new IntegrationResult($"Integration request error: {ex.Message}", IsError: true);
         }
     }
 

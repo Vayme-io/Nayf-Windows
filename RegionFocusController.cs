@@ -103,6 +103,7 @@ public sealed class RegionFocusController : IDisposable
         catch (Exception ex)
         {
             Logger.Log("RegionFocus", $"Capture failed: {ex.Message}");
+            NayfActionToast.ShowRegionCaptureFailed();
             _companionManager.CancelRegionFocusVoiceCapture();
         }
     }

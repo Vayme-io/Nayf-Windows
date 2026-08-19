@@ -11,8 +11,10 @@ public partial class App : Application
     private CompanionManager? _companionManager;
     private OverlayWindowManager? _overlayWindowManager;
     private NativeStatusPillWindow? _statusPillWindow;
+    private NayfActionToast? _actionToast;
     private CompanionPanelWindow? _companionPanelWindow;
     private TextInputWindow? _textInputWindow;
+    private NayfAgentCardHost? _agentCardHost;
     private AnchorWindow? _anchorWindow;
     private AuthManager? _authManager;
     private AuthWindow? _authWindow;
@@ -173,6 +175,10 @@ public partial class App : Application
             _statusPillWindow.Start();
             Log("Step", "StatusPill created");
 
+            _actionToast = new NayfActionToast(_companionManager);
+            _actionToast.Start();
+            Log("Step", "ActionToast created");
+
             _companionPanelWindow = new CompanionPanelWindow(_companionManager);
             _companionPanelWindow.SignOutRequested += OnSignOutRequested;
             _companionPanelWindow.QuitRequested += QuitApp;
@@ -188,6 +194,26 @@ public partial class App : Application
                     // by the time it activates, the answer is Nayf itself.
                     _textInputWindow?.ShowForRequest(NativeMethods.GetForegroundWindow()));
             Log("Step", "TextInputWindow created");
+
+            // Agent result cards. The host is what decides whether a task already has a
+            // card up, which is also the manager's test for whether a background
+            // continuation may refresh one — a task finishing quietly must never throw a
+            // card onto the screen the user didn't ask for.
+            _agentCardHost = new NayfAgentCardHost();
+            _agentCardHost.FollowUpRequested += id =>
+                _uiDispatcher?.TryEnqueue(() => _companionManager?.BeginAgentTaskFollowUp(id));
+            _companionManager.IsAgentCardOpen = id => _agentCardHost.IsOpen(id);
+            _companionManager.AgentCardRequested += task =>
+                _uiDispatcher?.TryEnqueue(() => _agentCardHost?.Show(task));
+            _companionManager.PropertyChanged += (_, e) =>
+            {
+                // The follow-up button says "Listening…" until Nayf stops. Idle is the
+                // only state that means it has, whether the turn finished or was cut off.
+                if (e.PropertyName == nameof(CompanionManager.VoiceState) &&
+                    _companionManager.VoiceState == CompanionVoiceState.Idle)
+                    _uiDispatcher?.TryEnqueue(() => _agentCardHost?.EndFollowUp());
+            };
+            Log("Step", "AgentCardHost created");
 
             // Auto-show the panel when the user needs to enable speech
             // recognition, so the banner with the settings link is visible.
@@ -262,8 +288,10 @@ public partial class App : Application
             Log("Quit", "Shutting down");
 
             _systemTrayManager?.Dispose();
+            _agentCardHost?.CloseAll();
             _overlayWindowManager?.Dispose();
             _statusPillWindow?.Dispose();
+            _actionToast?.Dispose();
             _companionManager?.Dispose();
             NayfSoundPlayer.DisposeShared();
 

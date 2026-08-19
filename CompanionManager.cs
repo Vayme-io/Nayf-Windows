@@ -308,11 +308,34 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
     /// <summary>Buying more tokens. Payment happens in the browser, through Paddle.</summary>
     public NayfStoreManager Store { get; }
 
+    /// <summary>
+    /// The tasks Nayf has run, saved so the user can reopen one and continue it. Local only.
+    /// </summary>
+    public AgentTaskStore AgentTasks { get; } = new();
+
+    /// <summary>Raised when a saved task should be shown on its floating card.</summary>
+    public event Action<SavedAgentTask>? AgentCardRequested;
+
     private readonly DispatcherQueue _dispatcherQueue;
 
     // MARK: - Session state
 
     private readonly List<ConversationTurn> _conversationHistory = new();
+
+    /// <summary>
+    /// The task the last agent turn landed on, so an unprompted follow-up — the user just
+    /// talking, without opening a card — keeps building on it instead of spawning a near
+    /// duplicate tile beside it.
+    /// </summary>
+    private Guid? _currentAgentTaskId;
+
+    /// <summary>
+    /// How long after a task Nayf still treats a new mission as part of it, when the model
+    /// hasn't said either way. A backstop under the [MISSION-CONTINUE] tag: the tag is the
+    /// real signal, and this only catches the case where the model forgot to send it but
+    /// the user is plainly still on the same thing.
+    /// </summary>
+    private static readonly TimeSpan AgentTaskContinuationWindow = TimeSpan.FromMinutes(5);
     private CancellationTokenSource? _currentResponseCts;
     private CancellationTokenSource? _watchdogCts;
     private CancellationTokenSource? _micPermissionPollCts;
@@ -388,6 +411,25 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
         3. For anything longer than a single click, offer to walk them through it step by
            step rather than listing the steps at them.
         Never describe a click you performed, and never claim to have clicked something.
+
+        MISSION LABEL: for a SUBSTANTIVE task done with tools — one the user would want kept
+        and might follow up on later (scheduling or editing a calendar event, drafting or
+        rewriting a document, editing files, filing an issue, a multi-step job) — begin your
+        reply with a one-line tag: [MISSION: short present-tense label] — 2 to 4 words, e.g.
+        [MISSION: Scheduling your trip], [MISSION: Rewriting the doc], [MISSION: Cleaning up
+        Downloads]. It shows live in the status pill while you work, is saved as an Agent card
+        the user can reopen and continue, and is NOT spoken aloud. Put your normal short spoken
+        confirmation right after it. Do NOT tag a plain question, an explanation, or pointing
+        at something — those are answers, not tasks, and a card for one is clutter.
+
+        SAME TASK: if this request continues, corrects, changes, undoes, or refines the task
+        you did earlier in THIS conversation (e.g. you just scheduled an event and now the user
+        wants it moved, renamed, or set to a different day) — begin your reply with
+        [MISSION-CONTINUE: short present-tense label] INSTEAD of a new [MISSION: ...] tag, e.g.
+        [MISSION-CONTINUE: Moving your haircut]. This keeps the result on the SAME Agent card
+        rather than creating a new one. Always include the label, even when continuing. Only
+        use a fresh [MISSION: label] when it is a genuinely different task, unrelated to the
+        one you just did.
         """;
 
     /// <summary>
@@ -647,10 +689,9 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
             foreach (var fact in facts)
                 UpdateOnUI(() => Memory.Add(fact));
 
-            // The Mac chimes with its "Saved to memory" toast. One chime for the batch,
-            // not one per fact — a conversation can produce several at once.
-            if (facts.Count > 0)
-                NayfSoundPlayer.Shared.PlayTaskComplete();
+            // Memory is the one thing Nayf changes that the user never asked it to, so the
+            // toast is the only place they find out it happened. It brings the chime with it.
+            NayfActionToast.ShowMemorySaved(facts);
         }
         catch (Exception ex)
         {
@@ -793,6 +834,12 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
 
         if (string.IsNullOrWhiteSpace(transcript))
         {
+            // A crop waiting on a turn that produced no words means the user circled
+            // something and said nothing. That is allowed — the crop keeps until their next
+            // question — but without a word from Nayf the gesture has no visible result at
+            // all, which is indistinguishable from the lasso having failed.
+            if (_pendingFocusRegionImage != null) NayfActionToast.ShowRegionFocused();
+
             SetVoiceState(RestingState);
             return;
         }
@@ -860,8 +907,112 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
         }
     }
 
-    private async Task SendTranscriptToClaudeAsync(string transcript)
+    /// <summary>
+    /// Saves the finished turn as an agent task, or folds it into the one it continues.
+    /// Only missions are kept: a question Nayf answered is not a task, and a card for every
+    /// answer would bury the handful the user actually wants to come back to.
+    /// </summary>
+    private void SaveOrUpdateAgentTask(Guid? resumingTaskId, ConversationTurn turn, string spokenText)
     {
+        var summary = spokenText.Trim();
+        if (summary.Length == 0) summary = "Task completed.";
+
+        // Continuing a card the user opened. AppendTurn already refreshed it; this just
+        // marks it current so a later spoken follow-up keeps landing here.
+        if (resumingTaskId is { } resumed && AgentTasks.Task(resumed) != null)
+        {
+            AgentTasks.AppendTurn(resumed, turn, summary);
+            _currentAgentTaskId = resumed;
+            RefreshOpenAgentCard(resumed);
+            return;
+        }
+
+        // The turn changed, corrected, or undid what Nayf just did — same task, new outcome.
+        // Either the model tagged it, or it is a fresh mission close enough in time that
+        // treating it as separate would split one job across two tiles.
+        var current = _currentAgentTaskId is { } currentId ? AgentTasks.Task(currentId) : null;
+        if (current != null
+            && (AgentManager.TaskContinuesPrevious
+                || (AgentManager.MissionText != null
+                    && DateTimeOffset.Now - current.UpdatedAt < AgentTaskContinuationWindow)))
+        {
+            AgentTasks.AppendTurn(current.Id, turn, summary);
+            RefreshOpenAgentCard(current.Id);
+            return;
+        }
+
+        // A new task — either genuinely new, or a continuation whose predecessor Nayf has
+        // no record of, because it was done before the tasks were being saved or has since
+        // been deleted. That work is no less real for having lost the thread it belongs to,
+        // so it is filed under the label the continuation carries rather than dropped.
+        //
+        // No label at all means the model judged this an answer rather than a job — a plain
+        // question, an explanation — and nothing is saved.
+        var mission = AgentManager.MissionText;
+        if (string.IsNullOrWhiteSpace(mission)) return;
+
+        var created = AgentTasks.CreateTask(mission, summary, _conversationHistory);
+        _currentAgentTaskId = created.Id;
+    }
+
+    /// <summary>
+    /// Updates the floating card for a task, but only if the user already has it open.
+    /// A background continuation must not throw a card onto the screen unasked — the user
+    /// is looking at whatever they were doing, not waiting to be interrupted by it.
+    /// </summary>
+    private void RefreshOpenAgentCard(Guid taskId)
+    {
+        var task = AgentTasks.Task(taskId);
+        if (task == null) return;
+        if (!IsAgentCardOpen(taskId)) return;
+        UpdateOnUI(() => AgentCardRequested?.Invoke(task));
+    }
+
+    /// <summary>Set by the app so the manager can ask whether a card is currently on screen.</summary>
+    public Func<Guid, bool> IsAgentCardOpen { get; set; } = _ => false;
+
+    /// <summary>
+    /// Reopens a saved task's floating card so the user can read it again and continue it.
+    /// Called from the Agents grid.
+    /// </summary>
+    public void OpenSavedAgent(SavedAgentTask task)
+    {
+        _currentAgentTaskId = task.Id;
+        UpdateOnUI(() => AgentCardRequested?.Invoke(task));
+    }
+
+    /// <summary>
+    /// Starts a spoken follow-up that continues a saved task — the card's "Follow up" button.
+    /// The turn it produces is appended to that task rather than to the global history.
+    /// </summary>
+    public void BeginAgentTaskFollowUp(Guid taskId)
+    {
+        if (AgentTasks.Task(taskId) == null) return;
+        _resumingTaskId = taskId;
+        Logger.Log("AgentTasks", $"follow-up on {taskId}");
+        ToggleTapToTalk();
+    }
+
+    /// <summary>
+    /// The task a follow-up started from the card belongs to. One-shot: read and cleared by
+    /// the turn it applies to, so the question after it goes back to the normal history.
+    /// </summary>
+    private Guid? _resumingTaskId;
+
+    /// <param name="resumingTaskId">
+    /// Set when the user hit "Follow up" on a saved agent card. That turn runs against the
+    /// task's own conversation thread instead of the global rolling history, and its result
+    /// lands back on the same task — so picking a task up a week later continues it rather
+    /// than starting something new that happens to mention it.
+    /// </param>
+    private async Task SendTranscriptToClaudeAsync(string transcript, Guid? resumingTaskId = null)
+    {
+        // A follow-up armed by the card's button arrives here as a perfectly ordinary voice
+        // turn, so the task it belongs to is picked up rather than passed down. One-shot:
+        // the next question is a new one unless the user asks for a follow-up again.
+        resumingTaskId ??= _resumingTaskId;
+        _resumingTaskId = null;
+
         // Cancel any previous in-flight response
         _currentResponseCts?.Cancel();
         _currentResponseCts = new CancellationTokenSource();
@@ -933,14 +1084,30 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
             var memoryBlock = Memory.ContextBlock();
             if (memoryBlock.Length > 0) systemPrompt += "\n\n" + memoryBlock;
 
+            // Resuming a saved task replays THAT task's thread. The global history is
+            // whatever the user has said since, which for a task picked up days later is
+            // about something else entirely — handing it over would bury the task it is
+            // supposed to be continuing.
+            var resumedTask = resumingTaskId is { } id ? AgentTasks.Task(id) : null;
+            var historyForTurn = resumedTask?.History ?? _conversationHistory;
+
+            // The raw stream, kept apart from what goes on screen. Tags are stripped for
+            // display, and a stripped string can't have the next delta appended to it —
+            // the removed text is exactly the context needed to recognise the next one.
+            var rawResponse = new System.Text.StringBuilder();
+
             var responseText = await AgentManager.RunAgentLoopAsync(
                 transcript,
                 screenshots,
                 systemPrompt,
                 authToken,
-                delta => UpdateOnUI(() => StreamingResponseText += delta),
+                delta => UpdateOnUI(() =>
+                {
+                    rawResponse.Append(delta);
+                    StreamingResponseText = NayfResponseText.ForDisplay(rawResponse.ToString());
+                }),
                 ct,
-                _conversationHistory,
+                historyForTurn,
                 toolMode,
                 focusRegionImage);
 
@@ -966,10 +1133,16 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
 
             if (ct.IsCancellationRequested) return;
 
-            // Store in conversation history
-            _conversationHistory.Add(new ConversationTurn(transcript, responseText));
-            if (_conversationHistory.Count > NayfConfig.MaxConversationHistoryTurns)
-                _conversationHistory.RemoveAt(0);
+            // Store in conversation history. A turn that belongs to a resumed task goes on
+            // THAT task's thread instead — otherwise the global buffer fills with follow-ups
+            // to a task the next unrelated question knows nothing about.
+            var completedTurn = new ConversationTurn(transcript, responseText);
+            if (resumingTaskId == null)
+            {
+                _conversationHistory.Add(completedTurn);
+                if (_conversationHistory.Count > NayfConfig.MaxConversationHistoryTurns)
+                    _conversationHistory.RemoveAt(0);
+            }
 
             // Parse any POINT tags in the response — but not off a crop. A point read from a
             // cropped image is in the crop's own pixel space, and nothing here can map that
@@ -977,9 +1150,19 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
             // somewhere arbitrary; saying the answer without pointing is the honest version.
             if (focusRegionImage == null) ParseAndApplyPointTags(responseText, screenshots);
 
-            // Speak the response (strip POINT tags from TTS)
-            var ttsText = System.Text.RegularExpressions.Regex.Replace(
-                responseText, @"\[POINT:[^\]]+\]", "").Trim();
+            // Speak the response with its tags removed — read aloud they would have Nayf
+            // announce its own bookkeeping.
+            var ttsText = NayfResponseText.Clean(responseText);
+
+            // The stream ends on whatever the last delta happened to be, which for a
+            // reply whose final characters looked like the start of a tag is a few
+            // characters short. Settle the panel on the finished text.
+            UpdateOnUI(() => StreamingResponseText = ttsText);
+
+            // Persist the outcome so the user can reopen this task and carry on with it.
+            // Placed here because it needs both the cleaned spoken text as its summary and
+            // the mission label, which is cleared once Nayf stops talking.
+            SaveOrUpdateAgentTask(resumingTaskId, completedTurn, ttsText);
 
             // Let the acknowledgment finish first. SpeakAsync stops whatever is playing,
             // so without this the answer would cut its own preamble off mid-word.
@@ -1545,6 +1728,12 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
         // or it outranks the real status in the pill and sticks there.
         if (state != CompanionVoiceState.Processing)
             DeepThinkingLabel = null;
+
+        // The mission outlives the work by design — it stays up while Nayf speaks its
+        // summary, so the pill still names the job the user is being told about. Idle is
+        // where that ends; left standing it would title the next unrelated turn.
+        if (state == CompanionVoiceState.Idle)
+            AgentManager.ClearMission();
     }
 
     private void UpdateOnUI(Action action)

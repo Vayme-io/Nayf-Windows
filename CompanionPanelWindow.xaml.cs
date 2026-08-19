@@ -88,6 +88,13 @@ public sealed partial class CompanionPanelWindow : Window
             DispatcherQueue.TryEnqueue(UpdateMemoryView);
         UpdateMemoryView();
 
+        // Agents tab: the saved-task grid. Rebound rather than bound once, because the
+        // grid shows the tasks newest-activity-first and that order is a snapshot — a
+        // continued task moves to the front, which no collection change would express.
+        _companionManager.AgentTasks.Tasks.CollectionChanged += (_, _) =>
+            DispatcherQueue.TryEnqueue(UpdateAgentsView);
+        UpdateAgentsView();
+
         // Agent task UI: bind the live step list and react to confirmation prompts.
         AgentStepsList.ItemsSource = _companionManager.AgentManager.AgentSteps;
         _companionManager.AgentManager.AgentSteps.CollectionChanged += (_, _) =>
@@ -563,10 +570,11 @@ public sealed partial class CompanionPanelWindow : Window
         }
     }
 
-    private enum PanelPage { Home, Memory, Connections, Tokens, Settings }
+    private enum PanelPage { Home, Memory, Agents, Connections, Tokens, Settings }
 
     private void BackButton_Click(object sender, RoutedEventArgs e) => ShowPage(PanelPage.Home);
     private void MemoryButton_Click(object sender, RoutedEventArgs e) => ShowPage(PanelPage.Memory);
+    private void AgentsButton_Click(object sender, RoutedEventArgs e) => ShowPage(PanelPage.Agents);
     private void ConnectAppsButton_Click(object sender, RoutedEventArgs e) => ShowPage(PanelPage.Connections);
     private void SettingsButton_Click(object sender, RoutedEventArgs e) => ShowPage(PanelPage.Settings);
     private void CloseButton_Click(object sender, RoutedEventArgs e) => HidePanel();
@@ -922,6 +930,47 @@ public sealed partial class CompanionPanelWindow : Window
         _companionManager.Memory.ClearAll();
     }
 
+    // MARK: - Agents
+
+    /// <summary>
+    /// Opens a saved task on its floating card. The panel gets out of the way: the card
+    /// is a separate always-on-top surface, and leaving the panel open in front of it
+    /// would hide the thing the tap just asked for.
+    /// </summary>
+    private void AgentTaskTile_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: Guid id }) return;
+        var task = _companionManager.AgentTasks.Task(id);
+        if (task == null) return;
+
+        HidePanel();
+        _companionManager.OpenSavedAgent(task);
+    }
+
+    private void AgentTaskDelete_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: Guid id }) return;
+        _companionManager.AgentTasks.Remove(id);
+    }
+
+    private void ClearAgentsButton_Click(object sender, RoutedEventArgs e)
+    {
+        _companionManager.AgentTasks.ClearAll();
+    }
+
+    private void UpdateAgentsView()
+    {
+        var tasks = _companionManager.AgentTasks.TasksNewestFirst;
+        bool has = tasks.Count > 0;
+
+        AgentTaskList.ItemsSource = tasks;
+        AgentTaskList.Visibility = has ? Visibility.Visible : Visibility.Collapsed;
+        AgentsEmptyState.Visibility = has ? Visibility.Collapsed : Visibility.Visible;
+        ClearAgentsButton.Visibility = has ? Visibility.Visible : Visibility.Collapsed;
+
+        if (AgentsPage.Visibility == Visibility.Visible) FitWindowToContent();
+    }
+
     private void UpdateMemoryView()
     {
         bool has = _companionManager.Memory.HasMemories;
@@ -941,6 +990,7 @@ public sealed partial class CompanionPanelWindow : Window
     {
         HomePage.Visibility = page == PanelPage.Home ? Visibility.Visible : Visibility.Collapsed;
         MemoryPage.Visibility = page == PanelPage.Memory ? Visibility.Visible : Visibility.Collapsed;
+        AgentsPage.Visibility = page == PanelPage.Agents ? Visibility.Visible : Visibility.Collapsed;
         ConnectionsPage.Visibility = page == PanelPage.Connections ? Visibility.Visible : Visibility.Collapsed;
         TokensPage.Visibility = page == PanelPage.Tokens ? Visibility.Visible : Visibility.Collapsed;
         SettingsPage.Visibility = page == PanelPage.Settings ? Visibility.Visible : Visibility.Collapsed;
@@ -955,10 +1005,16 @@ public sealed partial class CompanionPanelWindow : Window
             PageTitleText.Text = page switch
             {
                 PanelPage.Memory => "Memory",
+                PanelPage.Agents => "Agents",
                 PanelPage.Connections => "Connect apps",
                 PanelPage.Tokens => "Get tokens",
                 _ => "Settings"
             };
+
+        // The grid is ordered by most recent activity, and a task continued while this
+        // page was closed has moved since it was last built.
+        if (page == PanelPage.Agents)
+            UpdateAgentsView();
 
         // Re-ask the Worker on every visit — the account may have connected or
         // disconnected something on another device since we last looked.

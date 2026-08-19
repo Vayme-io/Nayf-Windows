@@ -16,7 +16,7 @@ namespace NayfWindows;
 ///
 /// On the Mac the pill also has a resting state that hangs under the notch and opens
 /// the panel when clicked. Windows has no notch and Nayf already has a taskbar button
-/// for that, so only the live HUD is ported â€” it exists while Nayf is doing something
+/// for that, so only the live HUD is ported — it exists while Nayf is doing something
 /// and not a moment longer.
 ///
 /// Built like <see cref="NativeOverlayWindow"/>: a layered, click-through, top-most
@@ -30,7 +30,7 @@ public sealed class NativeStatusPillWindow : IDisposable
     /// <summary>
     /// The Mac's numbers describe a bar that fills about a fifth of a laptop screen.
     /// Reused as-is on a desktop monitor they'd draw a sliver, so every measurement is
-    /// taken up together â€” the proportions stay exactly the Mac's, the bar just claims
+    /// taken up together — the proportions stay exactly the Mac's, the bar just claims
     /// the same share of the screen it does there.
     /// </summary>
     private const float DesignScale = 1.25f;
@@ -45,7 +45,7 @@ public sealed class NativeStatusPillWindow : IDisposable
     private const float IndicatorWidth = 38f;
     /// <summary>
     /// The Mac's HStack spacing (12) either side of a Spacer with a minimum length of
-    /// 18 â€” so the title can never crowd the indicator by more than this.
+    /// 18 — so the title can never crowd the indicator by more than this.
     /// </summary>
     private const float TitleIndicatorGap = 12f + 18f + 12f;
     private const float TitleFontSize = 13f;
@@ -59,7 +59,7 @@ public sealed class NativeStatusPillWindow : IDisposable
     private const float LookTransitionSeconds = 0.25f;
 
     // The Mac scales the pill up from 0.9 anchored at its top edge and springs it into
-    // place rather than sliding it â€” response/damping copied from its SwiftUI spring,
+    // place rather than sliding it — response/damping copied from its SwiftUI spring,
     // including the slight overshoot at 0.82 that gives it the little settle at the end.
     private const float SpringResponse = 0.42f;
     private const float SpringDamping = 0.82f;
@@ -76,11 +76,11 @@ public sealed class NativeStatusPillWindow : IDisposable
     // Matched to the companion panel rather than to the Mac's flat near-black bar, so
     // the two surfaces read as the same app. The panel is DesktopAcrylic tinted
     // (24,24,27); a layered GDI window can't host an acrylic backdrop, but at this
-    // alpha the desktop tints through much the same way â€” see CompanionPanelWindow.
+    // alpha the desktop tints through much the same way — see CompanionPanelWindow.
     private static readonly Color PillFill = Color.FromArgb(209, 24, 24, 27);
     /// <summary>The panel's Hairline token, #14FFFFFF.</summary>
     private static readonly Color PillBorder = Color.FromArgb(20, 255, 255, 255);
-    /// <summary>The panel's TextPrimary token, #F5F5F7 â€” not pure white.</summary>
+    /// <summary>The panel's TextPrimary token, #F5F5F7 — not pure white.</summary>
     private static readonly Color TitleColor = Color.FromArgb(255, 0xF5, 0xF5, 0xF7);
 
     /// <summary>How far the drop shadow reaches, in the Mac's units.</summary>
@@ -108,7 +108,7 @@ public sealed class NativeStatusPillWindow : IDisposable
                 // thread instead, taking the bar out with no visible explanation.
                 if (family.IsStyleAvailable(FontStyle.Regular)) return family;
             }
-            catch (ArgumentException) { /* not installed â€” try the next one */ }
+            catch (ArgumentException) { /* not installed — try the next one */ }
         }
         return FontFamily.GenericSansSerif;
     }
@@ -148,7 +148,7 @@ public sealed class NativeStatusPillWindow : IDisposable
     /// </summary>
     private float _smoothedLevel;
 
-    // Where the pill is drawn, chosen when it appears and then left alone â€” it would
+    // Where the pill is drawn, chosen when it appears and then left alone — it would
     // be maddening for the bar to hop monitors mid-sentence because the mouse moved.
     private int _windowX, _windowY;
     private int _bitmapWidth, _bitmapHeight;
@@ -245,9 +245,14 @@ public sealed class NativeStatusPillWindow : IDisposable
 
         var voiceState = _companionManager.VoiceState;
         string? runningTool = _companionManager.AgentManager.RunningToolLabel;
-        bool shouldShow = voiceState != CompanionVoiceState.Idle || runningTool != null;
+        // A mission outlives the tools under it — it is set before the first one runs and
+        // held until Nayf has finished speaking — so it keeps the pill up across the gaps
+        // between tool calls, where a tool-only test would blink it off and on.
+        bool shouldShow = voiceState != CompanionVoiceState.Idle
+                          || runningTool != null
+                          || _companionManager.AgentManager.MissionText != null;
 
-        // Nothing to say and nothing left on screen â€” the common case by far, so it
+        // Nothing to say and nothing left on screen — the common case by far, so it
         // costs one property read and returns before touching GDI.
         if (!shouldShow && _presence <= 0f)
         {
@@ -262,7 +267,7 @@ public sealed class NativeStatusPillWindow : IDisposable
         AdvanceLook(voiceState, runningTool, elapsed, isFirstFrame);
         AdvanceSpring(shouldShow ? 1f : 0f, elapsed);
 
-        // Settled out of sight â€” stop drawing rather than fading forever on a spring
+        // Settled out of sight — stop drawing rather than fading forever on a spring
         // that only ever approaches zero.
         if (!shouldShow && _presence < 0.004f && MathF.Abs(_presenceVelocity) < 0.02f)
         {
@@ -390,7 +395,7 @@ public sealed class NativeStatusPillWindow : IDisposable
         if (isFirstFrame)
         {
             // The Mac builds the HUD fresh when voice starts, so there's no previous
-            // state to animate from â€” it just appears already showing the right thing.
+            // state to animate from — it just appears already showing the right thing.
             _look = look;
             _previousLook = look;
             _lookTransition = 1f;
@@ -412,9 +417,20 @@ public sealed class NativeStatusPillWindow : IDisposable
 
     private PillLook ComputeLook(CompanionVoiceState state, string? runningTool)
     {
-        // A running task always wins â€” it's the most informative thing on offer.
-        string title = runningTool != null
-            ? runningTool + "â€¦"
+        // A named mission outranks the tool running under it. The tool label is the more
+        // precise answer to "what is happening this second", but it changes every couple of
+        // seconds, and a pill that rewrites itself that often reads as agitated rather than
+        // informative. The mission names the whole job and holds still for it; the per-tool
+        // detail is in the panel's step list for anyone who wants it.
+        // Escaped rather than written literally: this file once shipped a mangled ellipsis
+        // to the pill, where it is the one non-ASCII character the user actually reads.
+        const string Ellipsis = "\u2026";
+
+        string? mission = _companionManager.AgentManager.MissionText;
+        string title = mission != null
+            ? mission + Ellipsis
+            : runningTool != null
+            ? runningTool + Ellipsis
             // Below a running tool, above the bare state: once Nayf has said out loud that
             // it's on it, repeating "Thinking" back at the user reads as stuck. Same accent
             // and indicator either way -- this is a deeper phase of Processing, not a new
@@ -428,7 +444,7 @@ public sealed class NativeStatusPillWindow : IDisposable
                 _ => ""
             };
 
-        // A running tool means Nayf is working, whatever the voice state says â€” bars
+        // A running tool means Nayf is working, whatever the voice state says — bars
         // while it's talking through it, pulsing dots while it's heads-down.
         bool bars = runningTool != null
             ? state == CompanionVoiceState.Responding
@@ -469,7 +485,7 @@ public sealed class NativeStatusPillWindow : IDisposable
         float mix = _lookTransition * _lookTransition * (3f - 2f * _lookTransition);
 
         // Radius is clamped to half the height, which is what SwiftUI does with the
-        // Mac's 16 on a 28-tall bar â€” the bottom is a full cap either way.
+        // Mac's 16 on a 28-tall bar — the bottom is a full cap either way.
         float radius = MathF.Min(PillCornerRadius, PillHeight / 2f) * _scale;
 
         // Start the shape above the screen edge and let it clip there. The bar must sit
@@ -523,7 +539,7 @@ public sealed class NativeStatusPillWindow : IDisposable
 
     /// <summary>
     /// The soft shadow the companion panel casts, approximated by stacking the pill's
-    /// own outline at growing sizes â€” GDI+ has no blur. Clipped to everything *outside*
+    /// own outline at growing sizes — GDI+ has no blur. Clipped to everything *outside*
     /// the pill, because the fill is translucent now and shadow left underneath it
     /// would darken the glass instead of the desktop.
     /// </summary>
@@ -549,7 +565,7 @@ public sealed class NativeStatusPillWindow : IDisposable
             g.FillPath(brush, path);
         }
 
-        // Nothing else in the frame is clipped, so resetting is enough â€” and it avoids
+        // Nothing else in the frame is clipped, so resetting is enough — and it avoids
         // holding a saved Region, which is a GDI handle, sixty times a second.
         g.ResetClip();
     }
@@ -560,7 +576,7 @@ public sealed class NativeStatusPillWindow : IDisposable
     /// <remarks>
     /// No premultiplication here, even though UpdateLayeredWindow wants premultiplied
     /// alpha: the bitmap is cleared to transparent black, so GDI+'s own source-over
-    /// already writes colour Ã— alpha. Doing it a second time by hand measurably
+    /// already writes colour × alpha. Doing it a second time by hand measurably
     /// over-darkens the bar (0.87 effective opacity where 0.82 was asked for).
     /// </remarks>
     private static Color Scaled(Color c, int alpha) =>
@@ -730,7 +746,7 @@ public sealed class NativeStatusPillWindow : IDisposable
     }
 
     /// <summary>
-    /// Teal while listening, purple while thinking, orange while speaking â€” the same
+    /// Teal while listening, purple while thinking, orange while speaking — the same
     /// three accents the Mac HUD uses, so the two apps read identically at a glance.
     ///
     /// Waiting on the user borrows the listening teal: both are the same message, that the
@@ -754,8 +770,8 @@ public sealed class NativeStatusPillWindow : IDisposable
 
     /// <summary>
     /// Five bars whose height comes mostly from how loudly the user is speaking, with
-    /// a small free-running shimmer so they stay alive during silence. The Ã—3 gain and
-    /// square-root curve lift quiet speech into a visible range and compress shouting â€”
+    /// a small free-running shimmer so they stay alive during silence. The ×3 gain and
+    /// square-root curve lift quiet speech into a visible range and compress shouting —
     /// the raw mic level on its own barely moves.
     /// </summary>
     private void DrawEqualizerBars(Graphics g, float centerX, float centerY, Color color,
@@ -787,7 +803,7 @@ public sealed class NativeStatusPillWindow : IDisposable
         }
     }
 
-    /// <summary>Three dots pulsing in a staggered sequence â€” the "thinking" indicator.</summary>
+    /// <summary>Three dots pulsing in a staggered sequence — the "thinking" indicator.</summary>
     private void DrawThinkingDots(Graphics g, float centerX, float centerY, Color color, int alpha, double t)
     {
         const int dotCount = 3;
@@ -815,7 +831,7 @@ public sealed class NativeStatusPillWindow : IDisposable
     /// <summary>
     /// The pill's shape: square across the top so it reads as hanging off the screen
     /// edge, rounded along the bottom. Mirrors the Mac's UnevenRoundedRectangle with
-    /// its .continuous corner style, which is a superellipse rather than an arc â€” a
+    /// its .continuous corner style, which is a superellipse rather than an arc — a
     /// plain arc meets the straight edge at a visible kink at this size.
     /// </summary>
     private static GraphicsPath BottomRoundedRect(float x, float y, float w, float h, float r)

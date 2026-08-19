@@ -32,6 +32,26 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
     /// </summary>
     public string? RunningToolLabel => _runningToolLabel;
 
+    private volatile string? _missionText;
+
+    /// <summary>
+    /// A short present-tense label for the job Nayf is on — "Cleaning up Downloads".
+    /// Parsed from the <c>[MISSION: ...]</c> tag the model emits at the top of its first
+    /// reply, so it can go up the instant the work starts rather than when it ends. Also
+    /// becomes the saved task's title.
+    ///
+    /// <para>Volatile for the same reason as <see cref="RunningToolLabel"/>: the status
+    /// pill reads it from its own render thread.</para>
+    /// </summary>
+    public string? MissionText => _missionText;
+
+    /// <summary>
+    /// The model tagged this turn <c>[MISSION-CONTINUE]</c> — it carried on with, corrected,
+    /// or undid the task from the previous turn, so the outcome belongs on the task already
+    /// saved rather than on a new one.
+    /// </summary>
+    public bool TaskContinuesPrevious { get; private set; }
+
     private AgentConfirmationRequest? _pendingConfirmationRequest;
     public AgentConfirmationRequest? PendingConfirmationRequest
     {
@@ -349,6 +369,10 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
         UpdateOnUI(() => AgentSteps.Clear());
         _runningToolLabel = null;
 
+        // Fresh each turn — only set if THIS turn tags itself a continuation. Left standing,
+        // it would glue an unrelated task onto whatever Nayf happened to do before it.
+        TaskContinuesPrevious = false;
+
         // Scope what this run may do. The executor refuses every actuation tool in
         // walkthrough mode, so Nayf cannot touch the screen even if the model asks.
         _toolExecutor.ToolMode = toolMode;
@@ -395,6 +419,29 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
             {
                 assistantContent.Add(new { type = "text", text = turnResult.TextContent });
                 lastAssistantText = turnResult.TextContent; // keep the latest narration
+
+                // Read the mission off the model's very first reply, before any tool has
+                // run, so the pill can name the job while it is being done rather than
+                // after. This is also the saved task's title.
+                var mission = ExtractTagLabel(turnResult.TextContent, "[MISSION:");
+                if (mission != null)
+                {
+                    _missionText = mission;
+                    Logger.Log("Mission", $"\"{mission}\"");
+                }
+
+                // A continuation carries a label too. Not because the task it continues
+                // needs renaming — it keeps its original title — but because there may
+                // not be one: the model only knows what was said this conversation, and
+                // the task it is picking up can have been finished before Nayf started
+                // saving them. Without a label that work would be dropped on the floor.
+                if (turnResult.TextContent.Contains("[MISSION-CONTINUE", StringComparison.Ordinal))
+                {
+                    TaskContinuesPrevious = true;
+                    var continued = ExtractTagLabel(turnResult.TextContent, "[MISSION-CONTINUE:");
+                    if (continued != null) _missionText = continued;
+                    Logger.Log("Mission", $"continues previous task \"{continued ?? "(unlabelled)"}\"");
+                }
             }
 
             foreach (var toolCall in turnResult.ToolCalls)
@@ -751,6 +798,31 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
         messages.Add(new { role = "user", content });
         return messages;
     }
+
+    /// <summary>
+    /// Pulls the label out of a tag opened by <paramref name="opener"/> — <c>[MISSION:</c>
+    /// or <c>[MISSION-CONTINUE:</c> — or null if there isn't one. Most turns have no tag at
+    /// all: plain questions are not tasks, so a missing tag is the normal case rather than
+    /// a failure.
+    /// </summary>
+    private static string? ExtractTagLabel(string text, string opener)
+    {
+        int open = text.IndexOf(opener, StringComparison.Ordinal);
+        if (open < 0) return null;
+
+        int labelStart = open + opener.Length;
+        int close = text.IndexOf(']', labelStart);
+        if (close < 0) return null;
+
+        var label = text[labelStart..close].Trim();
+        return label.Length == 0 ? null : label;
+    }
+
+    /// <summary>
+    /// Drops the mission label. Called when the whole interaction goes idle — the pill
+    /// keeps showing it while Nayf speaks its summary, and only stops once that's over.
+    /// </summary>
+    public void ClearMission() => _missionText = null;
 
     /// <summary>
     /// Turns a tool name into something worth reading on screen. The panel's step list

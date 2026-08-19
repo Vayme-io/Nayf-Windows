@@ -240,6 +240,105 @@
                 </HyperlinkButton>
             </StackPanel>
 
+            <!-- ───────────── AGENTS PAGE ─────────────
+                 The tasks Nayf has run, as a two-column grid of tiles. Tapping one
+                 opens its floating card, where it can be read again or continued. -->
+            <StackPanel x:Name="AgentsPage" Padding="24,4,24,16" Spacing="12"
+                        Visibility="Collapsed" HorizontalAlignment="Stretch">
+                <TextBlock Text="Tasks Nayf has run. Open one to read it again or keep going."
+                           Foreground="{StaticResource TextSecondary}" FontSize="12.5"
+                           FontFamily="{StaticResource UiFont}"/>
+
+                <StackPanel x:Name="AgentsEmptyState" Spacing="12" Padding="0,20,0,20"
+                            HorizontalAlignment="Stretch">
+                    <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE945;" FontSize="28"
+                              Foreground="#48484A" HorizontalAlignment="Center"/>
+                    <TextBlock Text="No agent tasks yet."
+                               Foreground="{StaticResource TextPrimary}" FontSize="13"
+                               FontWeight="SemiBold" FontFamily="{StaticResource UiFont}"
+                               HorizontalAlignment="Center"/>
+                    <TextBlock Text="Ask Nayf to do something on your PC and it'll show up here so you can pick it back up."
+                               Foreground="{StaticResource TextSecondary}" FontSize="12.5"
+                               FontFamily="{StaticResource UiFont}"
+                               HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"
+                               MaxWidth="340"/>
+                </StackPanel>
+
+                <ItemsControl x:Name="AgentTaskList" Visibility="Collapsed">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <!-- Fixed cells rather than a wrap: two even columns is the
+                                 shape the Mac grid has, and tiles that resize with their
+                                 text would make the page reflow every time a task lands. -->
+                            <VariableSizedWrapGrid Orientation="Horizontal" MaximumRowsOrColumns="2"
+                                                   ItemWidth="216" ItemHeight="142"/>
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <!-- The tile is the open button; the trash button on top of it
+                                 takes its own clicks, so deleting never opens what it removes. -->
+                            <Button Tag="{Binding Id}" Click="AgentTaskTile_Click"
+                                    Margin="0,0,10,10" Padding="12,11,12,11"
+                                    CornerRadius="14" BorderThickness="1"
+                                    HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                                    HorizontalContentAlignment="Stretch"
+                                    VerticalContentAlignment="Stretch"
+                                    Background="{Binding TileFillBrush}"
+                                    BorderBrush="{Binding TileBorderBrush}">
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="*"/>
+                                    </Grid.RowDefinitions>
+
+                                    <Grid Grid.Row="0">
+                                        <Border Width="30" Height="30" CornerRadius="9"
+                                                HorizontalAlignment="Left"
+                                                Background="{Binding ChipFillBrush}">
+                                            <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE945;"
+                                                      FontSize="13" Foreground="{Binding AccentBrush}"/>
+                                        </Border>
+                                        <Button Tag="{Binding Id}" Click="AgentTaskDelete_Click"
+                                                Width="24" Height="24" CornerRadius="12" Padding="0"
+                                                BorderThickness="0" Background="Transparent"
+                                                HorizontalAlignment="Right" VerticalAlignment="Top"
+                                                ToolTipService.ToolTip="Delete task">
+                                            <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE74D;"
+                                                      FontSize="11" Foreground="#6E6E73"/>
+                                        </Button>
+                                    </Grid>
+
+                                    <TextBlock Grid.Row="1" Text="{Binding Title}" Margin="0,9,0,0"
+                                               Foreground="#F5F5F7" FontSize="13" FontWeight="SemiBold"
+                                               FontFamily="Segoe UI Variable"
+                                               TextWrapping="Wrap" MaxLines="2"
+                                               TextTrimming="CharacterEllipsis"/>
+
+                                    <TextBlock Grid.Row="2" Text="{Binding Summary}" Margin="0,4,0,0"
+                                               Foreground="#A1A1A6" FontSize="11.5"
+                                               FontFamily="Segoe UI Variable"
+                                               TextWrapping="Wrap" MaxLines="2"
+                                               TextTrimming="CharacterEllipsis"
+                                               VerticalAlignment="Top"/>
+                                </Grid>
+                            </Button>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+                <HyperlinkButton x:Name="ClearAgentsButton" Click="ClearAgentsButton_Click"
+                                 HorizontalAlignment="Center" Padding="0">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE74D;" FontSize="12"
+                                  Foreground="{StaticResource TextSecondary}"/>
+                        <TextBlock Text="Clear all agents" Foreground="{StaticResource TextSecondary}"
+                                   FontSize="12.5" FontFamily="{StaticResource UiFont}"/>
+                    </StackPanel>
+                </HyperlinkButton>
+            </StackPanel>
+
             <!-- ───────────── CONNECTIONS PAGE ───────────── -->
             <StackPanel x:Name="ConnectionsPage" Padding="24,4,24,16" Spacing="8"
                         Visibility="Collapsed" HorizontalAlignment="Stretch">
@@ -811,6 +910,14 @@
                             <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE81C;" FontSize="13"
                                       Foreground="{StaticResource TextSecondary}"/>
                             <TextBlock Text="Memory" Foreground="{StaticResource TextSecondary}"
+                                       FontSize="12.5" FontFamily="{StaticResource UiFont}" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="AgentsButton" Click="AgentsButton_Click" Style="{StaticResource BarAction}">
+                        <StackPanel Orientation="Horizontal" Spacing="7">
+                            <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE945;" FontSize="13"
+                                      Foreground="{StaticResource TextSecondary}"/>
+                            <TextBlock Text="Agents" Foreground="{StaticResource TextSecondary}"
                                        FontSize="12.5" FontFamily="{StaticResource UiFont}" VerticalAlignment="Center"/>
                         </StackPanel>
                     </Button>

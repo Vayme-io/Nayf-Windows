@@ -619,6 +619,15 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
 
         var request = text.Trim();
         UpdateOnUI(() => LastTranscript = request);
+
+        // Typed or spoken, "what can you do?" gets the tour rather than an answer — see
+        // OnPushToTalkReleased.
+        if (_resumingTaskId == null && IsCapabilitiesQuestion(request))
+        {
+            RunCapabilitiesShowcase();
+            return;
+        }
+
         await SendTranscriptToClaudeAsync(request);
     }
 
@@ -852,8 +861,144 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
         // none of those.
         if (TryResumeWalkthrough(WalkthroughResumeReason.Spoke, transcript)) return;
 
+        // "What can you do?" is answered by showing them, not by asking Claude — which would
+        // give a different answer every time and can't put anything on screen. Checked before
+        // the turn is sent, so a crop the user is holding survives the detour.
+        if (_resumingTaskId == null && IsCapabilitiesQuestion(transcript))
+        {
+            RunCapabilitiesShowcase();
+            return;
+        }
+
         await SendTranscriptToClaudeAsync(transcript);
     }
+
+    // MARK: - Capabilities showcase
+
+    /// <summary>
+    /// Whether the user just asked what Nayf can do.
+    /// </summary>
+    /// <remarks>
+    /// Phrase matching with a word ceiling rather than anything cleverer, because the failure
+    /// that matters is the false positive: "what can you do about this printer error" is a
+    /// real question about a printer, and answering it with a tour of the app would be worse
+    /// than useless. Nine words is where the question stops being about the app and starts
+    /// being about something.
+    /// </remarks>
+    public static bool IsCapabilitiesQuestion(string transcript)
+    {
+        string normalized = transcript.Trim().ToLowerInvariant();
+        if (normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length > 9) return false;
+
+        foreach (var phrase in CapabilitiesQuestionPhrases)
+            if (normalized.Contains(phrase)) return true;
+
+        return false;
+    }
+
+    private static readonly string[] CapabilitiesQuestionPhrases =
+    [
+        "what can you do", "what can nayf do", "what can you help",
+        "what do you do", "what are you able to", "what are your capabilities",
+        "what are you capable of", "what can i ask", "what can i say",
+        "show me what you can do", "how can you help", "what can you help me with"
+    ];
+
+    /// <summary>
+    /// Puts the capabilities card up and reads it out, lighting each line as it is spoken.
+    /// </summary>
+    /// <remarks>
+    /// Runs on the turn's own cancellation source rather than one of its own, so the existing
+    /// barge-in stops it: someone who starts talking over the tour wants to ask something,
+    /// and the tour is exactly the kind of thing a person interrupts.
+    /// </remarks>
+    public async void RunCapabilitiesShowcase()
+    {
+        var showcase = NayfCapabilitiesShowcase.Shared;
+        if (showcase == null) return;
+
+        Logger.Log("CompanionManager", "Capabilities showcase requested");
+
+        CancelTurnInFlight();
+        StopWatchdog();
+        _elevenLabsTTSClient.StopPlayback();
+
+        // Last turn's marks described a screen this is about to sit in the middle of.
+        DetectedElementPosition = null;
+        DetectedElementBubbleText = null;
+        ClearScreenAnnotations();
+
+        var cts = new CancellationTokenSource();
+        _currentResponseCts = cts;
+        var ct = cts.Token;
+
+        SetVoiceState(CompanionVoiceState.Responding);
+        showcase.Show();
+
+        try
+        {
+            var authToken = await _authManager.CurrentAccessTokenAsync();
+
+            // No token means no voice. The card still goes up and stays long enough to read,
+            // because everything on it is written down — the narration is the second telling,
+            // not the only one.
+            if (authToken == null)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(12), ct);
+                return;
+            }
+
+            await SpeakShowcaseLineAsync(NayfCapabilities.Opener, authToken, ct);
+
+            for (int i = 0; i < NayfCapabilities.All.Count; i++)
+            {
+                ct.ThrowIfCancellationRequested();
+                showcase.SetHighlight(i);
+                await SpeakShowcaseLineAsync(NayfCapabilities.All[i].SpokenLine, authToken, ct);
+            }
+
+            showcase.SetHighlight(null);
+            await SpeakShowcaseLineAsync(NayfCapabilities.Closer, authToken, ct);
+
+            // A beat with the whole card lit again, so the last thing they see is all of it
+            // rather than the sentence that happened to be last.
+            await Task.Delay(TimeSpan.FromSeconds(2), ct);
+        }
+        catch (OperationCanceledException)
+        {
+            Logger.Log("CompanionManager", "Capabilities showcase interrupted");
+        }
+        catch (Exception ex)
+        {
+            Logger.Log("CompanionManager", $"Capabilities showcase failed: {ex}");
+        }
+        finally
+        {
+            showcase.Hide();
+
+            // Cancelled means someone else has taken the turn — they own the voice state now,
+            // and setting it here would pull the pill out from under them.
+            if (!ct.IsCancellationRequested)
+            {
+                if (ReferenceEquals(_currentResponseCts, cts)) _currentResponseCts = null;
+                SetVoiceState(RestingState);
+            }
+
+            cts.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Speaks one line of the tour and comes back when the speaker is free again.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="SpeakAcknowledgmentAsync"/> already does precisely this, down to holding
+    /// <c>_ackSpeaking</c> across the line so the global playback callbacks don't drop the
+    /// voice state to Idle at every full stop. This is that, under a name that fits where it
+    /// is called from.
+    /// </remarks>
+    private Task SpeakShowcaseLineAsync(string line, string authToken, CancellationToken ct)
+        => SpeakAcknowledgmentAsync(line, authToken, ct);
 
     // MARK: - Region focus
 

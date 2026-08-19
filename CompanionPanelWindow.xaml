@@ -660,6 +660,36 @@
                 <StackPanel Spacing="7">
                     <TextBlock Text="GENERAL" Style="{StaticResource SectionLabel}"/>
 
+                    <!-- Nayf shows and tells what it can do. First row of the first section
+                         because it is the answer to the question a new user actually has. -->
+                    <Button x:Name="CapabilitiesRow" Click="CapabilitiesButton_Click"
+                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
+                            Background="{StaticResource SurfaceLow}" BorderThickness="0"
+                            CornerRadius="12" Padding="14,10,12,10">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xEA80;" FontSize="15"
+                                      Foreground="{StaticResource TextSecondary}"
+                                      VerticalAlignment="Center" Width="22"/>
+                            <StackPanel Grid.Column="1" Margin="11,0,10,0" VerticalAlignment="Center" Spacing="2">
+                                <TextBlock Text="What can Nayf do?"
+                                           Foreground="{StaticResource TextPrimary}"
+                                           FontSize="13" FontWeight="SemiBold"
+                                           FontFamily="{StaticResource UiFont}"/>
+                                <TextBlock Text="Nayf talks you through it"
+                                           Foreground="{StaticResource TextTertiary}"
+                                           FontSize="11" FontFamily="{StaticResource UiFont}"/>
+                            </StackPanel>
+                            <FontIcon Grid.Column="2" FontFamily="Segoe Fluent Icons" Glyph="&#xE76C;"
+                                      FontSize="10" Foreground="{StaticResource TextTertiary}"
+                                      VerticalAlignment="Center"/>
+                        </Grid>
+                    </Button>
+
                     <!-- Launch at sign-in. This is the same HKCU Run entry the
                          installer offers to create, so the two stay in agreement. -->
                     <Border Style="{StaticResource SettingsRow}">

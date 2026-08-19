@@ -229,6 +229,17 @@ public static class NayfAgentAvatarArt
     }
 
     /// <summary>
+    /// Nayf's mark at <paramref name="px"/> square, painted in one flat colour. For the
+    /// surfaces that want the mark on its own rather than the whole chip — the capabilities
+    /// card's header tile. Null if the asset isn't beside the executable.
+    /// </summary>
+    public static Bitmap? LoadMark(int px, Color color)
+    {
+        using var mask = LoadMark(px);
+        return mask == null ? null : Colorize(mask, color, 1f);
+    }
+
+    /// <summary>
     /// Where Assets sits. The app's own directory, unless a harness has pointed it
     /// somewhere else in order to render the chip to a file.
     /// </summary>

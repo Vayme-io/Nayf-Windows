@@ -12,6 +12,7 @@ public partial class App : Application
     private OverlayWindowManager? _overlayWindowManager;
     private NativeStatusPillWindow? _statusPillWindow;
     private NayfActionToast? _actionToast;
+    private NayfCapabilitiesShowcase? _capabilitiesShowcase;
     private CompanionPanelWindow? _companionPanelWindow;
     private TextInputWindow? _textInputWindow;
     private NayfAgentCardHost? _agentCardHost;
@@ -179,6 +180,10 @@ public partial class App : Application
             _actionToast.Start();
             Log("Step", "ActionToast created");
 
+            _capabilitiesShowcase = new NayfCapabilitiesShowcase(_companionManager);
+            _capabilitiesShowcase.Start();
+            Log("Step", "CapabilitiesShowcase created");
+
             _companionPanelWindow = new CompanionPanelWindow(_companionManager);
             _companionPanelWindow.SignOutRequested += OnSignOutRequested;
             _companionPanelWindow.QuitRequested += QuitApp;
@@ -292,6 +297,7 @@ public partial class App : Application
             _overlayWindowManager?.Dispose();
             _statusPillWindow?.Dispose();
             _actionToast?.Dispose();
+            _capabilitiesShowcase?.Dispose();
             _companionManager?.Dispose();
             NayfSoundPlayer.DisposeShared();
 

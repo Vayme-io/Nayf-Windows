@@ -145,8 +145,14 @@ internal sealed class NayfGdiText : IDisposable
     {
         if (_runs.Count == 0) return;
 
-        var bounds = new Rectangle(0, 0, canvas.Width, canvas.Height);
-        var alpha = new byte[canvas.Width * canvas.Height];
+        // Held in locals, not read off the Bitmap. Image.Width and Image.Height are native
+        // GDI+ calls dressed up as properties, and one of them in a per-pixel loop condition
+        // costs more than everything else this class does put together.
+        int width = canvas.Width;
+        int height = canvas.Height;
+
+        var bounds = new Rectangle(0, 0, width, height);
+        var alpha = new byte[width * height];
 
         // One pass for both jobs: alpha as it stands, and the colour under each run, which
         // has to be read before any glyph covers it.
@@ -156,18 +162,21 @@ internal sealed class NayfGdiText : IDisposable
             unsafe
             {
                 byte* scan = (byte*)data.Scan0;
-                for (int y = 0; y < canvas.Height; y++)
+                fixed (byte* dst = alpha)
                 {
-                    byte* row = scan + (long)y * data.Stride;
-                    int offset = y * canvas.Width;
-                    for (int x = 0; x < canvas.Width; x++)
-                        alpha[offset + x] = row[x * 4 + 3];
+                    for (int y = 0; y < height; y++)
+                    {
+                        byte* row = scan + (long)y * data.Stride;
+                        byte* out_ = dst + (long)y * width;
+                        for (int x = 0; x < width; x++)
+                            out_[x] = row[x * 4 + 3];
+                    }
                 }
 
                 foreach (var run in _runs)
                     run.Resolved = run.Ink.A == 255
                         ? run.Ink
-                        : Blend(run.Ink, Sample(scan, data.Stride, canvas.Width, canvas.Height,
+                        : Blend(run.Ink, Sample(scan, data.Stride, width, height,
                                                 run.X, run.Y + run.Font.Height / 2));
             }
         }
@@ -212,12 +221,15 @@ internal sealed class NayfGdiText : IDisposable
             unsafe
             {
                 byte* scan = (byte*)data.Scan0;
-                for (int y = 0; y < canvas.Height; y++)
+                fixed (byte* src = alpha)
                 {
-                    byte* row = scan + (long)y * data.Stride;
-                    int offset = y * canvas.Width;
-                    for (int x = 0; x < canvas.Width; x++)
-                        row[x * 4 + 3] = alpha[offset + x];
+                    for (int y = 0; y < height; y++)
+                    {
+                        byte* row = scan + (long)y * data.Stride;
+                        byte* in_ = src + (long)y * width;
+                        for (int x = 0; x < width; x++)
+                            row[x * 4 + 3] = in_[x];
+                    }
                 }
             }
         }

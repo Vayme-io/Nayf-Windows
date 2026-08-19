@@ -546,6 +546,17 @@ public sealed partial class CompanionPanelWindow : Window
             RefreshStartupToggle();
     }
 
+    /// <summary>
+    /// The panel goes away first: the card lands in the middle of the screen and Nayf talks
+    /// over it, and a settings pane still sitting there would be the one thing on screen the
+    /// tour isn't about.
+    /// </summary>
+    private void CapabilitiesButton_Click(object sender, RoutedEventArgs e)
+    {
+        HidePanel();
+        _companionManager.RunCapabilitiesShowcase();
+    }
+
     private void OpenSpeechSettingsButton_Click(object sender, RoutedEventArgs e)
     {
         Process.Start(new ProcessStartInfo("ms-settings:privacy-speech") { UseShellExecute = true });

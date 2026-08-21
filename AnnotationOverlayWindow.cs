@@ -251,7 +251,8 @@ public sealed class AnnotationOverlayWindow : IDisposable
 
         // Annotations are in virtual screen coordinates; this shifts them into this monitor's
         // surface, so one list can be handed to every window and each draws its own share.
-        // Anything belonging to another monitor lands outside the bitmap and GDI+ clips it.
+        // A mark for another monitor is dropped by DrawAnnotation; one that straddles the
+        // seam is drawn by both windows and GDI+ clips each to its own half.
         _graphics.TranslateTransform(-_monitorBounds.X, -_monitorBounds.Y);
 
         bool anythingStillAnimating = false;
@@ -271,6 +272,12 @@ public sealed class AnnotationOverlayWindow : IDisposable
 
     private void DrawAnnotation(Graphics g, ScreenAnnotation annotation)
     {
+        // Each overlay draws its own monitor's share, and for the outline the clip in
+        // RenderFrame is enough on its own. The caption is not clipped — it is clamped to
+        // stay on screen — so a mark on another monitor would have its chip dragged back
+        // into view here and the user would see the same caption on every screen.
+        if (!BelongsToThisMonitor(annotation)) return;
+
         double traceProgress = annotation.TraceProgress;
 
         // Nothing at all until this annotation's beat starts — otherwise a delayed mark would
@@ -387,6 +394,11 @@ public sealed class AnnotationOverlayWindow : IDisposable
         double opacity = annotation.LabelOpacity;
         if (opacity <= 0.01) return;
 
+        // A mark straddling two monitors is drawn by both, each clipping its own half. Only
+        // the one holding its centre captions it — otherwise the clamp below would place a
+        // chip on each side of the seam.
+        if (!((RectangleF)_monitorBounds).Contains(LabelAnchorFor(annotation))) return;
+
         using var font = new Font("Segoe UI", 12f, FontStyle.Bold, GraphicsUnit.Pixel);
         SizeF textSize = g.MeasureString(annotation.Label, font);
         float chipWidth = textSize.Width + 18;
@@ -419,6 +431,40 @@ public sealed class AnnotationOverlayWindow : IDisposable
         using var textBrush = new SolidBrush(Color.FromArgb(alpha, Color.White));
         g.DrawString(annotation.Label, font, textBrush, chipLeft + 9, chipTop + 4);
     }
+
+    /// <summary>
+    /// Whether any part of a mark falls on this overlay's monitor. Inflated a little because
+    /// the glow is stroked outside the path, so a mark just off the edge still shows here.
+    /// </summary>
+    private bool BelongsToThisMonitor(ScreenAnnotation annotation)
+    {
+        var extent = ExtentOf(annotation);
+        extent.Inflate(24f, 24f);
+        return ((RectangleF)_monitorBounds).IntersectsWith(extent);
+    }
+
+    /// <summary>
+    /// The rectangle a mark occupies: its bounds, or for an arrow the box its two ends span.
+    /// An arrow with no explicit tail is measured from its head alone — the tail it gets
+    /// drawn with is placed relative to a monitor, which is the question being asked here.
+    /// </summary>
+    private static RectangleF ExtentOf(ScreenAnnotation annotation)
+    {
+        if (annotation.Kind != AnnotationKind.Arrow) return annotation.Bounds;
+
+        PointF end = annotation.ArrowEnd;
+        PointF start = annotation.ArrowStart ?? end;
+        return RectangleF.FromLTRB(
+            Math.Min(start.X, end.X), Math.Min(start.Y, end.Y),
+            Math.Max(start.X, end.X), Math.Max(start.Y, end.Y));
+    }
+
+    /// <summary>The one point that decides which monitor owns a mark's caption.</summary>
+    private static PointF LabelAnchorFor(ScreenAnnotation annotation)
+        => annotation.Kind == AnnotationKind.Arrow
+            ? annotation.ArrowStart ?? annotation.ArrowEnd
+            : new PointF(annotation.Bounds.Left + annotation.Bounds.Width / 2,
+                         annotation.Bounds.Top + annotation.Bounds.Height / 2);
 
     /// <summary>
     /// Where a caption sits: centred above an outline, or beside an arrow's tail. Flipped to

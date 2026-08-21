@@ -219,8 +219,14 @@ public sealed class NativeOverlayWindow : IDisposable
         if (_buddyMode == BuddyMode.Pointing)
         {
             DrawSonarRing(g, ANCHOR_X, ANCHOR_Y);
-            DrawPointingBubble(g, ANCHOR_X + 16, ANCHOR_Y - 36,
-                _companionManager.DetectedElementBubbleText ?? "Here");
+
+            // A walkthrough step hands the same label to the outline's caption and to this
+            // bubble, and they end up a few dozen pixels apart on the same mark. Two copies
+            // of one phrase read as two instructions, so the outline keeps it — it is the
+            // one attached to the thing being named — and the cursor just points.
+            string bubble = _companionManager.DetectedElementBubbleText ?? "Here";
+            if (!IsAlreadyCaptioned(bubble))
+                DrawPointingBubble(g, ANCHOR_X + 16, ANCHOR_Y - 36, bubble);
         }
 
         ApplyLayeredWindow(bitmap, wx, wy);
@@ -539,6 +545,25 @@ public sealed class NativeOverlayWindow : IDisposable
         g.FillRoundedRect(bg, x, y, bw, bh, 6);
         using var tb = new SolidBrush(Color.FromArgb((int)(255 * bubbleOpacity), Color.White));
         g.DrawString(text, font, tb, x + 8, y + 4);
+    }
+
+    /// <summary>
+    /// Whether a mark on screen is already saying this. Compared on the text rather than on
+    /// the mode that produced it: the [POINT] path, which has no outline, keeps its bubble.
+    /// </summary>
+    private bool IsAlreadyCaptioned(string text)
+    {
+        string subject = text.Trim();
+        if (subject.Length == 0) return true;
+
+        foreach (var annotation in _companionManager.ScreenAnnotations)
+        {
+            if (string.IsNullOrWhiteSpace(annotation.Label)) continue;
+            if (string.Equals(annotation.Label.Trim(), subject, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
     }
 
     /// <summary>

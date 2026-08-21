@@ -95,10 +95,9 @@ public sealed partial class CompanionPanelWindow : Window
             DispatcherQueue.TryEnqueue(UpdateAgentsView);
         UpdateAgentsView();
 
-        // Agent task UI: bind the live step list and react to confirmation prompts.
-        AgentStepsList.ItemsSource = _companionManager.AgentManager.AgentSteps;
-        _companionManager.AgentManager.AgentSteps.CollectionChanged += (_, _) =>
-            DispatcherQueue.TryEnqueue(UpdateAgentTaskVisibility);
+        // Agent task UI: the one thing a running task puts in the panel is a confirmation
+        // prompt, and that is a question addressed to the user. How the task is getting on
+        // is the status pill's business and stays out of here.
         _companionManager.AgentManager.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName == nameof(NayfAgentManager.PendingConfirmationRequest))
@@ -227,12 +226,6 @@ public sealed partial class CompanionPanelWindow : Window
                 case nameof(CompanionManager.VoiceState):
                     UpdateVoiceStateUI(_companionManager.VoiceState);
                     break;
-                case nameof(CompanionManager.LastTranscript):
-                    UpdateLastTranscript(_companionManager.LastTranscript);
-                    break;
-                case nameof(CompanionManager.StreamingResponseText):
-                    UpdateResponseText(_companionManager.StreamingResponseText);
-                    break;
                 case nameof(CompanionManager.MicrophonePermissionNeeded):
                     UpdateMicPermissionBanner(_companionManager.MicrophonePermissionNeeded);
                     break;
@@ -277,41 +270,9 @@ public sealed partial class CompanionPanelWindow : Window
         return Windows.UI.Color.FromArgb(255, c.R, c.G, c.B);
     }
 
-    private void UpdateLastTranscript(string? transcript)
-    {
-        if (string.IsNullOrWhiteSpace(transcript))
-        {
-            LastTranscriptText.Visibility = Visibility.Collapsed;
-        }
-        else
-        {
-            LastTranscriptText.Text = $"You: {transcript}";
-            LastTranscriptText.Visibility = Visibility.Visible;
-        }
-    }
-
-    private void UpdateResponseText(string responseText)
-    {
-        if (string.IsNullOrWhiteSpace(responseText))
-        {
-            ResponseContainer.Visibility = Visibility.Collapsed;
-        }
-        else
-        {
-            ResponseDisplayText.Text = responseText;
-            ResponseContainer.Visibility = Visibility.Visible;
-        }
-    }
-
     private void UpdateMicPermissionBanner(bool needed)
     {
         MicPermissionBanner.Visibility = needed ? Visibility.Visible : Visibility.Collapsed;
-    }
-
-    private void UpdateAgentTaskVisibility()
-    {
-        AgentTaskContainer.Visibility = _companionManager.AgentManager.AgentSteps.Count > 0
-            ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void UpdateAgentConfirmation()
@@ -934,6 +895,12 @@ public sealed partial class CompanionPanelWindow : Window
         }
 
         if (TokensPage.Visibility == Visibility.Visible) FitWindowToContent();
+    }
+
+    private void MemoryDelete_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string memory }) return;
+        _companionManager.Memory.Remove(memory);
     }
 
     private void ClearMemoryButton_Click(object sender, RoutedEventArgs e)

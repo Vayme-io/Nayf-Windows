@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Runtime.CompilerServices;
@@ -39,19 +41,15 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
         _ => "Press Ctrl+Alt to speak"
     };
 
-    private string _streamingResponseText = "";
-    public string StreamingResponseText
-    {
-        get => _streamingResponseText;
-        private set { _streamingResponseText = value; OnPropertyChanged(); }
-    }
+    // There is deliberately no StreamingResponseText here any more. Nayf's answer used to
+    // arrive in the panel a token at a time as well as out of the speakers, so opening the
+    // panel meant reading a transcript of a conversation the user had just had. Nayf speaks
+    // what it has to say. The panel is the controls.
 
-    private string? _lastTranscript;
-    public string? LastTranscript
-    {
-        get => _lastTranscript;
-        private set { _lastTranscript = value; OnPropertyChanged(); }
-    }
+    // Nor is there a LastTranscript. It held the user's own words so the panel could show
+    // them back — the live partial while they were still speaking, and the finished
+    // sentence after. Nothing reads it now, and a property that still gets written is how
+    // the transcript found its way back onto the panel the first time.
 
     private float _audioPowerLevel = 0f;
     public float AudioPowerLevel
@@ -86,35 +84,49 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
     }
 
     /// <summary>
-    /// True when the user is asking to be TAUGHT — "show me how", "walk me through" —
-    /// rather than asking Nayf to DO something for them.
+    /// True when the user has handed the action over — "just do it", "open Photoshop for
+    /// me" — rather than asked about what is on their screen.
     ///
-    /// This decides capability, not quality. A teaching turn runs hands-off, with no tool
-    /// that can click, type, or run a command, because the user performing each action
-    /// themselves is the whole point. Everything else keeps the full toolset.
+    /// This decides capability, not quality, and it is deliberately the delegation side that
+    /// is guessed at. Reading a hand-off as a question means Nayf shows the user how instead
+    /// of doing it, which one sentence corrects. The arrangement this replaced guessed at the
+    /// teaching side, and failed the other way: a question that missed the cue list lost the
+    /// step tool altogether and drew nothing at all. "Var är exportknappen?", "can you help
+    /// me crop this", "I can't find the settings" and every bare follow-up like "och sen?"
+    /// all missed it.
     ///
-    /// A keyword list is normally the wrong way to read intent, and it is used here because
-    /// missing is cheap in one direction only: an unusually-phrased teaching request behaves
-    /// the way it always has, while every phrasing that is recognised becomes hands-off. It
-    /// can never hand actuation to a turn that would not already have had it.
+    /// A cue list still guesses, which is what take_over is for — the model can ask for the
+    /// acting tools mid-turn, so a missed delegation is recovered inside the turn instead of
+    /// needing the user to rephrase.
     /// </summary>
-    private static bool IsTeachingRequest(string transcript)
+    private static bool IsActionDelegation(string transcript)
     {
-        var normalized = transcript.ToLowerInvariant();
-        string[] teachingCues =
+        var normalized = transcript.Trim().ToLowerInvariant();
+
+        // Unambiguous hand-offs, wherever they appear in the sentence.
+        string[] delegationPhrases =
         {
             // English
-            "show me how", "show me the", "teach me", "walk me through", "guide me",
-            "how do i", "how do you", "how can i", "how would i", "how to",
-            "step by step", "one step at a time", "click by click", "next step",
-            "what do i do", "what should i do", "where do i",
+            "do it for me", "just do it", "you do it", "can you do it",
+            "go ahead and", "set it up for me", "handle it", "take care of it",
             // Swedish — the user's other language.
-            "visa mig", "lär mig", "hur gör jag", "hur gör man", "steg för steg",
-            "vad gör jag", "var hittar jag"
+            "gör det åt mig", "kan du göra", "fixa det", "sköt det"
         };
 
-        foreach (var cue in teachingCues)
-            if (normalized.Contains(cue, StringComparison.Ordinal)) return true;
+        foreach (var phrase in delegationPhrases)
+            if (normalized.Contains(phrase, StringComparison.Ordinal)) return true;
+
+        // Bare verbs, and only in the imperative — at the very start of the sentence. As a
+        // substring "open " would swallow "how do I open the settings", which is precisely
+        // the kind of question that must keep the step tool.
+        string[] imperatives =
+        {
+            "open ", "launch ", "run ", "install ", "do it",
+            "öppna ", "starta ", "kör ", "installera ", "gör det"
+        };
+
+        foreach (var verb in imperatives)
+            if (normalized.StartsWith(verb, StringComparison.Ordinal)) return true;
 
         return false;
     }
@@ -440,7 +452,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
     /// </summary>
     private const string WalkthroughPromptSuffix =
         """
-        This turn is a guided walkthrough.
+        This turn runs hands-off.
 
         You never touch the user's screen. You do not click, type, drag, scroll, or move
         anything on their behalf. The user performs every action themselves — that is the
@@ -448,8 +460,14 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
         draw the shape that fits, speak one short instruction, then wait. If you find
         yourself wanting to act, don't — point at it instead.
 
-        You have two tools. take_screenshot shows you where the user actually is.
+        Not every turn is a walkthrough. If they asked a question, answer it. If they asked
+        where something is, that is one step, not a tour. The rhythm below is for when you
+        are showing them something.
+
+        You have three tools. take_screenshot shows you where the user actually is.
         request_user_step hands them one thing to do and waits until they have done it.
+        take_over is for when they wanted you to do it rather than be shown — see the last
+        paragraph.
 
         The rhythm is always the same: take a screenshot, look at what is really on screen,
         write ONE short sentence telling them what to do, and call request_user_step in the
@@ -476,6 +494,12 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
 
         Don't use [POINT] tags here — request_user_step does the pointing, and unlike a tag
         it waits. When the walkthrough is done, say so in one short sentence and stop.
+
+        If they have asked YOU to perform the action rather than be shown how — "just do
+        it", "open it for me", "set this up" — call take_over. It grants you the tools that
+        act on their machine for the rest of this turn. If they want to learn it, or if you
+        are unsure, do not call it: guide them with request_user_step instead. Acting when
+        they wanted to be taught takes the task away from them.
         """;
 
     public CompanionManager(AuthManager authManager)
@@ -521,9 +545,6 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
         _buddyDictationManager.AudioPowerLevelChanged += level =>
             UpdateOnUI(() => AudioPowerLevel = level);
 
-        _buddyDictationManager.PartialTranscriptUpdated += text =>
-            UpdateOnUI(() => LastTranscript = text);
-
         // Keep the "thinking" spinner up until audio actually starts — only
         // then flip to Responding (cursor animates with the voice).
         _elevenLabsTTSClient.PlaybackStarted += () =>
@@ -558,6 +579,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
         // already knowing — rather than showing "Connect" to someone who connected
         // on another device and only correcting itself a moment later.
         _ = Integrations.RefreshStatusAsync();
+        ResumePendingMemory();
     }
 
     /// <summary>
@@ -590,11 +612,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
         // Mid-walkthrough, typing is how the user answers the step they are on — "done",
         // "which window?" — not a new request. Same words and same handling as if they had
         // said them out loud; Claude reads the answer either way.
-        if (TryResumeWalkthrough(WalkthroughResumeReason.Typed, text.Trim()))
-        {
-            UpdateOnUI(() => LastTranscript = text.Trim());
-            return;
-        }
+        if (TryResumeWalkthrough(WalkthroughResumeReason.Typed, text.Trim())) return;
 
         // Typing over a turn already in flight would leave two responses talking at
         // once, so the earlier one has to finish or be cancelled first.
@@ -605,7 +623,6 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
         }
 
         Logger.Log("CompanionManager", "Typed request received");
-        StreamingResponseText = "";
         DetectedElementPosition = null;
         DetectedElementBubbleText = null;
         // A new question wipes the last answer's marks — they described a screen the user has
@@ -618,7 +635,6 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
         SetVoiceState(CompanionVoiceState.Processing);
 
         var request = text.Trim();
-        UpdateOnUI(() => LastTranscript = request);
 
         // Typed or spoken, "what can you do?" gets the tour rather than an answer — see
         // OnPushToTalkReleased.
@@ -664,47 +680,288 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
         }
     }
 
+    // MARK: - Memory
+    //
+    // Extraction is deliberately rare. It used to run once per turn, and the store filled
+    // with what had been on screen that afternoon: every "what does this button do" got a
+    // model call and, with it, an opportunity to find something novel to write down.
+    //
+    // Two things changed. Turns that were about the screen rather than about the user are
+    // not queued at all, and the rest are batched — one pass when the conversation goes
+    // quiet, or when enough has been said to be worth reading. Batching is not only cheaper:
+    // the model judges durability off a stretch of conversation instead of one fragment, and
+    // something mentioned in passing and contradicted two turns later never gets stored.
+
+    /// <summary>One exchange waiting to be read for durable facts.</summary>
+    private sealed record PendingExchange(string User, string Assistant);
+
+    private readonly List<PendingExchange> _pendingForMemory = new();
+    private readonly object _memoryGate = new();
+    private CancellationTokenSource? _memoryIdleCts;
+
+    /// <summary>How long the conversation goes quiet before the batch is read.</summary>
+    private static readonly TimeSpan MemoryIdleDelay = TimeSpan.FromMinutes(2);
+
+    /// <summary>A batch this long is read without waiting for the lull.</summary>
+    private const int MemoryBatchSize = 6;
+
     /// <summary>
-    /// Asks Claude, in the background, to pull any new durable facts about the
-    /// user out of the latest exchange and adds them to the memory store.
+    /// Exchanges the app was closed on. Written at shutdown and read at the next launch,
+    /// because the alternative at that point is a network call racing the process exit.
     /// </summary>
-    private async Task ExtractMemoriesAsync(string transcript, string response, string authToken)
+    private static string PendingMemoryPath => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "Nayf", "pending-memory.json");
+
+    /// <summary>
+    /// Stops any countdown in flight. Call sites hold <see cref="_memoryGate"/>: cancelling
+    /// a source that another thread is disposing is the one way to get an
+    /// ObjectDisposedException out of a token that nobody is waiting on any more.
+    /// </summary>
+    private void CancelIdleTimer()
+    {
+        _memoryIdleCts?.Cancel();
+        _memoryIdleCts?.Dispose();
+        _memoryIdleCts = null;
+    }
+
+    /// <summary>
+    /// Files one exchange for the next memory pass, and schedules that pass: right away if
+    /// enough has piled up, otherwise <see cref="MemoryIdleDelay"/> after the last thing
+    /// said. Every new turn pushes the deadline back, so a pass lands between
+    /// conversations rather than in the middle of one.
+    /// </summary>
+    private void QueueForMemory(string transcript, string response)
+    {
+        bool flushNow;
+        CancellationToken countdown = default;
+        lock (_memoryGate)
+        {
+            _pendingForMemory.Add(new PendingExchange(transcript, response));
+            flushNow = _pendingForMemory.Count >= MemoryBatchSize;
+
+            CancelIdleTimer();
+            if (!flushNow)
+            {
+                _memoryIdleCts = new CancellationTokenSource();
+
+                // Read here, not inside the task: by the time that runs, the next turn may
+                // already have cancelled and disposed the source it would be reading from.
+                countdown = _memoryIdleCts.Token;
+            }
+        }
+
+        if (flushNow)
+        {
+            _ = FlushMemoryAsync();
+            return;
+        }
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(MemoryIdleDelay, countdown);
+                await FlushMemoryAsync();
+            }
+            catch (OperationCanceledException) { /* another turn arrived — it rescheduled */ }
+        });
+    }
+
+    /// <summary>
+    /// Reads everything queued since the last pass and updates the store. Takes the batch
+    /// under the lock before doing anything slow, so a turn arriving mid-pass queues for the
+    /// next one rather than being read twice or dropped.
+    /// </summary>
+    private async Task FlushMemoryAsync()
+    {
+        List<PendingExchange> batch;
+        lock (_memoryGate)
+        {
+            if (_pendingForMemory.Count == 0) return;
+            batch = new List<PendingExchange>(_pendingForMemory);
+            _pendingForMemory.Clear();
+
+            CancelIdleTimer();
+        }
+
+        // Fetched now rather than carried in with the turn: a batch can be up to two
+        // minutes old by the time it is read, and older still when it came off disk.
+        var token = await _authManager.CurrentAccessTokenAsync();
+        if (token == null)
+        {
+            Logger.Log("Memory", $"not signed in — {batch.Count} exchange(s) not read");
+            return;
+        }
+
+        await ExtractMemoriesAsync(batch, token);
+    }
+
+    /// <summary>
+    /// Asks Claude, in the background, what out of a batch of conversation Nayf should still
+    /// know weeks from now, and applies its answer to the store.
+    /// </summary>
+    private async Task ExtractMemoriesAsync(IReadOnlyList<PendingExchange> exchanges, string authToken)
     {
         try
         {
-            const string system =
-                "You extract durable facts worth remembering about the USER across sessions — " +
-                "their name, role, preferences, ongoing projects, tools they use, etc. " +
-                "Only include NEW facts not already listed. Return ONLY a JSON array of short " +
-                "strings (e.g. [\"Prefers concise answers\",\"Building a Windows port of Nayf\"]). " +
-                "Return [] if nothing new or durable. No prose, no markdown.";
+            const string system = """
+                You decide what Nayf should still know about this user weeks from now.
+
+                The test is not "is this true" or "is this new". It is: if Nayf forgot this,
+                would the user have to explain themselves again? Almost nothing passes that
+                test. Returning nothing is the normal, correct answer for most conversations —
+                return it without hesitation.
+
+                SAVE:
+                  - Who they are and what they do: name, role, company, field.
+                  - Long-running work: a project, a product, a course, a recurring responsibility.
+                  - Tools and environment they work in habitually.
+                  - Standing preferences they have stated about how Nayf should behave.
+                  - Constraints that persist: a language they want used, an accessibility need,
+                    hardware limits.
+
+                NEVER SAVE:
+                  - Anything about what is on their screen right now, or which app is open.
+                  - What they asked in this exchange, or what they were doing today.
+                  - One-off questions, lookups, or tasks — however interesting.
+                  - Anything you inferred rather than were told. Guesses become facts once stored.
+                  - Preferences about this one answer ("shorter this time", "skip the intro").
+                  - Anything already covered by a fact in the known list, even in different words.
+
+                For example:
+                  "I'm a video editor at a small agency"      -> save, that is their role
+                  "Show me how to crop this image"            -> nothing
+                  "I always want you to answer in Swedish"    -> save, a standing preference
+                  "This screenshot is too dark"               -> nothing
+                  "I'm building a Windows port of my Mac app" -> save, an ongoing project
+                  "Make that shorter"                         -> nothing
+
+                Write each fact short, plain, and self-contained, as a third-person statement
+                about the user. No dates, no "today", no reference to this conversation.
+
+                You are also given what is already known. If a new fact makes an existing one
+                wrong or outdated, list the old one for removal rather than adding a
+                near-duplicate beside it.
+
+                Return ONLY this JSON, no prose and no markdown:
+                {"add": ["..."], "remove": ["exact text of a known fact to drop"]}
+                Both arrays may be empty. Most of the time both will be.
+                """;
 
             var known = string.Join("\n", Memory.Memories);
+            var conversation = string.Join("\n\n", exchanges.Select(
+                e => $"User: {e.User}\nAssistant: {e.Assistant}"));
             var userMsg =
                 $"Already known:\n{(known.Length > 0 ? known : "(nothing yet)")}\n\n" +
-                $"Exchange:\nUser: {transcript}\nAssistant: {response}";
+                $"Conversation:\n{conversation}";
 
             // Text-only, no screen coordinates → light model.
             var result = await _lightClaudeAPI.StreamResponseAsync(
                 userMsg, new List<ConversationTurn>(), null, null, system, authToken, CancellationToken.None);
 
-            // Pull the JSON array out of the response and add each fact.
-            int start = result.IndexOf('['), end = result.LastIndexOf(']');
+            // Pull the JSON object out of whatever the model wrapped it in.
+            int start = result.IndexOf('{'), end = result.LastIndexOf('}');
             if (start < 0 || end <= start) return;
-            var json = result.Substring(start, end - start + 1);
-            var facts = JsonSerializer.Deserialize<List<string>>(json);
-            if (facts == null) return;
 
-            foreach (var fact in facts)
-                UpdateOnUI(() => Memory.Add(fact));
+            using var parsed = JsonDocument.Parse(result.Substring(start, end - start + 1));
+
+            // Removals first, so a fact that supersedes another lands as a replacement
+            // rather than sitting beside it for a moment as a near-duplicate.
+            if (parsed.RootElement.TryGetProperty("remove", out var toRemove)
+                && toRemove.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var stale in toRemove.EnumerateArray())
+                {
+                    var text = stale.GetString();
+                    if (!string.IsNullOrWhiteSpace(text))
+                    {
+                        Logger.Log("Memory", $"superseded: \"{text}\"");
+                        UpdateOnUI(() => Memory.Remove(text));
+                    }
+                }
+            }
+
+            var added = new List<string>();
+            if (parsed.RootElement.TryGetProperty("add", out var toAdd)
+                && toAdd.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var fact in toAdd.EnumerateArray())
+                {
+                    var text = fact.GetString();
+                    if (string.IsNullOrWhiteSpace(text)) continue;
+                    added.Add(text);
+                    UpdateOnUI(() => Memory.Add(text));
+                }
+            }
+
+            Logger.Log("Memory", $"read {exchanges.Count} exchange(s) → " +
+                                 $"{added.Count} to remember");
 
             // Memory is the one thing Nayf changes that the user never asked it to, so the
-            // toast is the only place they find out it happened. It brings the chime with it.
-            NayfActionToast.ShowMemorySaved(facts);
+            // toast is the only place they find out it happened. It brings the chime with
+            // it, which is affordable now that the answer is usually nothing: a receipt for
+            // something unusual, rather than a noise at the end of every exchange.
+            if (added.Count > 0) NayfActionToast.ShowMemorySaved(added);
         }
         catch (Exception ex)
         {
             Logger.Log("CompanionManager", $"Memory extraction failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Picks up the exchanges the last session closed on and reads them now. Their auth
+    /// token is long gone, which is why <see cref="FlushMemoryAsync"/> fetches a fresh one.
+    /// </summary>
+    private void ResumePendingMemory()
+    {
+        try
+        {
+            if (!File.Exists(PendingMemoryPath)) return;
+            var saved = JsonSerializer.Deserialize<List<PendingExchange>>(
+                File.ReadAllText(PendingMemoryPath));
+            File.Delete(PendingMemoryPath);
+
+            if (saved == null || saved.Count == 0) return;
+            lock (_memoryGate) _pendingForMemory.InsertRange(0, saved);
+            Logger.Log("Memory", $"resuming {saved.Count} exchange(s) from last session");
+
+            _ = FlushMemoryAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.Log("Memory", $"could not resume pending exchanges: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Parks anything still queued for the next launch. Running the pass here instead would
+    /// mean a network round trip against a process that is already tearing its windows down,
+    /// and a store write arriving on a dispatcher that has stopped running them.
+    /// </summary>
+    private void ParkPendingMemory()
+    {
+        try
+        {
+            List<PendingExchange> batch;
+            lock (_memoryGate)
+            {
+                // Under the same lock as the batch, so the countdown cannot fire a pass
+                // against a queue that is being emptied out from under it.
+                CancelIdleTimer();
+
+                if (_pendingForMemory.Count == 0) return;
+                batch = new List<PendingExchange>(_pendingForMemory);
+                _pendingForMemory.Clear();
+            }
+
+            File.WriteAllText(PendingMemoryPath, JsonSerializer.Serialize(batch));
+            Logger.Log("Memory", $"parked {batch.Count} exchange(s) for next launch");
+        }
+        catch (Exception ex)
+        {
+            Logger.Log("Memory", $"could not park pending exchanges: {ex.Message}");
         }
     }
 
@@ -733,7 +990,6 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
         // its way out — playback stopping, a response cancelling — and each of those would
         // otherwise drop the pill back to Idle a moment after this press put it up.
         SetVoiceState(CompanionVoiceState.Listening);
-        StreamingResponseText = "";
 
         // Thinking or halfway through a sentence, whatever is in flight goes now. Someone
         // who starts talking over Nayf is not adding to the last question, they are
@@ -852,8 +1108,6 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
             SetVoiceState(RestingState);
             return;
         }
-
-        UpdateOnUI(() => LastTranscript = transcript);
 
         // Spoken mid-walkthrough, this is the answer to the step rather than a new request.
         // Whether it means "done" or "hang on, which one?" is Claude's to read — it has the
@@ -1187,11 +1441,6 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
             }
         }
 
-        // Stay in Processing (the spinner) through the screenshot upload and
-        // Claude's response — we only switch to Responding once TTS audio
-        // actually begins, so the user always sees that something is happening.
-        StreamingResponseText = "";
-
         // Fetch a fresh Supabase JWT so the proxy can verify identity + credits.
         var authToken = await _authManager.CurrentAccessTokenAsync();
         if (authToken == null)
@@ -1215,12 +1464,14 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
             // Voice turns always carry screenshots and can point/draw → screen model.
             RouteModel(turnUsesScreenCoordinates: true);
 
-            // Someone asking to be shown how is asking to do it themselves. That turn gets
-            // no tool that can act on their screen — not as a policy the model is asked to
-            // observe, but as a set of tools it does not have.
-            var toolMode = IsTeachingRequest(transcript)
-                ? NayfToolMode.GuidedWalkthrough
-                : NayfToolMode.AgentTask;
+            // Teaching is the default for a turn that can see the screen; acting is the
+            // exception, entered only when the user hands the action over. Hands-off is not
+            // a policy the model is asked to observe but a set of tools it does not have —
+            // and it is the mode that can point at things, so a turn that turns out to be a
+            // question still has what it needs to answer it on screen.
+            var toolMode = IsActionDelegation(transcript)
+                ? NayfToolMode.AgentTask
+                : NayfToolMode.GuidedWalkthrough;
             Logger.Log("CompanionManager", $"toolMode={toolMode}");
 
             var systemPrompt = BuildSystemPrompt();
@@ -1236,21 +1487,15 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
             var resumedTask = resumingTaskId is { } id ? AgentTasks.Task(id) : null;
             var historyForTurn = resumedTask?.History ?? _conversationHistory;
 
-            // The raw stream, kept apart from what goes on screen. Tags are stripped for
-            // display, and a stripped string can't have the next delta appended to it —
-            // the removed text is exactly the context needed to recognise the next one.
-            var rawResponse = new System.Text.StringBuilder();
-
+            // No delta handler. Its whole job was to put the answer on screen as it arrived;
+            // the answer is spoken, and the finished text is what everything downstream —
+            // TTS, the POINT tags, the saved task — reads.
             var responseText = await AgentManager.RunAgentLoopAsync(
                 transcript,
                 screenshots,
                 systemPrompt,
                 authToken,
-                delta => UpdateOnUI(() =>
-                {
-                    rawResponse.Append(delta);
-                    StreamingResponseText = NayfResponseText.ForDisplay(rawResponse.ToString());
-                }),
+                onTextDelta: null,
                 ct,
                 historyForTurn,
                 toolMode,
@@ -1273,8 +1518,17 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
             // A response consumed tokens — refresh the displayed balance.
             _ = FetchCreditBalanceAsync();
 
-            // Learn durable facts about the user in the background (don't block TTS).
-            _ = ExtractMemoriesAsync(transcript, responseText, authToken);
+            // Queue the exchange for a memory pass — see the Memory section. A turn spent
+            // taking the user through their own screen is skipped outright: what was said is
+            // a description of their application, and a fact drawn out of it would be about
+            // what they had open, which is exactly what memory should not hold.
+            //
+            // Tested on what the turn did, not on which tools it was given. Walkthrough is
+            // the default mode rather than a marker — almost every turn runs in it, including
+            // the one where the user says what they do for a living.
+            bool aboutTheScreen = AgentManager.LastTurnWalkedTheScreen
+                                  || responseText.Contains("[POINT", StringComparison.Ordinal);
+            if (!aboutTheScreen) QueueForMemory(transcript, responseText);
 
             if (ct.IsCancellationRequested) return;
 
@@ -1298,11 +1552,6 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
             // Speak the response with its tags removed — read aloud they would have Nayf
             // announce its own bookkeeping.
             var ttsText = NayfResponseText.Clean(responseText);
-
-            // The stream ends on whatever the last delta happened to be, which for a
-            // reply whose final characters looked like the start of a tag is a few
-            // characters short. Settle the panel on the finished text.
-            UpdateOnUI(() => StreamingResponseText = ttsText);
 
             // Persist the outcome so the user can reopen this task and carry on with it.
             // Placed here because it needs both the cleaned spoken text as its summary and
@@ -1611,7 +1860,13 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
         // Classified on the target itself, not on the padded rectangle drawn around it.
         // A 16px icon on a 4K screen is ~39 real pixels — an ellipse — and the 4px of
         // clearance would otherwise push it over the threshold into a rounded box.
-        var kind = ScreenAnnotation.HighlightKindFor(step.TargetBounds ?? bounds);
+        //
+        // With no target the ring is always an ellipse, and is asked for rather than
+        // measured: it is wider than the 44px HighlightKindFor calls small, and a rounded
+        // rectangle at that size would claim to have found an edge that was never read.
+        var kind = step.TargetBounds is { Width: > 1, Height: > 1 } target
+            ? ScreenAnnotation.HighlightKindFor(target)
+            : AnnotationKind.Oval;
 
         var outline = ScreenAnnotation.Outline(bounds, step.Label, WalkthroughBeats.Outline, kind);
         var annotations = new List<ScreenAnnotation> { outline };
@@ -1630,20 +1885,26 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
 
     /// <summary>
     /// What to draw the outline around: the target's own bounds pushed out a few pixels so
-    /// the line sits just off the control rather than on top of its border, or a small ring
-    /// around the click point when Claude gave no size — a slightly generous circle still
-    /// reads as "this one", where a zero-size rectangle draws nothing at all.
+    /// the line sits just off the control rather than on top of its border, or a ring around
+    /// the click point when there is no usable size.
+    ///
+    /// The ring is deliberately bigger than most of what it stands in for. At 34px it was
+    /// indistinguishable from a confident outline of a small control, so an approximate
+    /// answer looked exact; at 60 it reads as "somewhere around here", which is what it
+    /// actually means.
     /// </summary>
     private static System.Drawing.RectangleF OutlineBoundsFor(WalkthroughStep step)
     {
         const float outlinePadding = 4f;
-        const float fallbackDiameter = 34f;
+        const float fallbackDiameter = 60f;
 
         if (step.TargetBounds is { Width: > 1, Height: > 1 } target)
         {
             target.Inflate(outlinePadding, outlinePadding);
             return target;
         }
+
+        Logger.Log("Walkthrough", "step had no usable bounds — drew fallback ring");
 
         return new System.Drawing.RectangleF(
             step.ClickPoint.X - fallbackDiameter / 2f,
@@ -1780,11 +2041,6 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
     public void ClearConversationHistory()
     {
         _conversationHistory.Clear();
-        UpdateOnUI(() =>
-        {
-            StreamingResponseText = "";
-            LastTranscript = null;
-        });
     }
 
     private void StartWatchdog()
@@ -1894,6 +2150,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
 
     public void Dispose()
     {
+        ParkPendingMemory();
         _pushToTalkMonitor.Dispose();
         _buddyDictationManager.Dispose();
         _elevenLabsTTSClient.Dispose();

@@ -68,56 +68,12 @@ public class AgentTurnResult
     public string StopReason { get; init; } = "end_turn";
 }
 
-/// <summary>One step in an agentic task, displayed live in the panel UI.</summary>
-public class AgentStep : System.ComponentModel.INotifyPropertyChanged
-{
-    public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
-
-    private string _stepLabel = "";
-    public string StepLabel
-    {
-        get => _stepLabel;
-        set { _stepLabel = value; OnChanged(nameof(StepLabel)); }
-    }
-
-    private AgentStepStatus _status = AgentStepStatus.Pending;
-    public AgentStepStatus Status
-    {
-        get => _status;
-        set { _status = value; OnChanged(nameof(Status)); OnChanged(nameof(StatusGlyph)); }
-    }
-
-    private string? _outputPreview;
-    public string? OutputPreview
-    {
-        get => _outputPreview;
-        set { _outputPreview = value; OnChanged(nameof(OutputPreview)); OnChanged(nameof(HasOutput)); }
-    }
-
-    public bool HasOutput => !string.IsNullOrEmpty(OutputPreview);
-
-    /// <summary>A small status indicator glyph for the panel list.</summary>
-    public string StatusGlyph => Status switch
-    {
-        AgentStepStatus.Running => "•",
-        AgentStepStatus.Completed => "✓",
-        AgentStepStatus.Failed => "✕",
-        AgentStepStatus.AwaitingConfirmation => "?",
-        _ => "•"
-    };
-
-    private void OnChanged(string name)
-        => PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(name));
-}
-
-public enum AgentStepStatus
-{
-    Pending,
-    Running,
-    Completed,
-    Failed,
-    AwaitingConfirmation
-}
+// There is deliberately no AgentStep type here any more, and no step list in the panel.
+// It showed a row per screenshot taken and per round trip with the model, each carrying the
+// first hundred characters of what the tool returned — the instructions written for the
+// model, and on a walkthrough step the user's own words quoted back at them. What Nayf is
+// doing belongs in the status pill; what Nayf has to say belongs in the panel; how it got
+// there belongs in the log.
 
 /// <summary>
 /// A destructive agent command that requires the user to approve before executing.
@@ -164,8 +120,9 @@ public class WalkthroughStep
     public PointF ClickPoint { get; init; }
 
     /// <summary>
-    /// The target's visual bounds, when Claude gave a size. Null when it only gave a point,
-    /// and the outline falls back to a small ring around it.
+    /// The target's visual bounds, when Claude gave a size that could be believed. Null when
+    /// it gave none or gave one that could not be read off that screenshot, and the outline
+    /// falls back to a ring around the point.
     /// </summary>
     public RectangleF? TargetBounds { get; init; }
 

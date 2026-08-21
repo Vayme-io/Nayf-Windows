@@ -14,10 +14,6 @@ namespace NayfWindows;
 /// </summary>
 public static class NayfResponseText
 {
-    /// <summary>Every tag opener, in the exact spelling the system prompt asks for.</summary>
-    private static readonly string[] TagOpeners =
-        ["[POINT:", "[MISSION:", "[MISSION-CONTINUE:", "[MISSION-CONTINUE]"];
-
     /// <summary>Removes every complete tag from a finished reply.</summary>
     public static string Clean(string text)
     {
@@ -30,29 +26,8 @@ public static class NayfResponseText
         return text.Trim();
     }
 
-    /// <summary>
-    /// Cleans a reply that is still streaming. A tag arrives one delta at a time, so for
-    /// a few frames it is a fragment no pattern matches — which is how "[MISSION-CONTIN"
-    /// ends up on screen. An unclosed bracket is held back while what follows it could
-    /// still turn into a tag, and released as ordinary text once it plainly can't.
-    /// </summary>
-    public static string ForDisplay(string partial)
-    {
-        var cleaned = Clean(partial);
-
-        int open = cleaned.LastIndexOf('[');
-        if (open < 0 || cleaned.IndexOf(']', open) >= 0) return cleaned;
-
-        var tail = cleaned[open..];
-        foreach (var opener in TagOpeners)
-        {
-            // Either the fragment is still short of a full opener, or it is a tag that
-            // has opened and not yet closed.
-            if (opener.StartsWith(tail, StringComparison.Ordinal) ||
-                tail.StartsWith(opener, StringComparison.Ordinal))
-                return cleaned[..open].TrimEnd();
-        }
-
-        return cleaned;
-    }
+    // There is deliberately no ForDisplay here any more. It cleaned a half-arrived reply
+    // so a tag caught mid-delta wouldn't flash up as "[MISSION-CONTIN" — a problem that
+    // only exists if the answer is being typed onto the screen as it streams, and nothing
+    // does that now. Clean runs once, on the finished text.
 }

@@ -212,17 +212,28 @@
                 <ItemsControl x:Name="MemoryList" Visibility="Collapsed">
                     <ItemsControl.ItemTemplate>
                         <DataTemplate>
-                            <Border Background="#0AFFFFFF" CornerRadius="10" Padding="12,10,12,10" Margin="0,0,0,7">
+                            <Border Background="#0AFFFFFF" CornerRadius="10" Padding="12,10,8,10" Margin="0,0,0,7">
                                 <Grid>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="Auto"/>
                                         <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
                                     <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xEC92;" FontSize="12"
                                               Foreground="#A1A1A6" VerticalAlignment="Top" Margin="0,2,0,0"/>
                                     <TextBlock Grid.Column="1" Text="{Binding}" Margin="10,0,0,0"
                                                Foreground="#F5F5F7" FontSize="13" FontFamily="Segoe UI Variable"
                                                TextWrapping="Wrap"/>
+                                    <!-- Forgets this one fact. Same shape as the trash button on an
+                                         agent tile, so the two lists are operated the same way. -->
+                                    <Button Grid.Column="2" Tag="{Binding}" Click="MemoryDelete_Click"
+                                            Width="26" Height="26" CornerRadius="13" Padding="0"
+                                            Margin="6,0,0,0" BorderThickness="0" Background="Transparent"
+                                            VerticalAlignment="Top"
+                                            ToolTipService.ToolTip="Forget this">
+                                        <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE74D;"
+                                                  FontSize="11" Foreground="#6E6E73"/>
+                                    </Button>
                                 </Grid>
                             </Border>
                         </DataTemplate>
@@ -819,14 +830,13 @@
                            HorizontalAlignment="Center" Margin="0,2,0,0"/>
             </StackPanel>
 
-            <!-- ───────────── DYNAMIC AREA (response / agent / banners) ───────────── -->
+            <!-- ───────────── DYNAMIC AREA (banners / prompts) ─────────────
+                 Only things the user has to act on: a permission that needs granting, a
+                 command that needs approving. Nothing of the conversation itself lives
+                 here — not what the user said, not what Nayf answered, and not a running
+                 account of what Nayf did to arrive at it. Nayf speaks its answers; the
+                 panel is the controls, not a transcript. -->
             <StackPanel x:Name="DynamicArea" Padding="24,0,24,8" Spacing="10">
-                <TextBlock x:Name="LastTranscriptText" Text=""
-                           Foreground="{StaticResource TextSecondary}" FontSize="12"
-                           FontFamily="{StaticResource UiFont}"
-                           TextWrapping="Wrap" MaxLines="2" TextTrimming="CharacterEllipsis"
-                           Visibility="Collapsed"/>
-
                 <!-- Mic permission banner -->
                 <Border x:Name="MicPermissionBanner" CornerRadius="12" Padding="14,12,14,12" Visibility="Collapsed"
                         Background="#332600" BorderBrush="#66FF9F0A" BorderThickness="1">
@@ -842,44 +852,9 @@
                     </StackPanel>
                 </Border>
 
-                <!-- Streaming response -->
-                <Border x:Name="ResponseContainer" CornerRadius="12" Padding="14,12,14,12" Visibility="Collapsed"
-                        Background="{StaticResource SurfaceLow}" BorderBrush="{StaticResource Hairline}" BorderThickness="1">
-                    <TextBlock x:Name="ResponseDisplayText" TextWrapping="Wrap"
-                               Foreground="{StaticResource TextPrimary}"
-                               FontSize="13" FontFamily="{StaticResource UiFont}" LineHeight="19"
-                               MaxLines="8" TextTrimming="CharacterEllipsis"/>
-                </Border>
-
-                <!-- Agent task steps -->
-                <Border x:Name="AgentTaskContainer" CornerRadius="12" Padding="14,12,14,12" Visibility="Collapsed"
-                        Background="{StaticResource SurfaceLow}" BorderBrush="{StaticResource Hairline}" BorderThickness="1">
-                    <StackPanel Spacing="8">
-                        <TextBlock Text="WORKING" Foreground="{StaticResource TextTertiary}" FontSize="10"
-                                   FontFamily="{StaticResource UiFont}" FontWeight="SemiBold" CharacterSpacing="120"/>
-                        <ItemsControl x:Name="AgentStepsList">
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate>
-                                    <Grid Padding="0,3,0,3">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="16"/>
-                                            <ColumnDefinition Width="*"/>
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock Text="{Binding StatusGlyph}" Foreground="#458FFF" FontSize="12" VerticalAlignment="Top"/>
-                                        <StackPanel Grid.Column="1" Spacing="2">
-                                            <TextBlock Text="{Binding StepLabel}" Foreground="#F5F5F7" FontSize="12"
-                                                       FontFamily="Segoe UI Variable" TextWrapping="Wrap"/>
-                                            <TextBlock Text="{Binding OutputPreview}" Foreground="#A1A1A6" FontSize="11"
-                                                       FontFamily="Consolas" TextWrapping="Wrap" MaxLines="2" TextTrimming="CharacterEllipsis"/>
-                                        </StackPanel>
-                                    </Grid>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </StackPanel>
-                </Border>
-
-                <!-- Agent confirmation prompt -->
+                <!-- Agent confirmation prompt: a question put to the user, not an answer
+                     given to them. It is the only thing here that carries Nayf's words,
+                     and it is here because there is no way to answer it otherwise. -->
                 <Border x:Name="AgentConfirmContainer" CornerRadius="12" Padding="14,12,14,12" Visibility="Collapsed"
                         Background="#33140F" BorderBrush="#66FF453A" BorderThickness="1">
                     <StackPanel Spacing="10">

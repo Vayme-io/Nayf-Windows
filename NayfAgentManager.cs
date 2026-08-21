@@ -20,15 +20,15 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
 {
     public event PropertyChangedEventHandler? PropertyChanged;
 
-    public ObservableCollection<AgentStep> AgentSteps { get; } = new();
-
     private volatile string? _runningToolLabel;
 
     /// <summary>
     /// What Nayf is doing right now, in words the user would use — "Reading a file" —
-    /// or null when no tool is running. Kept as a plain volatile string rather than
-    /// read off <see cref="AgentSteps"/> because the status pill polls it from its own
-    /// render thread, and the step list belongs to the UI thread alone.
+    /// or null when no tool is running.
+    ///
+    /// <para>The status pill is where this shows, and the only place it shows. There is
+    /// deliberately no step list in the panel: a running tally of screenshots taken and
+    /// tools called is Nayf's working, and the user asked for none of it.</para>
     /// </summary>
     public string? RunningToolLabel => _runningToolLabel;
 
@@ -51,6 +51,18 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
     /// saved rather than on a new one.
     /// </summary>
     public bool TaskContinuesPrevious { get; private set; }
+
+    /// <summary>
+    /// The turn actually took the user through their screen — it called
+    /// <c>request_user_step</c> at least once, rather than merely having the walkthrough
+    /// tools available to it.
+    ///
+    /// <para>The distinction matters because walkthrough is the default mode, not a marker:
+    /// almost every turn runs in it, including one where the user says something about
+    /// themselves. What a walkthrough turn contains is a description of somebody's
+    /// application, and memory extraction has no business reading it.</para>
+    /// </summary>
+    public bool LastTurnWalkedTheScreen { get; private set; }
 
     private AgentConfirmationRequest? _pendingConfirmationRequest;
     public AgentConfirmationRequest? PendingConfirmationRequest
@@ -272,7 +284,7 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
                 w = new
                 {
                     type = "integer",
-                    description = "The target's visual width in screenshot pixels, including its padding — the whole button, not just its text. The outline is traced in exactly these bounds, so a wrong size looks wrong on screen. Omit only if you genuinely cannot tell."
+                    description = "The target's visual width in screenshot pixels, including its padding — the whole button, not just its text. The outline is traced in exactly these bounds, so measure the control rather than guessing. For something with no clear edges, give the bounds of the region the user should look at."
                 },
                 h = new
                 {
@@ -301,16 +313,39 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
                     description = "Drag destination Y, screenshot pixels."
                 }
             },
-            required = new[] { "x", "y", "label", "wait_for" }
+            // w and h are required because they are the only description of the target's
+            // shape this platform has. There is no accessibility frame to fall back on, so
+            // an omitted size is not a gap to be filled in later — it is a ring drawn around
+            // a point, which is what the outline exists to be better than.
+            required = new[] { "x", "y", "w", "h", "label", "wait_for" }
         }
     };
 
     /// <summary>
-    /// What a teaching turn may call. Deliberately tiny — Nayf looks, points, and waits.
+    /// The model's way out of a wrong guess about what the user wanted. Whether a turn
+    /// teaches or acts is decided before the model sees it, from the wording alone, and
+    /// wording is a poor signal — this makes a miss recoverable inside the same turn rather
+    /// than something the user has to rephrase their way out of.
+    /// </summary>
+    private static readonly object TakeOverTool = new
+    {
+        name = "take_over",
+        description =
+            "Call this only when the user has asked YOU to perform the action rather than be " +
+            "shown how — 'just do it', 'open it for me', 'set this up'. It grants you the " +
+            "tools that act on their machine for the rest of this turn. If they want to learn " +
+            "it, or if you are unsure, do not call this: guide them with request_user_step " +
+            "instead. Acting when they wanted to be taught takes the task away from them.",
+        input_schema = new { type = "object", properties = new { }, required = Array.Empty<string>() }
+    };
+
+    /// <summary>
+    /// What a teaching turn may call. Deliberately tiny — Nayf looks, points, and waits,
+    /// and asks before it does anything else.
     /// </summary>
     private static readonly List<object> WalkthroughTools = new()
     {
-        TakeScreenshotTool, RequestUserStepTool
+        TakeScreenshotTool, RequestUserStepTool, TakeOverTool
     };
 
     /// <summary>
@@ -366,12 +401,12 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
         NayfToolMode toolMode = NayfToolMode.GuidedWalkthrough,
         byte[]? focusRegionImage = null)
     {
-        UpdateOnUI(() => AgentSteps.Clear());
         _runningToolLabel = null;
 
         // Fresh each turn — only set if THIS turn tags itself a continuation. Left standing,
         // it would glue an unrelated task onto whatever Nayf happened to do before it.
         TaskContinuesPrevious = false;
+        LastTurnWalkedTheScreen = false;
 
         // Scope what this run may do. The executor refuses every actuation tool in
         // walkthrough mode, so Nayf cannot touch the screen even if the model asks.
@@ -383,18 +418,11 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
         var lastAssistantText = "";
         var executedAnyTool = false;
 
-        // A walkthrough spends two iterations on every step — look, then hand the step over —
-        // so the agent-task limit would cut one off after seven steps. That limit is a
-        // runaway guard for a loop nobody is watching; a walkthrough is paced by the user,
-        // who is right there and can stop it by saying so.
-        int maxIterations = toolMode == NayfToolMode.GuidedWalkthrough ? 40 : 15;
+        int maxIterations = IterationBudget(toolMode);
 
         for (int iteration = 0; iteration < maxIterations; iteration++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-
-            var stepLabel = iteration == 0 ? "Thinking…" : $"Step {iteration + 1}…";
-            var currentStep = AddStep(stepLabel, AgentStepStatus.Running);
 
             AgentTurnResult turnResult;
             try
@@ -409,7 +437,7 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
             }
             catch (Exception ex)
             {
-                UpdateStep(currentStep, AgentStepStatus.Failed, ex.Message);
+                Logger.Log("AgentLoop", $"turn failed: {ex.Message}");
                 throw;
             }
 
@@ -460,26 +488,47 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
             if (turnResult.StopReason == "end_turn" || turnResult.ToolCalls.Count == 0)
             {
                 fullFinalText = turnResult.TextContent;
-                UpdateStep(currentStep, AgentStepStatus.Completed);
                 break;
             }
 
-            // Execute all tool calls and collect results
-            UpdateStep(currentStep, AgentStepStatus.Completed);
             var toolResults = new List<object>();
 
             foreach (var toolCall in turnResult.ToolCalls)
             {
+                // The model saying it was handed the job, not asked about it. Handled here
+                // rather than in the executor because what it changes is this loop's own
+                // scope — nothing happens on the machine until the tools it grants are used,
+                // and those still answer to the executor's confirmation gate.
+                //
+                // One direction only: a turn may escalate from teaching to acting, never the
+                // reverse. take_over is not in the agent set, so it cannot be called twice.
+                if (toolCall.ToolName == "take_over")
+                {
+                    toolMode = NayfToolMode.AgentTask;
+                    _toolExecutor.ToolMode = toolMode;
+                    tools = ToolsFor(toolMode);
+                    // The larger of the two budgets: iterations already spent teaching are
+                    // gone, and the work being taken over still has to fit in what is left.
+                    maxIterations = Math.Max(maxIterations, IterationBudget(toolMode));
+                    Logger.Log("AgentLoop", "escalated to AgentTask via take_over");
+
+                    toolResults.Add(new
+                    {
+                        type = "tool_result",
+                        tool_use_id = toolCall.ToolUseId,
+                        content = "You can now act on the user's machine. Do the task."
+                    });
+                    continue;
+                }
+
                 // A step is the user's turn, not Nayf's. It runs through the loop like a tool
                 // because that is exactly what it is to the model — a call that returns an
                 // answer — but nothing about it is Nayf doing something, so it gets no
                 // "Running…" label and the pill says whose turn it is instead.
                 bool isUserStep = toolMode == NayfToolMode.GuidedWalkthrough
                                   && toolCall.ToolName == "request_user_step";
+                if (isUserStep) LastTurnWalkedTheScreen = true;
 
-                var toolStep = AddStep(
-                    isUserStep ? "Waiting for you" : $"Running: {toolCall.ToolName}",
-                    AgentStepStatus.Running);
                 if (!isUserStep) _runningToolLabel = DescribeTool(toolCall.ToolName);
                 executedAnyTool = true;
                 AgentToolResult toolResult;
@@ -489,21 +538,17 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
                     toolResult = isUserStep
                         ? await AwaitUserStepAsync(toolCall, screenshots, turnResult.TextContent, cancellationToken)
                         : await _toolExecutor.ExecuteToolAsync(toolCall, cancellationToken, authToken);
-                    UpdateStep(toolStep, AgentStepStatus.Completed,
-                        toolResult.Text.Length > 100 ? toolResult.Text[..100] + "…" : toolResult.Text);
                 }
                 catch (OperationCanceledException)
                 {
                     // The user interrupted. Let it unwind — feeding "Tool error: the operation
                     // was canceled" back to the model would have it carry on regardless, which
                     // during a walkthrough means the next step arriving over the interruption.
-                    UpdateStep(toolStep, AgentStepStatus.Failed, "Stopped");
                     throw;
                 }
                 catch (Exception ex)
                 {
                     toolResult = AgentToolResult.Message($"Tool error: {ex.Message}");
-                    UpdateStep(toolStep, AgentStepStatus.Failed, ex.Message);
                 }
                 finally
                 {
@@ -568,6 +613,17 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
 
         return fullFinalText;
     }
+
+    /// <summary>
+    /// How many times round the loop a mode is allowed to go.
+    ///
+    /// A walkthrough spends two iterations on every step — look, then hand the step over —
+    /// so the agent-task limit would cut one off after seven steps. That limit is a runaway
+    /// guard for a loop nobody is watching; a walkthrough is paced by the user, who is right
+    /// there and can stop it by saying so.
+    /// </summary>
+    private static int IterationBudget(NayfToolMode mode)
+        => mode == NayfToolMode.GuidedWalkthrough ? 40 : 15;
 
     /// <summary>
     /// Hands one step to the user and waits. This is the pause in the middle of a
@@ -647,11 +703,23 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
         RectangleF? bounds = null;
         double? imageW = TryGetNumber(input, "w");
         double? imageH = TryGetNumber(input, "h");
-        if (imageW is > 0 && imageH is > 0)
+
+        // Required is not the same as sane. A plausible target is at least a few pixels and
+        // no larger than the screenshot it was read off; anything outside that is a misread,
+        // and a misread outline is worse than the fallback ring — it frames the wrong thing
+        // confidently.
+        if (imageW is > 2 and { } w && w <= shot.ImageWidth &&
+            imageH is > 2 and { } h && h <= shot.ImageHeight)
         {
-            var topLeft = ToScreenPoint(shot, imageX.Value - imageW.Value / 2, imageY.Value - imageH.Value / 2);
-            var bottomRight = ToScreenPoint(shot, imageX.Value + imageW.Value / 2, imageY.Value + imageH.Value / 2);
+            var topLeft = ToScreenPoint(shot, imageX.Value - w / 2, imageY.Value - h / 2);
+            var bottomRight = ToScreenPoint(shot, imageX.Value + w / 2, imageY.Value + h / 2);
             bounds = RectangleF.FromLTRB(topLeft.X, topLeft.Y, bottomRight.X, bottomRight.Y);
+        }
+        else if (imageW != null || imageH != null)
+        {
+            Logger.Log("Walkthrough",
+                $"rejected bounds {imageW?.ToString() ?? "none"}x{imageH?.ToString() ?? "none"} " +
+                $"against a {shot.ImageWidth}x{shot.ImageHeight} screenshot");
         }
 
         double? toX = TryGetNumber(input, "to_x");
@@ -825,9 +893,9 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
     public void ClearMission() => _missionText = null;
 
     /// <summary>
-    /// Turns a tool name into something worth reading on screen. The panel's step list
-    /// shows the raw name for debugging; the status pill is the only thing the user
-    /// sees mid-task, so it says what's happening instead.
+    /// Turns a tool name into something worth reading on screen — what Nayf is doing, in
+    /// the words the user would use for it. Drives the status pill, which is the only
+    /// place any of this is shown.
     /// </summary>
     private static string DescribeTool(string toolName) => toolName switch
     {
@@ -844,22 +912,6 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
         "github_create_issue" => "Opening a GitHub issue",
         _ => "Working"
     };
-
-    private AgentStep AddStep(string label, AgentStepStatus status)
-    {
-        var step = new AgentStep { StepLabel = label, Status = status };
-        UpdateOnUI(() => AgentSteps.Add(step));
-        return step;
-    }
-
-    private void UpdateStep(AgentStep step, AgentStepStatus status, string? outputPreview = null)
-    {
-        UpdateOnUI(() =>
-        {
-            step.Status = status;
-            if (outputPreview != null) step.OutputPreview = outputPreview;
-        });
-    }
 
     private Task OnConfirmationRequested(AgentConfirmationRequest request)
     {

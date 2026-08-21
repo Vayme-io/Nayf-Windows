@@ -15,7 +15,9 @@ namespace NayfWindows;
 /// </summary>
 public sealed class BuddyDictationManager : IDisposable
 {
-    public event Action<string>? PartialTranscriptUpdated;
+    // No PartialTranscriptUpdated. It existed to caption the user's speech on the panel as
+    // they spoke it, and the panel does not show what was said. The partial text is still
+    // kept per session — it is what the finished transcript is assembled from.
     public event Action<float>? AudioPowerLevelChanged;
 
     private MMDevice? _meterDevice;
@@ -75,11 +77,6 @@ public sealed class BuddyDictationManager : IDisposable
         session.Provider.PartialTranscriptReceived += text =>
         {
             lock (session) session.CurrentPartialTranscript = text;
-
-            // A session that has already been stopped can still speak. Its words are the
-            // previous utterance's, and showing them would caption what is being said now
-            // with what was said before it.
-            if (IsCurrentSession(session)) PartialTranscriptUpdated?.Invoke(text);
         };
 
         try
@@ -100,11 +97,6 @@ public sealed class BuddyDictationManager : IDisposable
         // Start mic capture just for audio power level visualization —
         // the actual transcription is handled by Windows.Media.SpeechRecognition
         StartMicrophonePowerMonitor();
-    }
-
-    private bool IsCurrentSession(DictationSession session)
-    {
-        lock (_recordingLock) return ReferenceEquals(_activeSession, session);
     }
 
     /// <summary>

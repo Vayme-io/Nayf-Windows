@@ -54,11 +54,23 @@ This is a direct Windows port of the macOS Swift/SwiftUI app, with identical arc
 | `ScreenCaptureUtility.cs` | Multi-monitor GDI BitBlt screenshot capture → JPEG, with Nayf's own windows hidden |
 | `NayfConfig.cs` | Worker URL and all configuration constants |
 
+## Installing it
+
+Just want to run Nayf? See **[INSTALL.md](INSTALL.md)** — download the installer and
+go. Nothing to install first: released builds carry their own copy of .NET and the
+Windows App SDK.
+
 ## Prerequisites
 
-- Windows 10 version 1903+ (19H1) or Windows 11
-- [Windows App SDK 2.0 runtime](https://learn.microsoft.com/windows/apps/windows-app-sdk/downloads)
-- .NET 10 Runtime
+For building from source:
+
+- Windows 10 version 1809+ or Windows 11, 64-bit
+- .NET 10 SDK
+- [Inno Setup 6](https://jrsoftware.org/isdl.php), to build the installer
+
+The Windows App SDK runtime does **not** need to be installed. The app is built
+with `WindowsAppSDKSelfContained`, so the runtime ships next to the exe — see the
+note in `NayfWindows.csproj`. `dotnet run` works the same way.
 
 ## Setup
 

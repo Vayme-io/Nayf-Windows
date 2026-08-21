@@ -9,7 +9,7 @@
 ;   "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" installer\Nayf.iss
 
 #define MyAppName "Nayf"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.1.0"
 #define MyAppPublisher "Vayme"
 #define MyAppExeName "NayfWindows.exe"
 #define MyAppId "{{A7F3C2E1-9B4D-4E6A-8C1F-2D5B7E9A0C34}"

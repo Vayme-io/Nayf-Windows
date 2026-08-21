@@ -4,14 +4,13 @@ using System.Runtime.InteropServices;
 using System.Threading;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
-using Microsoft.Windows.ApplicationModel.DynamicDependency;
 
 namespace NayfWindows;
 
 /// <summary>
-/// Application entry point. Manually bootstraps the Windows App SDK runtime
-/// before starting the WinUI 3 app — required for unpackaged apps.
-/// Without Bootstrap.Initialize the process crashes silently on startup.
+/// Application entry point. Starts the WinUI 3 app directly: the Windows App SDK is
+/// built into this app (see WindowsAppSDKSelfContained in the csproj) rather than
+/// looked up on the machine, so there is no runtime to bootstrap first.
 /// </summary>
 static class Program
 {
@@ -21,22 +20,14 @@ static class Program
     [STAThread]
     static void Main(string[] args)
     {
-        // Bootstrap the Windows App SDK 2.0 runtime.
-        // 0x00020000 = major version 2, minor version 0.
-        try
-        {
-            Bootstrap.Initialize(0x00020000);
-        }
-        catch (Exception ex)
-        {
-            Log("Bootstrap FAILED", ex.ToString());
-            ShowError(
-                "Windows App SDK 2.0 runtime is not installed.\n\n" +
-                "Download and run the installer:\n" +
-                "https://aka.ms/windowsappsdk/2.0/latest/windowsappruntimeinstall-x64.exe\n\n" +
-                $"Error: {ex.Message}");
-            return;
-        }
+        // No Bootstrap.Initialize here. The build is WindowsAppSDKSelfContained, so the
+        // Windows App SDK sits next to the exe and loads from there; the bootstrapper's
+        // only job is to locate a copy installed on the machine and point the process at
+        // it, which is the one thing this app must not do. On a machine that has the
+        // runtime installed it does exactly that, and the process then holds two copies —
+        // the package's and its own — and dies in CoreMessagingXP.dll a moment after
+        // startup. On a machine without it there is nothing to find and it fails outright.
+        // Self-contained apps do not use the bootstrapper.
 
         try
         {
@@ -54,10 +45,6 @@ static class Program
         {
             Log("App startup FAILED", ex.ToString());
             ShowError($"Nayf failed to start:\n{ex.Message}");
-        }
-        finally
-        {
-            Bootstrap.Shutdown();
         }
     }
 

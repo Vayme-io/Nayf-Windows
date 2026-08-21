@@ -14,9 +14,16 @@
     <Company>Vayme</Company>
     <!-- Shown on the panel's Settings page. Keep in step with MyAppVersion in
          installer\Nayf.iss so the app and the installer report the same build. -->
-    <Version>1.0.0</Version>
+    <Version>1.1.0</Version>
     <UseWinUI>true</UseWinUI>
     <WindowsPackageType>None</WindowsPackageType>
+    <!-- Ship the Windows App SDK runtime inside the app rather than expecting it
+         on the machine. The publish flag by that name covers .NET only; without
+         this the build carries the bootstrapper alone, which looks for a Windows App
+         Runtime installed on the machine and, not finding one, puts up "Windows App SDK 2.0 runtime is not
+         installed" and exits. That never showed up here because a dev machine has
+         it — it is what anyone we hand the installer to would see instead of Nayf. -->
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <!-- Tell the SDK our entry point is in Program.cs, not auto-generated -->
     <DefineConstants>DISABLE_XAML_GENERATED_MAIN</DefineConstants>
     <Platforms>x64</Platforms>

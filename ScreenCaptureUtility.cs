@@ -119,7 +119,7 @@ public static class ScreenCaptureUtility
                 try
                 {
                     // Serialised so that two overlapping captures cannot have one put
-                    // Nayf's windows back while the other is still reading the screen.
+                    // Vayme's windows back while the other is still reading the screen.
                     lock (CaptureExclusionLock)
                     {
                         var excluded = ExcludeOwnWindowsFromCapture();
@@ -169,9 +169,9 @@ public static class ScreenCaptureUtility
     }
 
     /// <summary>
-    /// Takes Nayf's own windows out of the screen for the duration of one capture, so
-    /// the model is shown the user's screen rather than Nayf's reaction to it — the
-    /// cursor buddy, the status pill, the typed-request field, and the annotations Nayf
+    /// Takes Vayme's own windows out of the screen for the duration of one capture, so
+    /// the model is shown the user's screen rather than Vayme's reaction to it — the
+    /// cursor buddy, the status pill, the typed-request field, and the annotations Vayme
     /// draws itself. That last one is the reason this matters: without it the model sees
     /// its own highlight on the next screenshot and reads it as part of the user's UI.
     ///
@@ -182,19 +182,19 @@ public static class ScreenCaptureUtility
     ///
     /// Applied and taken back per capture rather than left on permanently, because the
     /// affinity hides the window from *all* capture — the user's screen recordings and
-    /// video calls included. Nayf being invisible in a Teams share is not what was asked
+    /// video calls included. Vayme being invisible in a Teams share is not what was asked
     /// for, and the Mac's filter is scoped to its own captures too.
     ///
     /// Swept across the process's windows rather than set once by each window as it is
-    /// created: the list of Nayf's windows keeps growing, and one that forgets to opt in
-    /// fails silently — the screenshot simply comes back with Nayf in it. Measured on
+    /// created: the list of Vayme's windows keeps growing, and one that forgets to opt in
+    /// fails silently — the screenshot simply comes back with Vayme in it. Measured on
     /// Windows 11: the affinity takes effect on the BitBlt immediately following it with
     /// no settling delay, and can be set from a thread that does not own the window,
     /// which this is — the buddy and the pill each run their own message loop, and
     /// capture runs on the thread pool.
     ///
     /// Only windows that are actually on screen are touched. A hidden window cannot appear
-    /// in a screenshot, so excluding it buys nothing — and several of Nayf's windows are
+    /// in a screenshot, so excluding it buys nothing — and several of Vayme's windows are
     /// hidden shells that have never painted a frame (OverlayWindow is one per monitor,
     /// created only to satisfy WinUI's XAML partial class and hidden immediately). Their
     /// composition surface is blank, so anything that prompts the compositor to present one
@@ -220,7 +220,7 @@ public static class ScreenCaptureUtility
 
         if (_loggedExclusion) return excluded;
         _loggedExclusion = true;
-        Logger.Log("ScreenCapture", $"Hiding {excluded.Count} of Nayf's own windows from capture");
+        Logger.Log("ScreenCapture", $"Hiding {excluded.Count} of Vayme's own windows from capture");
         return excluded;
     }
 
@@ -237,7 +237,7 @@ public static class ScreenCaptureUtility
 
     /// <summary>
     /// WDA_EXCLUDEFROMCAPTURE needs Windows 10 2004; the project's floor is 1809, where
-    /// the call fails and Nayf stays visible to itself. Worth saying once per window —
+    /// the call fails and Vayme stays visible to itself. Worth saying once per window —
     /// but only once, since a capture happens on every turn.
     /// </summary>
     private static void ReportExclusionFailure(IntPtr hwnd, int error)

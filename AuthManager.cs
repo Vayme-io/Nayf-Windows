@@ -51,10 +51,7 @@ public sealed class AuthManager : INotifyPropertyChanged
     {
         _httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
 
-        var dir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Nayf");
-        Directory.CreateDirectory(dir);
-        _sessionFilePath = Path.Combine(dir, "auth.json");
+        _sessionFilePath = AppPaths.InDataDirectory("auth.json");
     }
 
     // MARK: - Public operations
@@ -184,7 +181,7 @@ public sealed class AuthManager : INotifyPropertyChanged
             // Only sign out when the server actually refuses the token. A timeout,
             // a DNS failure or a 5xx says nothing about whether it is still good —
             // and SignOut deletes the stored session, so treating those as a
-            // rejection means opening Nayf before the network is up costs the user
+            // rejection means opening Vayme before the network is up costs the user
             // their login permanently. Leave the session alone and try again later.
             if (IsTokenRejection(ex))
             {

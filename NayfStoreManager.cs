@@ -31,13 +31,13 @@ public sealed record PaddleProduct(
 public static class NayfPaddleProducts
 {
     /// <summary>Highlighted in each section as the one most people want.</summary>
-    public const string RecommendedSubscriptionId = "pri_01ksm2zm62mzzbdhys0np52cwd"; // Nayf Plus
+    public const string RecommendedSubscriptionId = "pri_01ksm2zm62mzzbdhys0np52cwd"; // Vayme Plus
     public const string RecommendedPackId = "pri_01ksm2wmk1sednv65vh4733fg0";         // Standard Pack
 
     public static readonly IReadOnlyList<PaddleProduct> Subscriptions = new[]
     {
-        new PaddleProduct(RecommendedSubscriptionId, "Nayf Plus", "$5.04/mo", 1_000_000, true),
-        new PaddleProduct("pri_01ksm30vg4a13jg6e50x981d7v", "Nayf Pro", "$13.12/mo", 3_000_000, true),
+        new PaddleProduct(RecommendedSubscriptionId, "Vayme Plus", "$5.04/mo", 1_000_000, true),
+        new PaddleProduct("pri_01ksm30vg4a13jg6e50x981d7v", "Vayme Pro", "$13.12/mo", 3_000_000, true),
     };
 
     public static readonly IReadOnlyList<PaddleProduct> TokenPacks = new[]
@@ -142,7 +142,7 @@ public sealed class NayfStoreManager : INotifyPropertyChanged
             var accessToken = await _authManager.CurrentAccessTokenAsync();
             if (accessToken == null)
             {
-                CheckoutError = "Sign in to Nayf to buy tokens.";
+                CheckoutError = "Sign in to Vayme to buy tokens.";
                 return;
             }
 
@@ -208,7 +208,7 @@ public sealed class NayfStoreManager : INotifyPropertyChanged
             var accessToken = await _authManager.CurrentAccessTokenAsync();
             if (accessToken == null)
             {
-                WithdrawalError = "Sign in to Nayf to submit a withdrawal request.";
+                WithdrawalError = "Sign in to Vayme to submit a withdrawal request.";
                 return;
             }
 

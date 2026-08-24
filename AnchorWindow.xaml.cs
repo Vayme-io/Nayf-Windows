@@ -9,8 +9,8 @@ namespace NayfWindows;
 
 /// <summary>
 /// A 1x1 invisible window kept alive off-screen for two reasons: WinUI 3 shuts
-/// the app down when it sees zero open windows, and this window owns Nayf's
-/// taskbar button so Nayf sits among the user's other programs like any other
+/// the app down when it sees zero open windows, and this window owns Vayme's
+/// taskbar button so Vayme sits among the user's other programs like any other
 /// app.
 ///
 /// It stays permanently minimized. Windows only ever asks a minimized window to
@@ -25,11 +25,11 @@ public sealed partial class AnchorWindow : Window
     public event Action? TaskbarActivated;
 
     /// <summary>
-    /// Lets this window close. Set by the app when the user has actually asked Nayf to
+    /// Lets this window close. Set by the app when the user has actually asked Vayme to
     /// quit, and only then.
     ///
     /// Closing is refused by default so a stray Alt+F4 or a taskbar "Close" doesn't take
-    /// Nayf down with it. But <c>Application.Exit()</c> shuts the app down by asking every
+    /// Vayme down with it. But <c>Application.Exit()</c> shuts the app down by asking every
     /// window to close, and a window that always refuses refuses that too — which is why
     /// quitting used to do nothing at all.
     /// </summary>
@@ -55,7 +55,7 @@ public sealed partial class AnchorWindow : Window
         appWindow.Resize(new Windows.Graphics.SizeInt32(1, 1));
         appWindow.Move(new Windows.Graphics.PointInt32(-32000, -32000));
 
-        // Show a taskbar button so Nayf can be found and pinned like any other
+        // Show a taskbar button so Vayme can be found and pinned like any other
         // program. This window is what the button belongs to.
         appWindow.IsShownInSwitchers = true;
         appWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "NayfIcon.ico"));

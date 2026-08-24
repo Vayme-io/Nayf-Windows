@@ -168,6 +168,12 @@ public partial class App : Application
             _companionManager = new CompanionManager(_authManager!);
             Log("Step", "CompanionManager created");
 
+            // An update has been downloaded, verified and handed to the installer, which
+            // will kill this process shortly whatever we do. Going through the normal quit
+            // means the teardown runs first — pending memories written, hooks removed, tray
+            // icon gone — rather than the installer's taskkill taking them with it.
+            _companionManager.Updates.RestartRequested += QuitApp;
+
             _overlayWindowManager = new OverlayWindowManager(_companionManager);
             _overlayWindowManager.CreateOverlaysForAllMonitors();
             Log("Step", "Overlays created");
@@ -196,7 +202,7 @@ public partial class App : Application
             _companionManager.TextInputRequested += () =>
                 _uiDispatcher?.TryEnqueue(() =>
                     // Read the foreground window here rather than inside the window:
-                    // by the time it activates, the answer is Nayf itself.
+                    // by the time it activates, the answer is Vayme itself.
                     _textInputWindow?.ShowForRequest(NativeMethods.GetForegroundWindow()));
             Log("Step", "TextInputWindow created");
 
@@ -212,7 +218,7 @@ public partial class App : Application
                 _uiDispatcher?.TryEnqueue(() => _agentCardHost?.Show(task));
             _companionManager.PropertyChanged += (_, e) =>
             {
-                // The follow-up button says "Listening…" until Nayf stops. Idle is the
+                // The follow-up button says "Listening…" until Vayme stops. Idle is the
                 // only state that means it has, whether the turn finished or was cut off.
                 if (e.PropertyName == nameof(CompanionManager.VoiceState) &&
                     _companionManager.VoiceState == CompanionVoiceState.Idle)
@@ -281,7 +287,7 @@ public partial class App : Application
     }
 
     /// <summary>
-    /// Shuts Nayf down. The one way out — the tray's Quit and the panel's power button
+    /// Shuts Vayme down. The one way out — the tray's Quit and the panel's power button
     /// both come here, so neither can skip the teardown and leave a dead tray icon or a
     /// keyboard hook behind.
     /// </summary>
@@ -308,7 +314,7 @@ public partial class App : Application
             Exit();
 
             // Exit() is a request, and any window left standing can refuse it. Nothing
-            // should now, but a user who has just told Nayf to quit and watched the
+            // should now, but a user who has just told Vayme to quit and watched the
             // teardown happen must not be left with it still running. Everything above
             // has already been disposed, so there is nothing here left to lose.
             _ = System.Threading.Tasks.Task.Delay(TimeSpan.FromSeconds(2)).ContinueWith(_ =>

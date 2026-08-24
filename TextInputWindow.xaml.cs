@@ -14,7 +14,7 @@ namespace NayfWindows;
 
 /// <summary>
 /// The typed-request field, opened by the Alt+T chord. Everything typed here goes
-/// down exactly the same path as a spoken request — Nayf does not distinguish.
+/// down exactly the same path as a spoken request — Vayme does not distinguish.
 ///
 /// A WinUI window rather than one of the Win32 layered overlays because this one
 /// needs real text entry: IME composition, clipboard, selection and caret.
@@ -125,7 +125,7 @@ public sealed partial class TextInputWindow : Window
 
     /// <summary>
     /// Shows the field and puts the caret in it. <paramref name="windowToRestore"/> is
-    /// the foreground window captured at chord time, before anything of Nayf's could
+    /// the foreground window captured at chord time, before anything of Vayme's could
     /// have taken it.
     /// </summary>
     public void ShowForRequest(IntPtr windowToRestore)

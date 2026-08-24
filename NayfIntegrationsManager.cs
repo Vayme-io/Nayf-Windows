@@ -12,7 +12,7 @@ using System.Threading.Tasks;
 namespace NayfWindows;
 
 /// <summary>
-/// Manages Nayf's cloud integrations (Google Calendar first): connecting via OAuth,
+/// Manages Vayme's cloud integrations (Google Calendar first): connecting via OAuth,
 /// reading which providers are connected, and disconnecting. It talks ONLY to the
 /// Cloudflare Worker — the OAuth tokens live server-side in Supabase and never reach
 /// the app. Every call is authenticated with the user's Supabase access token.
@@ -163,7 +163,7 @@ public sealed class NayfIntegrationsManager : INotifyPropertyChanged
         var accessToken = await _authManager.CurrentAccessTokenAsync();
         if (accessToken == null)
         {
-            ErrorMessage = "Sign in to Nayf first.";
+            ErrorMessage = "Sign in to Vayme first.";
             return;
         }
 

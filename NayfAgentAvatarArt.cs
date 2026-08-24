@@ -10,7 +10,7 @@ namespace NayfWindows;
 /// Draws the idle agent avatar: the chip that sits in the corner while a task's card is
 /// collapsed. Port of <c>avatarTile</c> in the Mac's AgentResultPanel.swift — a near-black
 /// tile in the spirit of an M-series die shot, with a diagonal accent wash rising from the
-/// bottom-left, a lit metallic rim, Nayf's mark glowing in the task colour, and a soft
+/// bottom-left, a lit metallic rim, Vayme's mark glowing in the task colour, and a soft
 /// accent glow around the whole chip.
 ///
 /// <para>The glow is the reason this is drawn by hand rather than in XAML. It spills well
@@ -140,7 +140,7 @@ public static class NayfAgentAvatarArt
         return sprite;
     }
 
-    /// <summary>Nayf's mark, tinted to the task colour and glowing in it.</summary>
+    /// <summary>Vayme's mark, tinted to the task colour and glowing in it.</summary>
     private static void DrawMark(Graphics g, int size, double scale, Color accent)
     {
         int glyph = (int)Math.Round(GlyphSize * scale);
@@ -201,7 +201,7 @@ public static class NayfAgentAvatarArt
     private const float BlurRadiusFactor = 0.6f;
 
     /// <summary>
-    /// Loads Nayf's mark at <paramref name="px"/> square. The asset is a template — only
+    /// Loads Vayme's mark at <paramref name="px"/> square. The asset is a template — only
     /// its alpha carries the shape — so it is kept as a mask and coloured on use.
     /// </summary>
     private static Bitmap? LoadMark(int px)
@@ -229,7 +229,7 @@ public static class NayfAgentAvatarArt
     }
 
     /// <summary>
-    /// Nayf's mark at <paramref name="px"/> square, painted in one flat colour. For the
+    /// Vayme's mark at <paramref name="px"/> square, painted in one flat colour. For the
     /// surfaces that want the mark on its own rather than the whole chip — the capabilities
     /// card's header tile. Null if the asset isn't beside the executable.
     /// </summary>

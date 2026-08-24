@@ -185,7 +185,7 @@ public class ClaudeAPI
 
     /// <summary>
     /// Two rules here are load-bearing rather than stylistic. The line must announce that
-    /// Nayf is going away to work, because what follows it is silence — without that the
+    /// Vayme is going away to work, because what follows it is silence — without that the
     /// user hears a complete-sounding reply and is then confused by the pause. And it must
     /// promise nothing concrete: it is written without seeing the screen, so any specific
     /// commitment it makes may be wrong by the time the real turn looks.
@@ -193,7 +193,7 @@ public class ClaudeAPI
     private const string AcknowledgmentSystemPrompt =
         """
         You write a single short spoken line that acknowledges what the user just asked for,
-        in Nayf's voice: warm, casual, lowercase, never corporate. One sentence, max 12 words.
+        in Vayme's voice: warm, casual, lowercase, never corporate. One sentence, max 12 words.
 
         Echo back what they want so it sounds like you listened, AND make clear you're about
         to go away and work on it for a moment — the user will hear this line and then

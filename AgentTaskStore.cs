@@ -20,7 +20,7 @@ public sealed class SavedAgentTask
     /// <summary>The task's mission label, e.g. "Rewriting CV from resume".</summary>
     public string Title { get; set; } = "";
 
-    /// <summary>The latest outcome — the text Nayf spoke on the most recent turn.</summary>
+    /// <summary>The latest outcome — the text Vayme spoke on the most recent turn.</summary>
     public string Summary { get; set; } = "";
 
     public DateTimeOffset CreatedAt { get; set; }
@@ -107,11 +107,11 @@ public static class NayfAgentPalette
 }
 
 /// <summary>
-/// Local-only store of the agent tasks Nayf has run, so the user can reopen one later and
+/// Local-only store of the agent tasks Vayme has run, so the user can reopen one later and
 /// CONTINUE it. Each saved task carries its own conversation thread, so a follow-up resumes
 /// exactly where that task left off instead of using the global rolling history.
 ///
-/// <para>Persisted to %LOCALAPPDATA%\Nayf\agent-tasks.json and never uploaded. Mirrors the
+/// <para>Persisted to %LOCALAPPDATA%\Vayme\agent-tasks.json and never uploaded. Mirrors the
 /// <see cref="MemoryStore"/> pattern: an instance owned by <see cref="CompanionManager"/>
 /// that the response pipeline mutates and the Agents page reads.</para>
 /// </summary>
@@ -133,10 +133,7 @@ public sealed class AgentTaskStore : INotifyPropertyChanged
 
     public AgentTaskStore()
     {
-        var dir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Nayf");
-        Directory.CreateDirectory(dir);
-        _path = Path.Combine(dir, "agent-tasks.json");
+        _path = AppPaths.InDataDirectory("agent-tasks.json");
         Load();
     }
 

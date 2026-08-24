@@ -8,12 +8,12 @@ using System.Threading;
 namespace NayfWindows;
 
 /// <summary>
-/// The capabilities showcase: ask Nayf what it can do and a card floats up in the middle of
-/// the screen listing the answer, which Nayf then reads out, lighting each line as it gets
+/// The capabilities showcase: ask Vayme what it can do and a card floats up in the middle of
+/// the screen listing the answer, which Vayme then reads out, lighting each line as it gets
 /// to it. Port of the Mac's NayfCapabilitiesShowcase.swift.
 ///
 /// <para>It exists because nothing else in the app ever says what the app is for. A user who
-/// only knows about push-to-talk never finds out that Nayf will work through a whole job, or
+/// only knows about push-to-talk never finds out that Vayme will work through a whole job, or
 /// remember things, or point at the button instead of pressing it.</para>
 ///
 /// <para>Built like <see cref="NayfActionToast"/> — a layered, click-through, non-activating,
@@ -154,7 +154,7 @@ public sealed class NayfCapabilitiesShowcase : IDisposable
         }
     }
 
-    /// <summary>Lights the row Nayf is speaking about. Null clears the highlight without
+    /// <summary>Lights the row Vayme is speaking about. Null clears the highlight without
     /// taking the card down.</summary>
     public void SetHighlight(int? index)
     {

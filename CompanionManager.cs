@@ -41,9 +41,9 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
         _ => "Press Ctrl+Alt to speak"
     };
 
-    // There is deliberately no StreamingResponseText here any more. Nayf's answer used to
+    // There is deliberately no StreamingResponseText here any more. Vayme's answer used to
     // arrive in the panel a token at a time as well as out of the speakers, so opening the
-    // panel meant reading a transcript of a conversation the user had just had. Nayf speaks
+    // panel meant reading a transcript of a conversation the user had just had. Vayme speaks
     // what it has to say. The panel is the controls.
 
     // Nor is there a LastTranscript. It held the user's own words so the panel could show
@@ -60,7 +60,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
 
     /// <summary>
     /// The model the last turn was routed to — surfaced in the panel footer so the
-    /// user can see which tier answered, but no longer user-selectable (Nayf picks).
+    /// user can see which tier answered, but no longer user-selectable (Vayme picks).
     /// </summary>
     private string _activeModel = NayfConfig.ScreenModel;
     public string ActiveModel
@@ -88,7 +88,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
     /// me" — rather than asked about what is on their screen.
     ///
     /// This decides capability, not quality, and it is deliberately the delegation side that
-    /// is guessed at. Reading a hand-off as a question means Nayf shows the user how instead
+    /// is guessed at. Reading a hand-off as a question means Vayme shows the user how instead
     /// of doing it, which one sentence corrects. The arrangement this replaced guessed at the
     /// teaching side, and failed the other way: a question that missed the cue list lost the
     /// step tool altogether and drew nothing at all. "Var är exportknappen?", "can you help
@@ -134,7 +134,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
     /// <summary>
     /// Set once the acknowledgment has been spoken and the real turn is still going, so
     /// the pill can say the waiting is deliberate rather than repeat "Thinking" at
-    /// someone who has just been told Nayf is on it. Null whenever it does not apply.
+    /// someone who has just been told Vayme is on it. Null whenever it does not apply.
     /// </summary>
     private string? _deepThinkingLabel;
     public string? DeepThinkingLabel
@@ -171,7 +171,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
         private set { _detectedElementBubbleText = value; OnPropertyChanged(); }
     }
 
-    // Screen annotations — the outlines and arrows Nayf draws over the desktop while
+    // Screen annotations — the outlines and arrows Vayme draws over the desktop while
     // explaining something. Observed by AnnotationOverlayWindow, one per monitor.
     private IReadOnlyList<ScreenAnnotation> _screenAnnotations = Array.Empty<ScreenAnnotation>();
 
@@ -196,9 +196,14 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
     /// </summary>
     public event Action? ScreenAnnotationsChanged;
 
-    // True when Windows refused to start speech recognition because the user
-    // hasn't enabled "Online speech recognition" in the privacy settings yet.
-    // Drives a banner in the companion panel that links straight to that page.
+    // True when Windows refused to start speech recognition, whatever the reason.
+    // Drives a banner in the companion panel that says which reason and links to the
+    // page that fixes it.
+    //
+    // It used to be set for one HRESULT only, the unaccepted speech privacy policy. Every
+    // other refusal — no dictation for the PC's language, the microphone withheld from
+    // desktop apps, a recognizer that would not open — went to the log and nowhere else,
+    // so the user held the chord, saw the pill blink once and had nothing to go on.
     private bool _microphonePermissionNeeded;
     public bool MicrophonePermissionNeeded
     {
@@ -214,6 +219,22 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
             else
                 StopMicPermissionPolling();
         }
+    }
+
+    /// <summary>What went wrong, in a sentence the banner shows as it stands.</summary>
+    private string _speechProblemMessage = "";
+    public string SpeechProblemMessage
+    {
+        get => _speechProblemMessage;
+        private set { if (_speechProblemMessage == value) return; _speechProblemMessage = value; OnPropertyChanged(); }
+    }
+
+    /// <summary>Which Settings page the banner's button opens, and what it is called.</summary>
+    private SpeechProblem _speechProblem = SpeechProblem.OnlineSpeechOff;
+    public SpeechProblem SpeechProblem
+    {
+        get => _speechProblem;
+        private set { if (_speechProblem == value) return; _speechProblem = value; OnPropertyChanged(); }
     }
 
     // Remaining token balance for the signed-in user (null until first fetched).
@@ -282,7 +303,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
 
     /// <summary>
     /// True while the acknowledgment itself is coming out of the speaker. The voice
-    /// state machine ignores playback callbacks during this: the ack is Nayf clearing its
+    /// state machine ignores playback callbacks during this: the ack is Vayme clearing its
     /// throat, not the answer, and letting it drive the state would drop the pill to Idle
     /// with the real turn still running.
     /// </summary>
@@ -307,7 +328,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
     /// <summary>The auth manager, so UIs can show the signed-in user and sign out.</summary>
     public AuthManager Auth => _authManager;
 
-    /// <summary>Durable facts Nayf has learned about the user (shown in the Memory tab).</summary>
+    /// <summary>Durable facts Vayme has learned about the user (shown in the Memory tab).</summary>
     public MemoryStore Memory { get; } = new();
 
     /// <summary>
@@ -321,9 +342,16 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
     public NayfStoreManager Store { get; }
 
     /// <summary>
-    /// The tasks Nayf has run, saved so the user can reopen one and continue it. Local only.
+    /// The tasks Vayme has run, saved so the user can reopen one and continue it. Local only.
     /// </summary>
     public AgentTaskStore AgentTasks { get; } = new();
+
+    /// <summary>
+    /// Keeps this install current. Vayme fetches and applies its own updates rather than
+    /// waiting to be reinstalled, because the people running it are not the people who
+    /// follow the repo — a fix they never hear about is a fix they never get.
+    /// </summary>
+    public UpdateChecker Updates { get; } = new();
 
     /// <summary>Raised when a saved task should be shown on its floating card.</summary>
     public event Action<SavedAgentTask>? AgentCardRequested;
@@ -342,7 +370,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
     private Guid? _currentAgentTaskId;
 
     /// <summary>
-    /// How long after a task Nayf still treats a new mission as part of it, when the model
+    /// How long after a task Vayme still treats a new mission as part of it, when the model
     /// hasn't said either way. A backstop under the [MISSION-CONTINUE] tag: the tag is the
     /// real signal, and this only catches the case where the model forgot to send it but
     /// the user is plainly still on the same thing.
@@ -356,7 +384,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
 
     private static string BuildSystemPrompt() =>
         """
-        You are Nayf, an intelligent AI companion that lives on the user's desktop.
+        You are Vayme, an intelligent AI companion that lives on the user's desktop.
         You can see the user's screen and help them with anything they're working on.
 
         You are friendly, concise, and genuinely helpful. You speak naturally, as if you're
@@ -409,7 +437,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
         The user's GitHub:
         Use the github_* tools for their issues and pull requests — never the `gh` CLI or
         git, which act as whatever account this PC is configured with rather than the one
-        they connected to Nayf. github_list_issues and github_list_pull_requests take no
+        they connected to Vayme. github_list_issues and github_list_pull_requests take no
         arguments and already scope to them. github_create_issue needs owner and repo; ask
         which repository if it isn't clear rather than guessing one.
 
@@ -569,11 +597,21 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
                     SetVoiceState(CompanionVoiceState.Idle);
             });
         };
+
+        // An update replaces the running executable, so it has to wait for a moment
+        // where nothing is lost by Vayme disappearing for a few seconds. Idle alone
+        // isn't enough: an agent task runs with the voice pipeline at rest, and a
+        // confirmation prompt is a question already asked of the user.
+        Updates.IsSafeToRestart = () =>
+            VoiceState == CompanionVoiceState.Idle &&
+            AgentManager.MissionText == null &&
+            AgentManager.PendingConfirmationRequest == null;
     }
 
     public void StartAsync()
     {
         _pushToTalkMonitor.Start();
+        Updates.Start();
         _ = FetchCreditBalanceAsync();
         // Ask up front which providers the account has connected, so the panel opens
         // already knowing — rather than showing "Connect" to someone who connected
@@ -590,7 +628,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
     {
         // Recording stops; anything else starts a new one — including mid-answer, where
         // the button interrupts exactly as the chord does. A mic button that goes dead the
-        // moment Nayf starts talking would be the one place it can't be told to stop.
+        // moment Vayme starts talking would be the one place it can't be told to stop.
         if (VoiceState == CompanionVoiceState.Listening)
             OnPushToTalkReleased();
         else
@@ -709,9 +747,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
     /// Exchanges the app was closed on. Written at shutdown and read at the next launch,
     /// because the alternative at that point is a network call racing the process exit.
     /// </summary>
-    private static string PendingMemoryPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "Nayf", "pending-memory.json");
+    private static string PendingMemoryPath => AppPaths.InDataDirectory("pending-memory.json");
 
     /// <summary>
     /// Stops any countdown in flight. Call sites hold <see cref="_memoryGate"/>: cancelling
@@ -798,7 +834,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
     }
 
     /// <summary>
-    /// Asks Claude, in the background, what out of a batch of conversation Nayf should still
+    /// Asks Claude, in the background, what out of a batch of conversation Vayme should still
     /// know weeks from now, and applies its answer to the store.
     /// </summary>
     private async Task ExtractMemoriesAsync(IReadOnlyList<PendingExchange> exchanges, string authToken)
@@ -806,9 +842,9 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
         try
         {
             const string system = """
-                You decide what Nayf should still know about this user weeks from now.
+                You decide what Vayme should still know about this user weeks from now.
 
-                The test is not "is this true" or "is this new". It is: if Nayf forgot this,
+                The test is not "is this true" or "is this new". It is: if Vayme forgot this,
                 would the user have to explain themselves again? Almost nothing passes that
                 test. Returning nothing is the normal, correct answer for most conversations —
                 return it without hesitation.
@@ -817,7 +853,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
                   - Who they are and what they do: name, role, company, field.
                   - Long-running work: a project, a product, a course, a recurring responsibility.
                   - Tools and environment they work in habitually.
-                  - Standing preferences they have stated about how Nayf should behave.
+                  - Standing preferences they have stated about how Vayme should behave.
                   - Constraints that persist: a language they want used, an accessibility need,
                     hardware limits.
 
@@ -898,7 +934,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
             Logger.Log("Memory", $"read {exchanges.Count} exchange(s) → " +
                                  $"{added.Count} to remember");
 
-            // Memory is the one thing Nayf changes that the user never asked it to, so the
+            // Memory is the one thing Vayme changes that the user never asked it to, so the
             // toast is the only place they find out it happened. It brings the chime with
             // it, which is affordable now that the answer is usually nothing: a receipt for
             // something unusual, rather than a noise at the end of every exchange.
@@ -983,7 +1019,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
         if (VoiceState == CompanionVoiceState.Listening) return;
 
         // Instant audible feedback as the status pill springs up. After the guard, not
-        // before it: a press Nayf is going to ignore shouldn't sound like it was heard.
+        // before it: a press Vayme is going to ignore shouldn't sound like it was heard.
         NayfSoundPlayer.Shared.PlayPushToTalkActivate();
 
         // Claimed before anything is torn down. The outgoing turn passes through states on
@@ -992,7 +1028,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
         SetVoiceState(CompanionVoiceState.Listening);
 
         // Thinking or halfway through a sentence, whatever is in flight goes now. Someone
-        // who starts talking over Nayf is not adding to the last question, they are
+        // who starts talking over Vayme is not adding to the last question, they are
         // replacing it — and "stop" only means anything if the thing being asked to stop
         // is actually stopped rather than left to finish and then answer.
         //
@@ -1004,7 +1040,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
 
         // The voice stops either way. Mid-step or mid-answer, talking over someone who has
         // just started speaking is the one thing a push-to-talk press must never leave
-        // Nayf doing.
+        // Vayme doing.
         _elevenLabsTTSClient.StopPlayback();
 
         // Mid-step the marks are not last turn's leftovers — they are the step the user is
@@ -1027,17 +1063,25 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
         catch (Exception ex)
         {
             Logger.Log("CompanionManager", $"Failed to start recording: {ex}");
-
-            // HRESULT 0x80045509 — "speech privacy policy was not accepted" —
-            // means the user hasn't turned on Online speech recognition yet.
-            if (ex is System.Runtime.InteropServices.COMException comEx &&
-                (uint)comEx.HResult == 0x80045509)
-            {
-                MicrophonePermissionNeeded = true;
-            }
-
+            ShowSpeechProblem(ex);
             SetVoiceState(RestingState);
         }
+    }
+
+    /// <summary>
+    /// Puts the reason speech would not start in front of the user.
+    ///
+    /// Nothing is allowed to fail quietly here. A press that produces no sound, no pill
+    /// and no banner reads as a hotkey Vayme never received, and sends the user looking
+    /// for the fault in the one place it is not.
+    /// </summary>
+    private void ShowSpeechProblem(Exception ex)
+    {
+        var problem = ex as SpeechUnavailableException;
+        SpeechProblem = problem?.Problem ?? SpeechProblem.Unknown;
+        SpeechProblemMessage = problem?.Message
+            ?? "Windows would not start speech recognition, so Vayme cannot hear you.";
+        MicrophonePermissionNeeded = true;
     }
 
     /// <summary>
@@ -1101,7 +1145,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
         {
             // A crop waiting on a turn that produced no words means the user circled
             // something and said nothing. That is allowed — the crop keeps until their next
-            // question — but without a word from Nayf the gesture has no visible result at
+            // question — but without a word from Vayme the gesture has no visible result at
             // all, which is indistinguishable from the lasso having failed.
             if (_pendingFocusRegionImage != null) NayfActionToast.ShowRegionFocused();
 
@@ -1130,7 +1174,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
     // MARK: - Capabilities showcase
 
     /// <summary>
-    /// Whether the user just asked what Nayf can do.
+    /// Whether the user just asked what Vayme can do.
     /// </summary>
     /// <remarks>
     /// Phrase matching with a word ceiling rather than anything cleverer, because the failure
@@ -1308,7 +1352,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
 
     /// <summary>
     /// Saves the finished turn as an agent task, or folds it into the one it continues.
-    /// Only missions are kept: a question Nayf answered is not a task, and a card for every
+    /// Only missions are kept: a question Vayme answered is not a task, and a card for every
     /// answer would bury the handful the user actually wants to come back to.
     /// </summary>
     private void SaveOrUpdateAgentTask(Guid? resumingTaskId, ConversationTurn turn, string spokenText)
@@ -1326,7 +1370,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
             return;
         }
 
-        // The turn changed, corrected, or undid what Nayf just did — same task, new outcome.
+        // The turn changed, corrected, or undid what Vayme just did — same task, new outcome.
         // Either the model tagged it, or it is a fresh mission close enough in time that
         // treating it as separate would split one job across two tiles.
         var current = _currentAgentTaskId is { } currentId ? AgentTasks.Task(currentId) : null;
@@ -1340,7 +1384,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
             return;
         }
 
-        // A new task — either genuinely new, or a continuation whose predecessor Nayf has
+        // A new task — either genuinely new, or a continuation whose predecessor Vayme has
         // no record of, because it was done before the tasks were being saved or has since
         // been deleted. That work is no less real for having lost the thread it belongs to,
         // so it is filed under the label the continuation carries rather than dropped.
@@ -1460,7 +1504,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
             // Route through the agent loop: Claude may call tools (PowerShell,
             // files, computer control) before answering, or just respond/point
             // normally. Either way it returns the final text for TTS. The system
-            // prompt carries what Nayf remembers about the user.
+            // prompt carries what Vayme remembers about the user.
             // Voice turns always carry screenshots and can point/draw → screen model.
             RouteModel(turnUsesScreenCoordinates: true);
 
@@ -1549,13 +1593,13 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
             // somewhere arbitrary; saying the answer without pointing is the honest version.
             if (focusRegionImage == null) ParseAndApplyPointTags(responseText, screenshots);
 
-            // Speak the response with its tags removed — read aloud they would have Nayf
+            // Speak the response with its tags removed — read aloud they would have Vayme
             // announce its own bookkeeping.
             var ttsText = NayfResponseText.Clean(responseText);
 
             // Persist the outcome so the user can reopen this task and carry on with it.
             // Placed here because it needs both the cleaned spoken text as its summary and
-            // the mission label, which is cleared once Nayf stops talking.
+            // the mission label, which is cleared once Vayme stops talking.
             SaveOrUpdateAgentTask(resumingTaskId, completedTurn, ttsText);
 
             // Let the acknowledgment finish first. SpeakAsync stops whatever is playing,
@@ -1593,7 +1637,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
     /// no spoken answer, so there is no wait to fill.
     ///
     /// The grace delay is the whole design. A turn that answers in under a second needs no
-    /// preamble, and speaking one would make Nayf slower to listen to than it actually is.
+    /// preamble, and speaking one would make Vayme slower to listen to than it actually is.
     /// So the request goes out immediately — that latency is unavoidable — but the decision
     /// to *say* it is deferred until the real turn has had its chance to win outright.
     ///
@@ -1771,7 +1815,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
     }
 
     /// <summary>
-    /// The step currently on screen, or null when Nayf isn't waiting on the user.
+    /// The step currently on screen, or null when Vayme isn't waiting on the user.
     ///
     /// Doubles as the marker that a spoken or typed answer belongs to the walkthrough
     /// rather than starting a new turn — it outlives the voice state, which passes through
@@ -1917,7 +1961,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
     /// Says the step's one sentence, starting at beat 2.
     ///
     /// Fired without being awaited: the step is waiting on the user, not on the speaker,
-    /// and someone who already knows where to click should be able to click it while Nayf
+    /// and someone who already knows where to click should be able to click it while Vayme
     /// is still talking.
     /// </summary>
     private async Task SpeakStepInstructionAsync(WalkthroughStep step, CancellationToken ct)
@@ -1964,7 +2008,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
     /// <summary>
     /// A click landed somewhere while a step was waiting for one.
     ///
-    /// Only a click on the thing Nayf pointed at counts. Advancing on any click anywhere
+    /// Only a click on the thing Vayme pointed at counts. Advancing on any click anywhere
     /// means the user's own taskbar, a stray click in another window, or their attempt to
     /// focus the app all skip a step they never performed — and the walkthrough carries on
     /// describing a screen that never changed.
@@ -1980,7 +2024,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
 
     /// <summary>
     /// True when a click is close enough to count as the step being done: inside the
-    /// target's bounds, or near the point Nayf pointed at when it was given no bounds.
+    /// target's bounds, or near the point Vayme pointed at when it was given no bounds.
     /// </summary>
     private static bool IsClickOnTarget(WalkthroughStep step, System.Drawing.Point point)
     {
@@ -2064,9 +2108,12 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
     }
 
     /// <summary>
-    /// While the mic-permission banner is shown, periodically checks whether the
-    /// user has accepted the "Online speech recognition" privacy policy and
-    /// clears the banner automatically once they have — no need to retry Ctrl+Alt.
+    /// While the banner is shown, watches for the user fixing the thing it named and
+    /// takes it down as soon as they have — no need to retry Ctrl+Alt to find out.
+    ///
+    /// Only the two switches can be watched this way. A language Windows cannot dictate
+    /// leaves the banner up until the next press, because changing the speech language
+    /// does not settle at the moment the setting is written.
     /// </summary>
     private void StartMicPermissionPolling()
     {
@@ -2088,7 +2135,14 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
                     break;
                 }
 
-                if (IsOnlineSpeechRecognitionAccepted())
+                bool resolved = SpeechProblem switch
+                {
+                    SpeechProblem.OnlineSpeechOff => SpeechDiagnostics.IsOnlineSpeechAccepted(),
+                    SpeechProblem.MicrophoneBlocked => SpeechDiagnostics.IsMicrophoneAllowed(),
+                    _ => false
+                };
+
+                if (resolved)
                 {
                     UpdateOnUI(() => MicrophonePermissionNeeded = false);
                     break;
@@ -2103,34 +2157,19 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
         _micPermissionPollCts = null;
     }
 
-    private static bool IsOnlineSpeechRecognitionAccepted()
-    {
-        try
-        {
-            var value = Microsoft.Win32.Registry.GetValue(
-                @"HKEY_CURRENT_USER\SOFTWARE\Microsoft\Speech_OneCore\Settings\OnlineSpeechPrivacy",
-                "HasAccepted", 0);
-            return value is int accepted && accepted == 1;
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
     private void SetVoiceState(CompanionVoiceState state)
     {
         VoiceState = state;
         if (state == CompanionVoiceState.Idle)
             AudioPowerLevel = 0f;
 
-        // "Thinking deeper" only means anything while Nayf is actually thinking. Every
+        // "Thinking deeper" only means anything while Vayme is actually thinking. Every
         // other state — speaking, listening, waiting on the user, idle — has to clear it,
         // or it outranks the real status in the pill and sticks there.
         if (state != CompanionVoiceState.Processing)
             DeepThinkingLabel = null;
 
-        // The mission outlives the work by design — it stays up while Nayf speaks its
+        // The mission outlives the work by design — it stays up while Vayme speaks its
         // summary, so the pill still names the job the user is being told about. Idle is
         // where that ends; left standing it would title the next unrelated turn.
         if (state == CompanionVoiceState.Idle)
@@ -2159,5 +2198,6 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
         _watchdogCts?.Cancel();
         _micPermissionPollCts?.Cancel();
         _creditsHttp.Dispose();
+        Updates.Dispose();
     }
 }

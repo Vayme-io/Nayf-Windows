@@ -71,8 +71,8 @@ public class AgentTurnResult
 // There is deliberately no AgentStep type here any more, and no step list in the panel.
 // It showed a row per screenshot taken and per round trip with the model, each carrying the
 // first hundred characters of what the tool returned — the instructions written for the
-// model, and on a walkthrough step the user's own words quoted back at them. What Nayf is
-// doing belongs in the status pill; what Nayf has to say belongs in the panel; how it got
+// model, and on a walkthrough step the user's own words quoted back at them. What Vayme is
+// doing belongs in the status pill; what Vayme has to say belongs in the panel; how it got
 // there belongs in the log.
 
 /// <summary>
@@ -94,7 +94,7 @@ public class AgentConfirmationRequest
 public enum WalkthroughWaitFor
 {
     /// <summary>
-    /// The step is a single click on a known spot, so Nayf watches for that click and
+    /// The step is a single click on a known spot, so Vayme watches for that click and
     /// carries on by itself.
     /// </summary>
     Click,

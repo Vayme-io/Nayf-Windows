@@ -8,7 +8,7 @@
                 <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls"/>
             </ResourceDictionary.MergedDictionaries>
 
-            <!-- Nayf Design System Colors -->
+            <!-- Vayme Design System Colors -->
             <Color x:Key="NayfBlue">#FF007AFF</Color>
             <Color x:Key="NayfBackground">#FF1C1C1E</Color>
             <Color x:Key="NayfSurface">#FF2C2C2E</Color>

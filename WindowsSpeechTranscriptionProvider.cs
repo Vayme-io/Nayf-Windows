@@ -1,9 +1,45 @@
 using System;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Windows.Media.SpeechRecognition;
 
 namespace NayfWindows;
+
+/// <summary>
+/// Why Windows would not start listening, in the terms the user has to act in.
+/// Each one is a different page of Settings and a different sentence to show.
+/// </summary>
+public enum SpeechProblem
+{
+    /// <summary>Online speech recognition is switched off in the privacy settings.</summary>
+    OnlineSpeechOff,
+
+    /// <summary>Windows is refusing the microphone to desktop apps, or to this user.</summary>
+    MicrophoneBlocked,
+
+    /// <summary>There is no dictation engine for the speech language this PC is set to.</summary>
+    LanguageUnsupported,
+
+    /// <summary>Anything else: a broken install, an N edition with no media pack, a dead device.</summary>
+    Unknown
+}
+
+/// <summary>
+/// Speech could not be started, carrying a reason the panel can put in front of the user.
+///
+/// Every one of these used to surface as a log line and nothing else. The chord was held,
+/// the pill flashed for an instant and Vayme went back to idle without saying why, which
+/// from the outside is indistinguishable from a hotkey that never arrived at all. That is
+/// exactly how the first report of it was worded: nothing happens.
+/// </summary>
+public sealed class SpeechUnavailableException : Exception
+{
+    public SpeechUnavailableException(SpeechProblem problem, string message, Exception? innerException = null)
+        : base(message, innerException) => Problem = problem;
+
+    public SpeechProblem Problem { get; }
+}
 
 /// <summary>
 /// Speech transcription provider using the Windows built-in speech engine
@@ -25,7 +61,7 @@ public sealed class WindowsSpeechTranscriptionProvider : IDisposable
     /// How long <c>StopAsync</c> gets before it is left to finish on its own. It normally
     /// returns in milliseconds, but a recognizer that has been fed noise instead of speech
     /// can sit inside it for the better part of a minute — and the entire turn queues behind
-    /// that call, so the user watches Nayf think hard about a question it has not been handed
+    /// that call, so the user watches Vayme think hard about a question it has not been handed
     /// yet, and then answer nothing.
     /// </summary>
     private static readonly TimeSpan StopTimeout = TimeSpan.FromMilliseconds(1500);
@@ -39,19 +75,51 @@ public sealed class WindowsSpeechTranscriptionProvider : IDisposable
     /// </summary>
     public async Task StartSessionAsync(CancellationToken cancellationToken = default)
     {
-        _recognizer = new SpeechRecognizer();
+        LogEnvironment();
+
+        // Asked before anything is opened, because once Windows is refusing, every cause
+        // reports the same couple of statuses. Order matters: dictation is a cloud grammar,
+        // so with the privacy policy unaccepted the list of languages Windows says it can
+        // dictate is not worth reading — and sending someone to change their language when
+        // the real answer is a switch on another page is worse than telling them nothing.
+        RequirePermissions();
+        RequireDictationLanguage();
+
+        try
+        {
+            _recognizer = new SpeechRecognizer();
+        }
+        catch (Exception ex)
+        {
+            throw Classify(ex, "Windows could not open its speech recognizer");
+        }
 
         // Use a free-form dictation constraint — recognizes any spoken words
         var dictationConstraint = new SpeechRecognitionTopicConstraint(
             SpeechRecognitionScenario.Dictation, "dictation");
         _recognizer.Constraints.Add(dictationConstraint);
 
-        var compilationResult = await _recognizer.CompileConstraintsAsync();
+        SpeechRecognitionCompilationResult compilationResult;
+        try
+        {
+            compilationResult = await _recognizer.CompileConstraintsAsync();
+        }
+        catch (Exception ex)
+        {
+            throw Classify(ex, "Windows could not prepare speech recognition");
+        }
+
         if (compilationResult.Status != SpeechRecognitionResultStatus.Success)
         {
-            throw new InvalidOperationException(
-                $"Failed to compile speech constraints: {compilationResult.Status}. " +
-                "Make sure Windows Speech Recognition is enabled in Settings → Time & Language → Speech.");
+            Logger.Log("WindowsSpeech", $"Constraint compile failed: {compilationResult.Status}");
+
+            // Dictation is a cloud grammar, so with the privacy policy unaccepted it will
+            // not compile — and the status Windows returns for that says nothing about
+            // privacy. Reading the switch itself is what turns this into an instruction.
+            throw SpeechDiagnostics.IsOnlineSpeechAccepted()
+                ? new SpeechUnavailableException(SpeechProblem.Unknown,
+                    $"Windows would not prepare speech recognition ({compilationResult.Status})")
+                : OnlineSpeechOff();
         }
 
         _firstResultTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -62,13 +130,117 @@ public sealed class WindowsSpeechTranscriptionProvider : IDisposable
         // — invaluable for diagnosing empty transcripts.
         _recognizer.RecognitionQualityDegrading += OnQualityDegrading;
 
-        // Default (not PauseOnRecognition) so the recognizer keeps transcribing
-        // a whole spoken sentence instead of pausing after the first phrase.
-        await _recognizer.ContinuousRecognitionSession.StartAsync(
-            SpeechContinuousRecognitionMode.Default);
+        try
+        {
+            // Default (not PauseOnRecognition) so the recognizer keeps transcribing
+            // a whole spoken sentence instead of pausing after the first phrase.
+            await _recognizer.ContinuousRecognitionSession.StartAsync(
+                SpeechContinuousRecognitionMode.Default);
+        }
+        catch (Exception ex)
+        {
+            throw Classify(ex, "Windows would not start listening");
+        }
 
         _isSessionActive = true;
     }
+
+    /// <summary>
+    /// Writes the state of everything speech depends on to the log, once per press.
+    ///
+    /// It is three registry reads and two property reads, and it is the difference
+    /// between a support conversation that needs the machine in front of you and one
+    /// answered from a log file the user already has on their desktop.
+    /// </summary>
+    private static void LogEnvironment()
+    {
+        try
+        {
+            var language = SpeechRecognizer.SystemSpeechLanguage;
+            Logger.Log("WindowsSpeech",
+                $"speechLanguage={language?.LanguageTag ?? "none"} " +
+                $"dictation={(language != null && IsDictationLanguage(language.LanguageTag) ? "yes" : "no")} " +
+                $"onlineSpeechAccepted={SpeechDiagnostics.IsOnlineSpeechAccepted()} " +
+                $"mic[{SpeechDiagnostics.DescribeMicrophoneAccess()}]");
+        }
+        catch (Exception ex)
+        {
+            Logger.Log("WindowsSpeech", $"Could not read speech environment: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// The two switches that have to be on before Windows will listen for anybody.
+    ///
+    /// Checked up front rather than waited for, because both of them fail late and
+    /// indistinguishably: the recognizer opens, the constraint refuses to compile, and the
+    /// status says only that the topic language is unsupported.
+    /// </summary>
+    private static void RequirePermissions()
+    {
+        if (!SpeechDiagnostics.IsOnlineSpeechAccepted())
+            throw OnlineSpeechOff();
+
+        if (!SpeechDiagnostics.IsMicrophoneAllowed())
+            throw new SpeechUnavailableException(SpeechProblem.MicrophoneBlocked,
+                "Windows is not letting Vayme use the microphone. Allow microphone access " +
+                "for desktop apps and hold Ctrl and Alt again.");
+    }
+
+    /// <summary>
+    /// Windows dictates a shorter list of languages than it displays in, and it reports only
+    /// the ones whose speech pack is actually on the machine. The recognizer takes the PC's
+    /// speech language rather than one we choose, so a PC set to a language off that list can
+    /// never dictate, however many permissions are granted.
+    /// </summary>
+    private static void RequireDictationLanguage()
+    {
+        var language = SpeechRecognizer.SystemSpeechLanguage;
+        if (language == null)
+            throw new SpeechUnavailableException(SpeechProblem.LanguageUnsupported,
+                "Windows has no speech language set on this PC, so it cannot dictate.");
+
+        if (IsDictationLanguage(language.LanguageTag)) return;
+
+        throw new SpeechUnavailableException(SpeechProblem.LanguageUnsupported,
+            $"Windows cannot dictate in {language.DisplayName}, the speech language this PC is " +
+            "set to. Pick one it does dictate, English for instance, under Speech in Settings.");
+    }
+
+    private static bool IsDictationLanguage(string languageTag) =>
+        SpeechRecognizer.SupportedTopicLanguages.Any(
+            supported => string.Equals(supported.LanguageTag, languageTag, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Turns whatever Windows threw into something worth showing.
+    ///
+    /// The HRESULT alone rarely settles it, so where it is not conclusive the switches are
+    /// read directly. The raw code is kept on the message either way: an unrecognized
+    /// failure that at least names itself can be looked up, and a silent one cannot.
+    /// </summary>
+    private static SpeechUnavailableException Classify(Exception ex, string what)
+    {
+        uint hresult = unchecked((uint)ex.HResult);
+        Logger.Log("WindowsSpeech", $"{what}: 0x{hresult:X8} {ex.Message}");
+
+        // 0x80045509 is "the speech privacy policy was not accepted prior to attempting a
+        // remote recognition" — Windows saying this outright rather than by omission.
+        if (hresult == 0x80045509 || !SpeechDiagnostics.IsOnlineSpeechAccepted())
+            return OnlineSpeechOff(ex);
+
+        if (hresult == 0x80070005 || !SpeechDiagnostics.IsMicrophoneAllowed())
+            return new SpeechUnavailableException(SpeechProblem.MicrophoneBlocked,
+                "Windows is not letting Vayme use the microphone. Allow microphone access " +
+                "for desktop apps and try again.", ex);
+
+        return new SpeechUnavailableException(SpeechProblem.Unknown,
+            $"{what} (0x{hresult:X8}).", ex);
+    }
+
+    private static SpeechUnavailableException OnlineSpeechOff(Exception? innerException = null) =>
+        new(SpeechProblem.OnlineSpeechOff,
+            "Windows has online speech recognition turned off, so Vayme cannot hear you. " +
+            "Turn it on and hold Ctrl and Alt again.", innerException);
 
     /// <summary>
     /// Stops the recognition session and fires TranscriptReceived with the final text.

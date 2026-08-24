@@ -8,7 +8,7 @@ using NAudio.Wave.SampleProviders;
 namespace NayfWindows;
 
 /// <summary>
-/// Plays Nayf's small UI sound effects (the same MP3s the Mac bundles). Each effect is
+/// Plays Vayme's small UI sound effects (the same MP3s the Mac bundles). Each effect is
 /// decoded once at startup and reused, so playback is instant with no first-hit disk or
 /// decoder latency. Fire-and-forget: a missing file or a decode error just plays nothing.
 /// Port of NayfSoundPlayer.swift.
@@ -66,7 +66,7 @@ public sealed class NayfSoundPlayer : IDisposable
     /// <summary>Plays the push-to-talk release blip after a short lead-in (~100 ms).</summary>
     public void PlayPushToTalkRelease() => PlayAfter(_pushToTalkReleaseSamples, ReleaseLeadIn);
 
-    /// <summary>Plays the completion chime once Nayf has finished doing something.</summary>
+    /// <summary>Plays the completion chime once Vayme has finished doing something.</summary>
     public void PlayTaskComplete() => PlayAfter(_taskCompleteSamples, TimeSpan.Zero);
 
     private void PlayAfter(float[]? samples, TimeSpan leadIn)

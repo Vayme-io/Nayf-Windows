@@ -15,7 +15,7 @@ public sealed class CapabilityRowModel
     public string Title = "";
     public string Blurb = "";
 
-    /// <summary>0 at rest, 1 while Nayf is saying this line.</summary>
+    /// <summary>0 at rest, 1 while Vayme is saying this line.</summary>
     public float Emphasis;
 
     /// <summary>0 at full strength, 1 pushed back behind whichever row is lit.</summary>
@@ -33,7 +33,7 @@ public sealed class CapabilitiesShowcaseModel
 
 /// <summary>
 /// Draws the capabilities card — the Windows counterpart of the Mac's
-/// NayfCapabilitiesShowcase.swift. A list of the things Nayf can do, which Nayf reads out
+/// NayfCapabilitiesShowcase.swift. A list of the things Vayme can do, which Vayme reads out
 /// loud, lighting each row as it reaches it.
 ///
 /// <para>Dressed in CompanionPanelWindow's tokens for the same reason
@@ -276,7 +276,7 @@ public static class NayfCapabilitiesShowcaseArt
     }
 
     /// <summary>
-    /// Nayf's own mark in an accent tile, then the headline and the shortcut that gets Nayf
+    /// Vayme's own mark in an accent tile, then the headline and the shortcut that gets Vayme
     /// listening — the one line on the card the user has to know to use any of the rest.
     /// </summary>
     private static void DrawHeader(Graphics g, NayfGdiText text, CapabilitiesShowcaseModel model,
@@ -319,7 +319,7 @@ public static class NayfCapabilitiesShowcaseArt
         float height = RowHeight * scale;
         float lit = Math.Clamp(row.Emphasis, 0f, 1f);
 
-        // Everything on a row fades together as it recedes, so a row Nayf has moved on from
+        // Everything on a row fades together as it recedes, so a row Vayme has moved on from
         // steps back as one thing rather than coming apart into its pieces.
         float strength = 1f - (1f - RecedeFloor) * Math.Clamp(row.Recede, 0f, 1f);
 

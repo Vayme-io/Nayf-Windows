@@ -6,3 +6,6 @@ obj/
 # Publish output and compiled installer (build artifacts)
 publish/
 installer/Output/
+
+# Local wrangler cache, written when release.ps1 uploads to R2
+.wrangler/

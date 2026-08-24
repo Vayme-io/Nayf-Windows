@@ -3,7 +3,7 @@ using System.Collections.Generic;
 namespace NayfWindows;
 
 /// <summary>
-/// What Nayf tells the user it can do, when they ask. Read out loud by
+/// What Vayme tells the user it can do, when they ask. Read out loud by
 /// <see cref="NayfCapabilitiesShowcase"/> and drawn by
 /// <see cref="NayfCapabilitiesShowcaseArt"/>.
 ///
@@ -13,7 +13,7 @@ namespace NayfWindows;
 /// </summary>
 public static class NayfCapabilities
 {
-    /// <summary>One ability: how it's drawn, and the sentence Nayf says about it.</summary>
+    /// <summary>One ability: how it's drawn, and the sentence Vayme says about it.</summary>
     /// <param name="Glyph">Segoe Fluent Icons code point.</param>
     /// <param name="Title">The card's line.</param>
     /// <param name="Blurb">The card's caption under it.</param>
@@ -32,7 +32,7 @@ public static class NayfCapabilities
     /// <para>Not the same six as the Mac's. Two of those aren't here: dictating into any text
     /// field, which this version has no equivalent of, and Skills, which hasn't been ported.
     /// In their place are the two things this version does that the Mac showcase never had to
-    /// mention — the guided walkthrough, where Nayf outlines a control and lets the user press
+    /// mention — the guided walkthrough, where Vayme outlines a control and lets the user press
     /// it themselves, and holding Shift to circle one part of the screen. A card advertising
     /// features the app doesn't have would be worse than no card at all.</para>
     ///

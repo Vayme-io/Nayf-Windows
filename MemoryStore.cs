@@ -10,9 +10,9 @@ using System.Text.Json.Serialization;
 namespace NayfWindows;
 
 /// <summary>
-/// A local store of durable facts Nayf has learned about the user. Persisted to
-/// %LOCALAPPDATA%\Nayf\memories.json, shown in the Memory tab, and injected into
-/// the system prompt so Nayf remembers across sessions. This is the client-side
+/// A local store of durable facts Vayme has learned about the user. Persisted to
+/// %LOCALAPPDATA%\Vayme\memories.json, shown in the Memory tab, and injected into
+/// the system prompt so Vayme remembers across sessions. This is the client-side
 /// equivalent of the Mac app's server-side memory.
 /// </summary>
 public sealed class MemoryStore : INotifyPropertyChanged
@@ -43,10 +43,7 @@ public sealed class MemoryStore : INotifyPropertyChanged
 
     public MemoryStore()
     {
-        var dir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Nayf");
-        Directory.CreateDirectory(dir);
-        _path = Path.Combine(dir, "memories.json");
+        _path = AppPaths.InDataDirectory("memories.json");
         Load();
     }
 
@@ -116,7 +113,7 @@ public sealed class MemoryStore : INotifyPropertyChanged
     /// <summary>
     /// Adds a fact if it isn't already known (case-insensitive).
     ///
-    /// <para>A fact Nayf is told again is not a duplicate to be dropped on the floor — it is
+    /// <para>A fact Vayme is told again is not a duplicate to be dropped on the floor — it is
     /// the user confirming it still holds, which is the only evidence there is that a fact
     /// is worth its place. Restating one moves it to the back of the eviction queue.</para>
     /// </summary>
@@ -192,7 +189,7 @@ public sealed class MemoryStore : INotifyPropertyChanged
         OnChanged();
     }
 
-    /// <summary>The block appended to the system prompt so Nayf recalls the user.</summary>
+    /// <summary>The block appended to the system prompt so Vayme recalls the user.</summary>
     public string ContextBlock()
     {
         if (Memories.Count == 0) return "";

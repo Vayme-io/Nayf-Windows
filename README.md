@@ -1,10 +1,10 @@
-# Nayf for Windows
+# Vayme for Windows
 
-Native WinUI 3 Windows port of the Nayf AI cursor companion.
+Native WinUI 3 Windows port of the Vayme AI cursor companion.
 
 ## What it does
 
-Nayf is a smart AI companion that lives on your desktop. It:
+Vayme is a smart AI companion that lives on your desktop. It:
 
 - Sits in the **system tray** — click to open the companion panel
 - Listens via **push-to-talk** (Ctrl+Alt) using your microphone
@@ -51,12 +51,12 @@ This is a direct Windows port of the macOS Swift/SwiftUI app, with identical arc
 | `NayfAgentManager.cs` | Agentic tool-use loop orchestrator |
 | `NayfAgentToolExecutor.cs` | Tool executor: PowerShell, file I/O, computer control |
 | `SelectedTextReader.cs` | UI Automation COM interop for reading selected text |
-| `ScreenCaptureUtility.cs` | Multi-monitor GDI BitBlt screenshot capture → JPEG, with Nayf's own windows hidden |
+| `ScreenCaptureUtility.cs` | Multi-monitor GDI BitBlt screenshot capture → JPEG, with Vayme's own windows hidden |
 | `NayfConfig.cs` | Worker URL and all configuration constants |
 
 ## Installing it
 
-Just want to run Nayf? See **[INSTALL.md](INSTALL.md)** — download the installer and
+Just want to run Vayme? See **[INSTALL.md](INSTALL.md)** — download the installer and
 go. Nothing to install first: released builds carry their own copy of .NET and the
 Windows App SDK.
 

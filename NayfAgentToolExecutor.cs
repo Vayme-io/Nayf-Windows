@@ -25,12 +25,12 @@ public sealed class AgentToolResult
 public enum NayfToolMode
 {
     /// <summary>
-    /// Teaching. Nayf shows and speaks; the user performs every action themselves.
+    /// Teaching. Vayme shows and speaks; the user performs every action themselves.
     /// Looking and pointing only — never actuation.
     /// </summary>
     GuidedWalkthrough,
 
-    /// <summary>Background automation the user asked Nayf to carry out. Nayf acts.</summary>
+    /// <summary>Background automation the user asked Vayme to carry out. Vayme acts.</summary>
     AgentTask
 }
 
@@ -39,7 +39,7 @@ public enum NayfToolMode
 /// Mirrors NayfAgentToolExecutor.swift.
 /// Destructive shell commands require user confirmation before execution.
 ///
-/// Nothing here drives the mouse or the keyboard. Nayf points at what the user should
+/// Nothing here drives the mouse or the keyboard. Vayme points at what the user should
 /// click and the user clicks it — in every mode, not just while teaching.
 /// </summary>
 public sealed class NayfAgentToolExecutor
@@ -285,7 +285,7 @@ public sealed class NayfAgentToolExecutor
             if (response.IsSuccessStatusCode) return new IntegrationResult(responseText, IsError: false);
             if ((int)response.StatusCode == 409)
                 return new IntegrationResult(
-                    "That integration isn't connected yet. Tell the user to open Nayf, click \"Connect apps\", and connect it — then they can ask again.",
+                    "That integration isn't connected yet. Tell the user to open Vayme, click \"Connect apps\", and connect it — then they can ask again.",
                     IsError: true);
 
             return new IntegrationResult(
@@ -367,7 +367,7 @@ public sealed class NayfAgentToolExecutor
     /// The old control-the-computer tool, now reduced to its one harmless action.
     ///
     /// It is no longer offered in any mode, and the code that moved the cursor, clicked,
-    /// typed and pressed keys is gone rather than gated — Nayf shows the user where to
+    /// typed and pressed keys is gone rather than gated — Vayme shows the user where to
     /// click and they click it, in every mode, so there is nothing for that code to do.
     /// Still handled here because the model has been asking for this tool for a long time
     /// and may name it out of habit; being told to point is more use to it than "unknown
@@ -378,9 +378,9 @@ public sealed class NayfAgentToolExecutor
         var action = input.TryGetValue("action", out var actionObj) ? actionObj?.ToString() ?? "" : "";
         if (action == "screenshot") return await TakeScreenshotAsync();
 
-        Logger.Log("AgentTools", $"refused computer action '{action}' — Nayf never actuates");
+        Logger.Log("AgentTools", $"refused computer action '{action}' — Vayme never actuates");
         return AgentToolResult.Message(
-            "Nayf never controls the mouse or keyboard. Don't click, type, drag, or press " +
+            "Vayme never controls the mouse or keyboard. Don't click, type, drag, or press " +
             "keys on the user's behalf — there is no tool for it. Tell them what to click " +
             "and point at it with a [POINT] tag, and let them do it themselves.");
     }
@@ -485,7 +485,7 @@ public sealed class NayfAgentToolExecutor
     /// Matching is on the command that *starts* each statement, never on the raw text.
     /// A plain substring search reads far too much as dangerous: "format-" matches
     /// Format-Table, the most common way to print anything in PowerShell; "del " sits
-    /// inside "model "; "rd " inside "keyboard "; "kill " inside "skill ". Nayf ended
+    /// inside "model "; "rd " inside "keyboard "; "kill " inside "skill ". Vayme ended
     /// up asking permission to list a folder, which teaches the user to approve
     /// without reading — the opposite of what a confirmation is for.
     /// </summary>
@@ -604,7 +604,7 @@ public sealed class NayfAgentToolExecutor
     }
 
     // There is deliberately no P/Invoke to SetCursorPos, mouse_event, keybd_event or
-    // SendInput in this file. Nayf shows the user where to click; the user clicks. The
+    // SendInput in this file. Vayme shows the user where to click; the user clicks. The
     // synthetic-input code that used to live here was removed rather than left behind a
     // check, so no future edit can reach it by accident.
 }

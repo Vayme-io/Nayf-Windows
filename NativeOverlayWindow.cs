@@ -33,9 +33,9 @@ public sealed class NativeOverlayWindow : IDisposable
     // Static + mutable so a single change recolors every monitor's overlay at once.
     internal static Color CursorBlue = NayfCursorColor.Blue.ToDrawingColor();
 
-    // First-launch "hey! I'm Nayf" welcome bubble — matches Mac's
+    // First-launch "hey! I'm Vayme" welcome bubble — matches Mac's
     // OverlayWindow welcome sequence timing.
-    private const string WelcomeMessage = "hey! I'm Nayf";
+    private const string WelcomeMessage = "hey! I'm Vayme";
     private readonly DateTimeOffset _startTime = DateTimeOffset.UtcNow;
 
     private IntPtr _hwnd = IntPtr.Zero;
@@ -482,7 +482,7 @@ public sealed class NativeOverlayWindow : IDisposable
     }
 
     /// <summary>
-    /// First-launch "hey! I'm Nayf" welcome bubble — matches Mac's
+    /// First-launch "hey! I'm Vayme" welcome bubble — matches Mac's
     /// OverlayWindow welcome sequence: bubble fades in at t=2.0s, types out
     /// one character every 0.03s, holds for 2s, then fades out by t=4.95s.
     /// </summary>
@@ -657,7 +657,7 @@ public sealed class NativeOverlayWindow : IDisposable
 }
 
 /// <summary>
-/// Owns Nayf's on-screen drawing: the cursor buddy, plus one annotation window per monitor.
+/// Owns Vayme's on-screen drawing: the cursor buddy, plus one annotation window per monitor.
 ///
 /// <para>The cursor is a single small window that roams across every display, so there is only
 /// ever one of it. Annotations are full-monitor surfaces, so there has to be one per monitor —

@@ -213,7 +213,7 @@ public sealed class NativeAgentCardWindow : IDisposable
 
         _hwnd = NativeMethods.CreateWindowEx(
             WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TOPMOST,
-            _className, "Nayf Agent Result",
+            _className, "Vayme Agent Result",
             WS_POPUP,
             0, 0, 1, 1,
             IntPtr.Zero, IntPtr.Zero,

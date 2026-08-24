@@ -10,13 +10,13 @@ using System.Threading;
 namespace NayfWindows;
 
 /// <summary>
-/// The status pill: a dark bar that drops from the top edge of the screen while Nayf
+/// The status pill: a dark bar that drops from the top edge of the screen while Vayme
 /// is listening, thinking, speaking or running a task, and slides back up when it's
 /// done. Port of the Mac's NotchStatusHUD (NotchHandleView.swift).
 ///
 /// On the Mac the pill also has a resting state that hangs under the notch and opens
-/// the panel when clicked. Windows has no notch and Nayf already has a taskbar button
-/// for that, so only the live HUD is ported — it exists while Nayf is doing something
+/// the panel when clicked. Windows has no notch and Vayme already has a taskbar button
+/// for that, so only the live HUD is ported — it exists while Vayme is doing something
 /// and not a moment longer.
 ///
 /// Built like <see cref="NativeOverlayWindow"/>: a layered, click-through, top-most
@@ -117,7 +117,7 @@ public sealed class NativeStatusPillWindow : IDisposable
     private enum Indicator { None, Bars, Dots }
 
     /// <summary>
-    /// Everything about the bar that changes when Nayf's state does. Held as a value so
+    /// Everything about the bar that changes when Vayme's state does. Held as a value so
     /// the previous one can be kept around and cross-faded out, the way the Mac's
     /// implicit animation on `value: state` does.
     /// </summary>
@@ -246,7 +246,7 @@ public sealed class NativeStatusPillWindow : IDisposable
         var voiceState = _companionManager.VoiceState;
         string? runningTool = _companionManager.AgentManager.RunningToolLabel;
         // A mission outlives the tools under it — it is set before the first one runs and
-        // held until Nayf has finished speaking — so it keeps the pill up across the gaps
+        // held until Vayme has finished speaking — so it keeps the pill up across the gaps
         // between tool calls, where a tool-only test would blink it off and on.
         bool shouldShow = voiceState != CompanionVoiceState.Idle
                           || runningTool != null
@@ -431,7 +431,7 @@ public sealed class NativeStatusPillWindow : IDisposable
             ? mission + Ellipsis
             : runningTool != null
             ? runningTool + Ellipsis
-            // Below a running tool, above the bare state: once Nayf has said out loud that
+            // Below a running tool, above the bare state: once Vayme has said out loud that
             // it's on it, repeating "Thinking" back at the user reads as stuck. Same accent
             // and indicator either way -- this is a deeper phase of Processing, not a new
             // state.
@@ -444,7 +444,7 @@ public sealed class NativeStatusPillWindow : IDisposable
                 _ => ""
             };
 
-        // A running tool means Nayf is working, whatever the voice state says — bars
+        // A running tool means Vayme is working, whatever the voice state says — bars
         // while it's talking through it, pulsing dots while it's heads-down.
         bool bars = runningTool != null
             ? state == CompanionVoiceState.Responding
@@ -750,7 +750,7 @@ public sealed class NativeStatusPillWindow : IDisposable
     /// three accents the Mac HUD uses, so the two apps read identically at a glance.
     ///
     /// Waiting on the user borrows the listening teal: both are the same message, that the
-    /// floor is theirs and Nayf is the one waiting.
+    /// floor is theirs and Vayme is the one waiting.
     /// </summary>
     private static Color AccentFor(CompanionVoiceState state, string? runningTool)
     {

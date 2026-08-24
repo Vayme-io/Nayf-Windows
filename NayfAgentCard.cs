@@ -204,7 +204,7 @@ public sealed class NayfAgentCard
         if (DateTimeOffset.UtcNow - _openedAt < InitialDwell) return;
 
         // Never collapse out from under a follow-up: the label is the only indication
-        // that Nayf is listening, and it lives on the expanded card.
+        // that Vayme is listening, and it lives on the expanded card.
         if (_isFollowUpListening) return;
 
         if (_pointerLeftAt == DateTimeOffset.MaxValue)
@@ -321,7 +321,7 @@ public sealed class NayfAgentCard
 
     /// <summary>
     /// Called by the host when the turn started from this card is over, so the button
-    /// stops claiming Nayf is listening once it has stopped.
+    /// stops claiming Vayme is listening once it has stopped.
     /// </summary>
     public void EndFollowUp()
     {
@@ -332,7 +332,7 @@ public sealed class NayfAgentCard
 
     /// <summary>
     /// Puts <paramref name="text"/> on the clipboard through Win32 rather than the WinRT
-    /// <c>Clipboard</c> class. Nayf is unpackaged, and the WinRT clipboard's behaviour
+    /// <c>Clipboard</c> class. Vayme is unpackaged, and the WinRT clipboard's behaviour
     /// without package identity is not something to find out about from a button that
     /// silently does nothing. <see cref="SelectedTextReader"/> reads the clipboard the
     /// same way for the same reason.

@@ -4,7 +4,7 @@ using Microsoft.Win32;
 namespace NayfWindows;
 
 /// <summary>
-/// Reads and writes the "start Nayf when I sign in" registry entry — the same
+/// Reads and writes the "start Vayme when I sign in" registry entry — the same
 /// HKCU Run value the installer's optional startup task creates, so the setting
 /// in the panel and the checkbox in the installer control one thing rather than
 /// two that can disagree. Because the value name matches, the uninstaller's
@@ -13,10 +13,15 @@ namespace NayfWindows;
 public static class NayfStartup
 {
     private const string RunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
-    private const string RunValueName = "Nayf";
+    private const string RunValueName = "Vayme";
+
+    // What the value was called before the app was renamed. A machine upgraded
+    // from a pre-rename install still has it, pointing at the same executable,
+    // so every write clears it — otherwise sign-in launches the app twice.
+    private const string LegacyRunValueName = "Nayf";
 
     /// <summary>
-    /// True when Windows is set to launch Nayf at sign-in. Only the presence of
+    /// True when Windows is set to launch Vayme at sign-in. Only the presence of
     /// the value is checked, not the path it points at — a stale path from an
     /// earlier install still counts as "on", and gets rewritten to the current
     /// executable the next time the user toggles it.
@@ -28,7 +33,9 @@ public static class NayfStartup
             try
             {
                 using var key = Registry.CurrentUser.OpenSubKey(RunKeyPath);
-                return key?.GetValue(RunValueName) != null;
+                if (key == null) return false;
+                return key.GetValue(RunValueName) != null
+                    || key.GetValue(LegacyRunValueName) != null;
             }
             catch
             {
@@ -49,6 +56,10 @@ public static class NayfStartup
         {
             using var key = Registry.CurrentUser.CreateSubKey(RunKeyPath, writable: true);
             if (key == null) return false;
+
+            // Drop the pre-rename entry either way. Leaving it while writing the
+            // new one would start two copies at sign-in.
+            key.DeleteValue(LegacyRunValueName, throwOnMissingValue: false);
 
             if (enabled)
             {

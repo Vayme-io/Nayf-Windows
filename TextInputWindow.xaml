@@ -2,7 +2,7 @@
     x:Class="NayfWindows.TextInputWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    Title="Ask Nayf">
+    Title="Ask Vayme">
 
     <!-- Transparent root so the window's acrylic backdrop shows through, same as
          the companion panel. The stack is measured and the window sized to it. -->
@@ -30,7 +30,7 @@
 
             <!-- Header: what this is, and which chord opened it. -->
             <Grid>
-                <TextBlock Text="Ask Nayf" Foreground="{StaticResource TextPrimary}"
+                <TextBlock Text="Ask Vayme" Foreground="{StaticResource TextPrimary}"
                            FontSize="13" FontWeight="SemiBold" FontFamily="{StaticResource UiFont}"
                            HorizontalAlignment="Left" VerticalAlignment="Center"/>
                 <TextBlock Text="Alt + T" Foreground="{StaticResource TextTertiary}"

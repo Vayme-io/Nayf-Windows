@@ -81,7 +81,7 @@ public sealed class GlobalPushToTalkMonitor : IDisposable
     private bool _textChordHeld;
 
     /// <summary>
-    /// How long Ctrl+Alt must be held *alone* before Nayf starts listening.
+    /// How long Ctrl+Alt must be held *alone* before Vayme starts listening.
     ///
     /// A keyboard delivers one key per event, so Ctrl+Alt+V unavoidably passes
     /// through Ctrl+Alt on its way. Reacting the instant the chord matches meant
@@ -188,7 +188,7 @@ public sealed class GlobalPushToTalkMonitor : IDisposable
     ///
     /// The hook is installed only while something is actually waiting for a click. A
     /// low-level mouse hook is called for every mouse *move* on the machine as well, and
-    /// there is no reason for Nayf's process to be woken thousands of times a minute for
+    /// there is no reason for Vayme's process to be woken thousands of times a minute for
     /// the rest of the session.
     /// </summary>
     public void StartWatchingClicks()
@@ -229,7 +229,7 @@ public sealed class GlobalPushToTalkMonitor : IDisposable
     /// Watches for the click that finishes a walkthrough step.
     ///
     /// It never swallows anything. The click is the user operating their own application —
-    /// the whole point of the step — and Nayf is only noting that it happened.
+    /// the whole point of the step — and Vayme is only noting that it happened.
     /// </summary>
     private IntPtr MouseHookCallback(int nCode, IntPtr wParam, IntPtr lParam)
     {

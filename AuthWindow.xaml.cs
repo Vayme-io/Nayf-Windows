@@ -66,7 +66,7 @@ public sealed partial class AuthWindow : Window
         presenter.IsResizable = false;
         presenter.SetBorderAndTitleBar(hasBorder: true, hasTitleBar: false);
         appWindow.SetPresenter(presenter);
-        appWindow.Title = "Nayf";
+        appWindow.Title = "Vayme";
 
         // Dark-mode rounded appearance.
         int darkMode = 1;
@@ -110,7 +110,7 @@ public sealed partial class AuthWindow : Window
         CenterOnPrimary(appWindow, 380, 470);
     }
 
-    /// <summary>Loads the real Nayf logo from the app's Assets folder.</summary>
+    /// <summary>Loads the real Vayme logo from the app's Assets folder.</summary>
     private void LoadLogo()
     {
         try

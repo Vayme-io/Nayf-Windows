@@ -5,7 +5,7 @@ using System.Text.Json;
 
 namespace NayfWindows;
 
-/// <summary>The selectable colors for Nayf's cursor buddy. Mirrors NayfCursorColor.swift.</summary>
+/// <summary>The selectable colors for Vayme's cursor buddy. Mirrors NayfCursorColor.swift.</summary>
 public enum NayfCursorColor
 {
     Blue,
@@ -28,13 +28,11 @@ public static class NayfCursorColorExtensions
 
 /// <summary>
 /// Lightweight persisted app settings (currently just the cursor color),
-/// stored as JSON in %LOCALAPPDATA%\Nayf\settings.json.
+/// stored as JSON in %LOCALAPPDATA%\Vayme\settings.json.
 /// </summary>
 public static class NayfSettings
 {
-    private static readonly string Dir = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Nayf");
-    private static readonly string FilePath = Path.Combine(Dir, "settings.json");
+    private static readonly string FilePath = AppPaths.InDataDirectory("settings.json");
 
     public static NayfCursorColor LoadCursorColor()
     {
@@ -56,7 +54,7 @@ public static class NayfSettings
     {
         try
         {
-            Directory.CreateDirectory(Dir);
+            Directory.CreateDirectory(AppPaths.DataDirectory);
             File.WriteAllText(FilePath, JsonSerializer.Serialize(new { cursorColor = color.ToString() }));
         }
         catch { /* non-fatal */ }

@@ -2,7 +2,7 @@
     x:Class="NayfWindows.CompanionPanelWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    Title="Nayf">
+    Title="Vayme">
 
     <!-- Transparent root so the window's acrylic backdrop shows through. The
          content stack is top/left-aligned and the window is sized to fit it. -->
@@ -90,7 +90,7 @@
 
                 <!-- On Home: the wordmark. On a subpage it's swapped for a back
                      button + page title, since there are no tabs to return with. -->
-                <TextBlock x:Name="HeaderWordmark" Text="Nayf"
+                <TextBlock x:Name="HeaderWordmark" Text="Vayme"
                            Foreground="{StaticResource TextPrimary}"
                            FontSize="14" FontWeight="SemiBold"
                            FontFamily="{StaticResource UiFont}"
@@ -194,7 +194,7 @@
             <!-- ───────────── MEMORY PAGE ───────────── -->
             <StackPanel x:Name="MemoryPage" Padding="24,4,24,16" Spacing="12"
                         Visibility="Collapsed" HorizontalAlignment="Stretch">
-                <TextBlock Text="What Nayf remembers about you across sessions."
+                <TextBlock Text="What Vayme remembers about you across sessions."
                            Foreground="{StaticResource TextSecondary}" FontSize="12.5"
                            FontFamily="{StaticResource UiFont}"/>
 
@@ -202,7 +202,7 @@
                             HorizontalAlignment="Stretch">
                     <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE81C;" FontSize="28"
                               Foreground="#48484A" HorizontalAlignment="Center"/>
-                    <TextBlock Text="Nayf will remember details about you as you chat — they'll show up here."
+                    <TextBlock Text="Vayme will remember details about you as you chat — they'll show up here."
                                Foreground="{StaticResource TextSecondary}" FontSize="12.5"
                                FontFamily="{StaticResource UiFont}"
                                HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"
@@ -252,11 +252,11 @@
             </StackPanel>
 
             <!-- ───────────── AGENTS PAGE ─────────────
-                 The tasks Nayf has run, as a two-column grid of tiles. Tapping one
+                 The tasks Vayme has run, as a two-column grid of tiles. Tapping one
                  opens its floating card, where it can be read again or continued. -->
             <StackPanel x:Name="AgentsPage" Padding="24,4,24,16" Spacing="12"
                         Visibility="Collapsed" HorizontalAlignment="Stretch">
-                <TextBlock Text="Tasks Nayf has run. Open one to read it again or keep going."
+                <TextBlock Text="Tasks Vayme has run. Open one to read it again or keep going."
                            Foreground="{StaticResource TextSecondary}" FontSize="12.5"
                            FontFamily="{StaticResource UiFont}"/>
 
@@ -268,7 +268,7 @@
                                Foreground="{StaticResource TextPrimary}" FontSize="13"
                                FontWeight="SemiBold" FontFamily="{StaticResource UiFont}"
                                HorizontalAlignment="Center"/>
-                    <TextBlock Text="Ask Nayf to do something on your PC and it'll show up here so you can pick it back up."
+                    <TextBlock Text="Ask Vayme to do something on your PC and it'll show up here so you can pick it back up."
                                Foreground="{StaticResource TextSecondary}" FontSize="12.5"
                                FontFamily="{StaticResource UiFont}"
                                HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"
@@ -353,7 +353,7 @@
             <!-- ───────────── CONNECTIONS PAGE ───────────── -->
             <StackPanel x:Name="ConnectionsPage" Padding="24,4,24,16" Spacing="8"
                         Visibility="Collapsed" HorizontalAlignment="Stretch">
-                <TextBlock Text="Connect your apps so Nayf can do more for you."
+                <TextBlock Text="Connect your apps so Vayme can do more for you."
                            Foreground="{StaticResource TextSecondary}" FontSize="12.5"
                            FontFamily="{StaticResource UiFont}" Margin="0,0,0,2"/>
 
@@ -671,7 +671,7 @@
                 <StackPanel Spacing="7">
                     <TextBlock Text="GENERAL" Style="{StaticResource SectionLabel}"/>
 
-                    <!-- Nayf shows and tells what it can do. First row of the first section
+                    <!-- Vayme shows and tells what it can do. First row of the first section
                          because it is the answer to the question a new user actually has. -->
                     <Button x:Name="CapabilitiesRow" Click="CapabilitiesButton_Click"
                             HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
@@ -687,11 +687,11 @@
                                       Foreground="{StaticResource TextSecondary}"
                                       VerticalAlignment="Center" Width="22"/>
                             <StackPanel Grid.Column="1" Margin="11,0,10,0" VerticalAlignment="Center" Spacing="2">
-                                <TextBlock Text="What can Nayf do?"
+                                <TextBlock Text="What can Vayme do?"
                                            Foreground="{StaticResource TextPrimary}"
                                            FontSize="13" FontWeight="SemiBold"
                                            FontFamily="{StaticResource UiFont}"/>
-                                <TextBlock Text="Nayf talks you through it"
+                                <TextBlock Text="Vayme talks you through it"
                                            Foreground="{StaticResource TextTertiary}"
                                            FontSize="11" FontFamily="{StaticResource UiFont}"/>
                             </StackPanel>
@@ -714,11 +714,11 @@
                                       Foreground="{StaticResource TextSecondary}"
                                       VerticalAlignment="Center" Width="22"/>
                             <StackPanel Grid.Column="1" Margin="11,0,10,0" VerticalAlignment="Center" Spacing="2">
-                                <TextBlock Text="Start Nayf when I sign in"
+                                <TextBlock Text="Start Vayme when I sign in"
                                            Foreground="{StaticResource TextPrimary}"
                                            FontSize="13" FontWeight="SemiBold"
                                            FontFamily="{StaticResource UiFont}"/>
-                                <TextBlock Text="Nayf is ready the moment Windows is"
+                                <TextBlock Text="Vayme is ready the moment Windows is"
                                            Foreground="{StaticResource TextTertiary}"
                                            FontSize="11" FontFamily="{StaticResource UiFont}"/>
                             </StackPanel>
@@ -729,7 +729,7 @@
                         </Grid>
                     </Border>
 
-                    <!-- Speech recognition lives in Windows Settings, not in Nayf. -->
+                    <!-- Speech recognition lives in Windows Settings, not in Vayme. -->
                     <Button x:Name="SpeechSettingsRow" Click="OpenSpeechSettingsButton_Click"
                             HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
                             Background="{StaticResource SurfaceLow}" BorderThickness="0"
@@ -757,12 +757,45 @@
                                       VerticalAlignment="Center"/>
                         </Grid>
                     </Button>
+
+                    <!-- Updates. Vayme installs these itself while nothing is going on, so
+                         this row is mostly a status line — it says what it is doing, and
+                         gives the user a way to make it happen now rather than wait. -->
+                    <Button x:Name="UpdateRow" Click="UpdateRow_Click"
+                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
+                            Background="{StaticResource SurfaceLow}" BorderThickness="0"
+                            CornerRadius="12" Padding="14,10,12,10">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE777;" FontSize="15"
+                                      Foreground="{StaticResource TextSecondary}"
+                                      VerticalAlignment="Center" Width="22"/>
+                            <StackPanel Grid.Column="1" Margin="11,0,10,0" VerticalAlignment="Center" Spacing="2">
+                                <TextBlock x:Name="UpdateRowTitle" Text="Check for updates"
+                                           Foreground="{StaticResource TextPrimary}"
+                                           FontSize="13" FontWeight="SemiBold"
+                                           FontFamily="{StaticResource UiFont}"/>
+                                <TextBlock x:Name="UpdateRowCaption"
+                                           Text="Vayme keeps itself up to date automatically"
+                                           Foreground="{StaticResource TextTertiary}"
+                                           FontSize="11" FontFamily="{StaticResource UiFont}"
+                                           TextWrapping="Wrap"/>
+                            </StackPanel>
+                            <ProgressRing x:Name="UpdateRowSpinner" Grid.Column="2" IsActive="False"
+                                          Visibility="Collapsed" Width="16" Height="16"
+                                          VerticalAlignment="Center"/>
+                        </Grid>
+                    </Button>
                 </StackPanel>
 
                 <StackPanel Spacing="7">
                     <TextBlock Text="PRIVACY" Style="{StaticResource SectionLabel}"/>
 
-                    <!-- Drops the in-memory conversation Nayf carries between turns. -->
+                    <!-- Drops the in-memory conversation Vayme carries between turns. -->
                     <Button x:Name="ClearHistoryButton" Click="ClearHistoryButton_Click"
                             HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
                             Background="{StaticResource SurfaceLow}" BorderThickness="0"
@@ -824,7 +857,7 @@
                     </Border>
                 </StackPanel>
 
-                <TextBlock x:Name="VersionText" Text="Nayf for Windows"
+                <TextBlock x:Name="VersionText" Text="Vayme for Windows"
                            Foreground="{StaticResource TextTertiary}" FontSize="10.5"
                            FontFamily="{StaticResource UiFont}"
                            HorizontalAlignment="Center" Margin="0,2,0,0"/>
@@ -833,19 +866,24 @@
             <!-- ───────────── DYNAMIC AREA (banners / prompts) ─────────────
                  Only things the user has to act on: a permission that needs granting, a
                  command that needs approving. Nothing of the conversation itself lives
-                 here — not what the user said, not what Nayf answered, and not a running
-                 account of what Nayf did to arrive at it. Nayf speaks its answers; the
+                 here — not what the user said, not what Vayme answered, and not a running
+                 account of what Vayme did to arrive at it. Vayme speaks its answers; the
                  panel is the controls, not a transcript. -->
             <StackPanel x:Name="DynamicArea" Padding="24,0,24,8" Spacing="10">
-                <!-- Mic permission banner -->
+                <!-- Speech-unavailable banner. Both the sentence and the button are set
+                     from the reason Windows gave, because "turn on online speech
+                     recognition", "let desktop apps use the microphone" and "this PC's
+                     speech language cannot be dictated" are three different pages of
+                     Settings, and sending someone to the wrong one is worse than silence. -->
                 <Border x:Name="MicPermissionBanner" CornerRadius="12" Padding="14,12,14,12" Visibility="Collapsed"
                         Background="#332600" BorderBrush="#66FF9F0A" BorderThickness="1">
                     <StackPanel Spacing="10">
-                        <TextBlock Text="Nayf needs speech recognition turned on to hear you."
+                        <TextBlock x:Name="MicPermissionMessage"
+                                   Text="Vayme needs speech recognition turned on to hear you."
                                    Foreground="{StaticResource TextPrimary}" FontSize="13"
                                    FontFamily="{StaticResource UiFont}" TextWrapping="Wrap"/>
                         <Button x:Name="OpenSpeechSettingsButton" Content="Open Speech Settings"
-                                HorizontalAlignment="Stretch" Click="OpenSpeechSettingsButton_Click"
+                                HorizontalAlignment="Stretch" Click="FixSpeechProblemButton_Click"
                                 Foreground="#1C1C1E" FontSize="13" FontWeight="SemiBold"
                                 FontFamily="{StaticResource UiFont}" BorderThickness="0"
                                 CornerRadius="10" Padding="0,9,0,9" Background="#FF9F0A"/>
@@ -853,13 +891,13 @@
                 </Border>
 
                 <!-- Agent confirmation prompt: a question put to the user, not an answer
-                     given to them. It is the only thing here that carries Nayf's words,
+                     given to them. It is the only thing here that carries Vayme's words,
                      and it is here because there is no way to answer it otherwise. -->
                 <Border x:Name="AgentConfirmContainer" CornerRadius="12" Padding="14,12,14,12" Visibility="Collapsed"
                         Background="#33140F" BorderBrush="#66FF453A" BorderThickness="1">
                     <StackPanel Spacing="10">
                         <StackPanel Spacing="3">
-                            <TextBlock Text="Allow Nayf to run this command?" Foreground="{StaticResource TextPrimary}"
+                            <TextBlock Text="Allow Vayme to run this command?" Foreground="{StaticResource TextPrimary}"
                                        FontSize="13" FontWeight="SemiBold" FontFamily="{StaticResource UiFont}"/>
                             <!-- Why this particular command needs approval. Without it the user
                                  is asked to judge a wall of shell syntax with nothing to go on. -->
@@ -968,10 +1006,10 @@
                                      FontFamily="{StaticResource UiFont}" Padding="5,0,0,0"/>
                 </StackPanel>
 
-                <!-- Routed model (Nayf picks automatically — not user-selectable) -->
+                <!-- Routed model (Vayme picks automatically — not user-selectable) -->
                 <Border Grid.Column="2" CornerRadius="11" Padding="9,4,11,4" VerticalAlignment="Center"
                         Margin="0,0,8,0" Background="{StaticResource SurfaceLow}"
-                        ToolTipService.ToolTip="Nayf routes each request to the right model">
+                        ToolTipService.ToolTip="Vayme routes each request to the right model">
                     <StackPanel Orientation="Horizontal" Spacing="5">
                         <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE945;" FontSize="10"
                                   Foreground="{StaticResource TextTertiary}"/>
@@ -985,7 +1023,7 @@
                 <Button x:Name="QuitButton" Grid.Column="3" Click="QuitButton_Click"
                         Style="{StaticResource RoundIconButton}" Width="26" Height="26" CornerRadius="13"
                         Background="{StaticResource SurfaceLow}"
-                        ToolTipService.ToolTip="Quit Nayf">
+                        ToolTipService.ToolTip="Quit Vayme">
                     <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE7E8;" FontSize="11"
                               Foreground="{StaticResource TextSecondary}"/>
                 </Button>

@@ -44,7 +44,7 @@ static class Program
         catch (Exception ex)
         {
             Log("App startup FAILED", ex.ToString());
-            ShowError($"Nayf failed to start:\n{ex.Message}");
+            ShowError($"Vayme failed to start:\n{ex.Message}");
         }
     }
 
@@ -56,7 +56,7 @@ static class Program
 
     private static void ShowError(string message)
     {
-        MessageBox(IntPtr.Zero, message, "Nayf Error", 0x10 /* MB_ICONERROR */);
+        MessageBox(IntPtr.Zero, message, "Vayme Error", 0x10 /* MB_ICONERROR */);
     }
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]

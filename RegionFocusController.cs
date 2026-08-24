@@ -20,7 +20,7 @@ namespace NayfWindows;
 ///
 /// <para>The overlay lives only for the length of the hold. It comes down <i>before</i> the
 /// screen is captured, because it is drawn on the very screen being photographed: capture it
-/// a moment too early and Nayf is looking at its own ink instead of what the ink surrounds.</para>
+/// a moment too early and Vayme is looking at its own ink instead of what the ink surrounds.</para>
 /// </summary>
 public sealed class RegionFocusController : IDisposable
 {

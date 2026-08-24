@@ -20,7 +20,7 @@ public enum AnnotationKind
 }
 
 /// <summary>
-/// One mark Nayf draws over the desktop while explaining something — an outline around a
+/// One mark Vayme draws over the desktop while explaining something — an outline around a
 /// control, or an arrow from one place to another. Several can be on screen at once, each
 /// with its own beat in a sequence, so a highlight can trace on and its arrow follow.
 ///

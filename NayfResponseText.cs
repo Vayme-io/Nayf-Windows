@@ -4,7 +4,7 @@ using System.Text.RegularExpressions;
 namespace NayfWindows;
 
 /// <summary>
-/// Strips the control tags Nayf's replies carry — <c>[POINT: ...]</c>, <c>[MISSION: ...]</c>
+/// Strips the control tags Vayme's replies carry — <c>[POINT: ...]</c>, <c>[MISSION: ...]</c>
 /// and <c>[MISSION-CONTINUE]</c> — from anything the user reads or hears.
 ///
 /// <para>The tags are instructions to the app, not part of the answer: POINT drives the

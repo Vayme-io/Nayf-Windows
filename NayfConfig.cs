@@ -18,6 +18,15 @@ public static class NayfConfig
     public const string WebSearchEndpoint = $"{WorkerBaseURL}/search";
 
     /// <summary>
+    /// Where Vayme asks what the current Windows build is. Served by the same Worker
+    /// as everything else, out of the same R2 bucket the installer itself comes from,
+    /// so publishing a release and announcing it are one step rather than two that
+    /// can disagree. Unauthenticated on purpose — an install that has been signed out
+    /// for a month still has to be able to update itself.
+    /// </summary>
+    public const string LatestWindowsReleaseEndpoint = $"{WorkerBaseURL}/latest/windows";
+
+    /// <summary>
     /// Supabase project used for authentication. The proxy verifies the user's
     /// JWT (issued by this project) and checks their credit balance before
     /// serving chat/TTS requests. Matches the Mac app's NayfConfig.
@@ -26,7 +35,7 @@ public static class NayfConfig
     public const string SupabaseAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZwaWdyc2lqbXVzeW1uamV1aHNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk2NjA2ODksImV4cCI6MjA5NTIzNjY4OX0.keRzkBuv4QqfA6VDwJcznpEQbUR4ZsRmwHKJTeTzl74";
 
     /// <summary>
-    /// The two models Nayf routes between automatically — the user no longer picks.
+    /// The two models Vayme routes between automatically — the user no longer picks.
     ///
     /// Routing answers ONE structural question: does this turn involve screen
     /// coordinates? It is decided from the interaction mode, NOT by guessing from

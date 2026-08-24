@@ -99,7 +99,7 @@ public sealed class SystemTrayManager : IDisposable
             uFlags = NativeMethods.NIF_ICON | NativeMethods.NIF_TIP | NativeMethods.NIF_MESSAGE,
             uCallbackMessage = TrayCallbackMessage,
             hIcon = iconHandle,
-            szTip = "Nayf — AI Cursor Companion"
+            szTip = "Vayme — AI Cursor Companion"
         };
 
         NativeMethods.Shell_NotifyIcon(NativeMethods.NIM_ADD, ref _notifyIconData);
@@ -156,7 +156,7 @@ public sealed class SystemTrayManager : IDisposable
     private void ShowContextMenu(int x, int y)
     {
         IntPtr hMenu = CreatePopupMenu();
-        AppendMenu(hMenu, 0x0000 /* MF_STRING */, MENU_ID_OPEN, "Open Nayf");
+        AppendMenu(hMenu, 0x0000 /* MF_STRING */, MENU_ID_OPEN, "Open Vayme");
         AppendMenu(hMenu, 0x0800 /* MF_SEPARATOR */, 0, null);
         AppendMenu(hMenu, 0x0000 /* MF_STRING */, MENU_ID_QUIT, "Quit");
 

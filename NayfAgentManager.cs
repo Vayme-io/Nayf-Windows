@@ -23,19 +23,19 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
     private volatile string? _runningToolLabel;
 
     /// <summary>
-    /// What Nayf is doing right now, in words the user would use — "Reading a file" —
+    /// What Vayme is doing right now, in words the user would use — "Reading a file" —
     /// or null when no tool is running.
     ///
     /// <para>The status pill is where this shows, and the only place it shows. There is
     /// deliberately no step list in the panel: a running tally of screenshots taken and
-    /// tools called is Nayf's working, and the user asked for none of it.</para>
+    /// tools called is Vayme's working, and the user asked for none of it.</para>
     /// </summary>
     public string? RunningToolLabel => _runningToolLabel;
 
     private volatile string? _missionText;
 
     /// <summary>
-    /// A short present-tense label for the job Nayf is on — "Cleaning up Downloads".
+    /// A short present-tense label for the job Vayme is on — "Cleaning up Downloads".
     /// Parsed from the <c>[MISSION: ...]</c> tag the model emits at the top of its first
     /// reply, so it can go up the instant the work starts rather than when it ends. Also
     /// becomes the saved task's title.
@@ -141,8 +141,8 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
         },
         // Looking, in place of the old "computer" tool. That one bundled a screenshot
         // together with click, type and key, and a model handed it reaches for the whole
-        // thing — which is how Nayf ended up moving the user's cursor. It is not offered
-        // to any turn now: Nayf sees the screen, and the user does the clicking.
+        // thing — which is how Vayme ended up moving the user's cursor. It is not offered
+        // to any turn now: Vayme sees the screen, and the user does the clicking.
         TakeScreenshotTool,
         new
         {
@@ -161,7 +161,7 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
         new
         {
             name = "google_calendar_list_events",
-            description = "List upcoming events from the user's Google Calendar (their primary calendar). Use this for questions like \"what's on my calendar\", \"what does my day look like\", \"am I free tomorrow afternoon\", \"when's my next meeting\". Defaults to the next 7 days. To narrow to a specific day or range, pass timeMin/timeMax as ISO 8601 with the user's timezone offset — e.g. for \"tomorrow\" use the start and end of tomorrow in their local time. This reads the user's CONNECTED Google account (different from the Windows Calendar app). If they haven't connected Google Calendar, the call returns an error telling you to ask them to connect it in Nayf.",
+            description = "List upcoming events from the user's Google Calendar (their primary calendar). Use this for questions like \"what's on my calendar\", \"what does my day look like\", \"am I free tomorrow afternoon\", \"when's my next meeting\". Defaults to the next 7 days. To narrow to a specific day or range, pass timeMin/timeMax as ISO 8601 with the user's timezone offset — e.g. for \"tomorrow\" use the start and end of tomorrow in their local time. This reads the user's CONNECTED Google account (different from the Windows Calendar app). If they haven't connected Google Calendar, the call returns an error telling you to ask them to connect it in Vayme.",
             input_schema = new
             {
                 type = "object",
@@ -210,7 +210,7 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
         new
         {
             name = "github_list_issues",
-            description = "List the open GitHub issues assigned to the user, across all their repositories. Use for \"what issues are assigned to me\", \"what's on my plate on GitHub\", \"any open issues for me\". Reads the user's CONNECTED GitHub account; if not connected, the call returns an error telling you to ask them to connect it in Nayf.",
+            description = "List the open GitHub issues assigned to the user, across all their repositories. Use for \"what issues are assigned to me\", \"what's on my plate on GitHub\", \"any open issues for me\". Reads the user's CONNECTED GitHub account; if not connected, the call returns an error telling you to ask them to connect it in Vayme.",
             input_schema = new
             {
                 type = "object",
@@ -340,7 +340,7 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
     };
 
     /// <summary>
-    /// What a teaching turn may call. Deliberately tiny — Nayf looks, points, and waits,
+    /// What a teaching turn may call. Deliberately tiny — Vayme looks, points, and waits,
     /// and asks before it does anything else.
     /// </summary>
     private static readonly List<object> WalkthroughTools = new()
@@ -352,7 +352,7 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
     /// The tools sent with a turn, scoped to what it is allowed to do.
     ///
     /// A walkthrough is a teaching interaction: the user performs every action themselves,
-    /// so Nayf gets looking and pointing only. An agent task is automation the user asked
+    /// so Vayme gets looking and pointing only. An agent task is automation the user asked
     /// for, and keeps the full set — background tasks legitimately act on the machine.
     ///
     /// Neither set can drive the mouse or the keyboard. An agent task acts through
@@ -388,7 +388,7 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
     /// Returns Claude's final text response.
     ///
     /// <paramref name="toolMode"/> defaults to the hands-off mode on purpose: forgetting to
-    /// pass it can only make Nayf more cautious than the caller meant, never less.
+    /// pass it can only make Vayme more cautious than the caller meant, never less.
     /// </summary>
     public async Task<string> RunAgentLoopAsync(
         string userRequest,
@@ -404,12 +404,12 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
         _runningToolLabel = null;
 
         // Fresh each turn — only set if THIS turn tags itself a continuation. Left standing,
-        // it would glue an unrelated task onto whatever Nayf happened to do before it.
+        // it would glue an unrelated task onto whatever Vayme happened to do before it.
         TaskContinuesPrevious = false;
         LastTurnWalkedTheScreen = false;
 
         // Scope what this run may do. The executor refuses every actuation tool in
-        // walkthrough mode, so Nayf cannot touch the screen even if the model asks.
+        // walkthrough mode, so Vayme cannot touch the screen even if the model asks.
         _toolExecutor.ToolMode = toolMode;
         var tools = ToolsFor(toolMode);
 
@@ -461,7 +461,7 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
                 // A continuation carries a label too. Not because the task it continues
                 // needs renaming — it keeps its original title — but because there may
                 // not be one: the model only knows what was said this conversation, and
-                // the task it is picking up can have been finished before Nayf started
+                // the task it is picking up can have been finished before Vayme started
                 // saving them. Without a label that work would be dropped on the floor.
                 if (turnResult.TextContent.Contains("[MISSION-CONTINUE", StringComparison.Ordinal))
                 {
@@ -521,9 +521,9 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
                     continue;
                 }
 
-                // A step is the user's turn, not Nayf's. It runs through the loop like a tool
+                // A step is the user's turn, not Vayme's. It runs through the loop like a tool
                 // because that is exactly what it is to the model — a call that returns an
-                // answer — but nothing about it is Nayf doing something, so it gets no
+                // answer — but nothing about it is Vayme doing something, so it gets no
                 // "Running…" label and the pill says whose turn it is instead.
                 bool isUserStep = toolMode == NayfToolMode.GuidedWalkthrough
                                   && toolCall.ToolName == "request_user_step";
@@ -603,7 +603,7 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
         }
 
         // The Mac chimes as its "task done" pill drops in. Windows has no such pill, so
-        // the chime marks the same moment directly: Nayf went and did something and has
+        // the chime marks the same moment directly: Vayme went and did something and has
         // now finished. Gated on a tool having run, or every spoken answer would chime.
         //
         // Never while teaching. The only tool there is a screenshot, and nothing is done
@@ -888,12 +888,12 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
 
     /// <summary>
     /// Drops the mission label. Called when the whole interaction goes idle — the pill
-    /// keeps showing it while Nayf speaks its summary, and only stops once that's over.
+    /// keeps showing it while Vayme speaks its summary, and only stops once that's over.
     /// </summary>
     public void ClearMission() => _missionText = null;
 
     /// <summary>
-    /// Turns a tool name into something worth reading on screen — what Nayf is doing, in
+    /// Turns a tool name into something worth reading on screen — what Vayme is doing, in
     /// the words the user would use for it. Drives the status pill, which is the only
     /// place any of this is shown.
     /// </summary>

@@ -9,7 +9,7 @@ using System.Threading;
 namespace NayfWindows;
 
 /// <summary>
-/// A full-monitor transparent layered window that draws Nayf's screen annotations — the
+/// A full-monitor transparent layered window that draws Vayme's screen annotations — the
 /// outlines and arrows it puts over the desktop while explaining something.
 ///
 /// <para>This is a second overlay, alongside <see cref="NativeOverlayWindow"/>. That one is a

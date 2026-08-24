@@ -75,6 +75,13 @@ public sealed partial class CompanionPanelWindow : Window
         BuildProductCards();
         UpdateTokensView();
 
+        // Updates run on a background loop and nearly always progress while the panel is
+        // shut, so the row is drawn from the checker's current state rather than left
+        // showing whatever it said the last time someone looked at it.
+        _companionManager.Updates.PropertyChanged += (_, _) =>
+            DispatcherQueue.TryEnqueue(RefreshUpdateRow);
+        RefreshUpdateRow();
+
         UpdateModelSelection(_companionManager.ActiveModel);
         UpdateCreditBalance();
         UpdateCursorColorSelection(_companionManager.SelectedCursorColor);
@@ -226,7 +233,11 @@ public sealed partial class CompanionPanelWindow : Window
                 case nameof(CompanionManager.VoiceState):
                     UpdateVoiceStateUI(_companionManager.VoiceState);
                     break;
+                // The message too, not only the flag: a second failure of a different kind
+                // while the banner is already up never touches the flag, and would
+                // otherwise leave the first reason on screen.
                 case nameof(CompanionManager.MicrophonePermissionNeeded):
+                case nameof(CompanionManager.SpeechProblemMessage):
                     UpdateMicPermissionBanner(_companionManager.MicrophonePermissionNeeded);
                     break;
                 case nameof(CompanionManager.TokenBalanceText):
@@ -273,6 +284,15 @@ public sealed partial class CompanionPanelWindow : Window
     private void UpdateMicPermissionBanner(bool needed)
     {
         MicPermissionBanner.Visibility = needed ? Visibility.Visible : Visibility.Collapsed;
+        if (!needed) return;
+
+        MicPermissionMessage.Text = _companionManager.SpeechProblemMessage;
+        OpenSpeechSettingsButton.Content = _companionManager.SpeechProblem switch
+        {
+            SpeechProblem.MicrophoneBlocked => "Open Microphone Settings",
+            SpeechProblem.LanguageUnsupported => "Open Language Settings",
+            _ => "Open Speech Settings"
+        };
     }
 
     private void UpdateAgentConfirmation()
@@ -457,7 +477,7 @@ public sealed partial class CompanionPanelWindow : Window
     }
 
     /// <summary>
-    /// Shows which tier Nayf routed the last turn to. The model is chosen
+    /// Shows which tier Vayme routed the last turn to. The model is chosen
     /// automatically (screen-coordinate turns get the high-res vision tier), so this
     /// is a read-only indicator rather than a picker.
     /// </summary>
@@ -473,7 +493,7 @@ public sealed partial class CompanionPanelWindow : Window
     {
         _companionManager.ClearConversationHistory();
         // Clearing produces no visible change on its own, so say it happened.
-        ClearHistoryCaption.Text = "Cleared — Nayf is starting fresh";
+        ClearHistoryCaption.Text = "Cleared — Vayme is starting fresh";
     }
 
     /// <summary>
@@ -483,7 +503,60 @@ public sealed partial class CompanionPanelWindow : Window
     private void UpdateVersionText()
     {
         string version = typeof(CompanionPanelWindow).Assembly.GetName().Version?.ToString(3) ?? "1.0.0";
-        VersionText.Text = $"Nayf for Windows · {version}";
+        VersionText.Text = $"Vayme for Windows · {version}";
+    }
+
+    /// <summary>
+    /// Draws the Updates row from what the checker is doing. It is a status line first and
+    /// a button second — Vayme applies updates on its own, so the only tap that does
+    /// anything substantial is the one on a build already downloaded and waiting.
+    /// </summary>
+    private void RefreshUpdateRow()
+    {
+        UpdateChecker updates = _companionManager.Updates;
+        bool working = updates.Stage is UpdateStage.Checking or UpdateStage.Downloading;
+
+        UpdateRowSpinner.IsActive = working;
+        UpdateRowSpinner.Visibility = working ? Visibility.Visible : Visibility.Collapsed;
+
+        (UpdateRowTitle.Text, UpdateRowCaption.Text) = updates.Stage switch
+        {
+            UpdateStage.Checking =>
+                ("Checking for updates…", "Asking whether there's a newer build"),
+
+            UpdateStage.Downloading =>
+                ($"Downloading Vayme {updates.AvailableVersion}",
+                 $"{updates.DownloadPercent}% — it installs once you're not using Vayme"),
+
+            UpdateStage.ReadyToInstall =>
+                ($"Vayme {updates.AvailableVersion} is ready",
+                 "It installs itself once you're idle. Tap to restart and update now."),
+
+            UpdateStage.UpToDate =>
+                ("Vayme is up to date", $"You're on {UpdateChecker.CurrentVersion}. Tap to check again."),
+
+            UpdateStage.Failed =>
+                ("Check for updates", updates.FailureMessage),
+
+            _ => ("Check for updates", "Vayme keeps itself up to date automatically")
+        };
+    }
+
+    private void UpdateRow_Click(object sender, RoutedEventArgs e)
+    {
+        UpdateChecker updates = _companionManager.Updates;
+
+        // Mid-check or mid-download a tap has nothing useful to do, and starting a second
+        // check would only reset the progress the row is currently showing.
+        if (updates.Stage is UpdateStage.Checking or UpdateStage.Downloading) return;
+
+        if (updates.Stage == UpdateStage.ReadyToInstall)
+        {
+            updates.InstallNow();
+            return;
+        }
+
+        _ = updates.CheckNowAsync();
     }
 
     // Set while the toggle is being synced from the registry, so the resulting
@@ -508,7 +581,7 @@ public sealed partial class CompanionPanelWindow : Window
     }
 
     /// <summary>
-    /// The panel goes away first: the card lands in the middle of the screen and Nayf talks
+    /// The panel goes away first: the card lands in the middle of the screen and Vayme talks
     /// over it, and a settings pane still sitting there would be the one thing on screen the
     /// tour isn't about.
     /// </summary>
@@ -520,7 +593,35 @@ public sealed partial class CompanionPanelWindow : Window
 
     private void OpenSpeechSettingsButton_Click(object sender, RoutedEventArgs e)
     {
-        Process.Start(new ProcessStartInfo("ms-settings:privacy-speech") { UseShellExecute = true });
+        OpenSettingsPage("ms-settings:privacy-speech");
+    }
+
+    /// <summary>
+    /// Opens the page that fixes what the banner is complaining about, which is not always
+    /// the speech privacy page the Settings row goes to.
+    /// </summary>
+    private void FixSpeechProblemButton_Click(object sender, RoutedEventArgs e)
+    {
+        OpenSettingsPage(_companionManager.SpeechProblem switch
+        {
+            SpeechProblem.MicrophoneBlocked => "ms-settings:privacy-microphone",
+            // Time and language rather than privacy: this one is about which language
+            // Windows dictates in, not about what it is allowed to hear.
+            SpeechProblem.LanguageUnsupported => "ms-settings:regionlanguage",
+            _ => "ms-settings:privacy-speech"
+        });
+    }
+
+    private static void OpenSettingsPage(string uri)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            Logger.Log("Panel", $"Could not open {uri}: {ex.Message}");
+        }
     }
 
     private void SignOutButton_Click(object sender, RoutedEventArgs e)
@@ -1008,7 +1109,7 @@ public sealed partial class CompanionPanelWindow : Window
         }
 
         // Read the live registry state each time rather than trusting a cached
-        // value — the installer, another Nayf window, or the user editing
+        // value — the installer, another Vayme window, or the user editing
         // startup apps in Windows Settings can all change it behind our back.
         if (page == PanelPage.Settings)
         {

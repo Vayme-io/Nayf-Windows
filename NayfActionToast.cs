@@ -10,13 +10,13 @@ using System.Threading;
 namespace NayfWindows;
 
 /// <summary>
-/// The action toast: a chip that drops in under the status pill when Nayf has finished
+/// The action toast: a chip that drops in under the status pill when Vayme has finished
 /// doing something on the user's behalf — an event added to their calendar, a track
 /// started, an issue filed — says what it did, and leaves after a few seconds. Port of
 /// the Mac's NayfActionToastPresenter (NayfActionToast.swift).
 ///
 /// <para>It exists because a spoken "done" is gone the moment it's said. The toast is
-/// the receipt: it names the thing that changed, so the user can see Nayf understood
+/// the receipt: it names the thing that changed, so the user can see Vayme understood
 /// them without going and looking.</para>
 ///
 /// <para>Built like <see cref="NativeStatusPillWindow"/> — a layered, click-through,
@@ -218,7 +218,7 @@ public sealed class NayfActionToast : IDisposable
     // MARK: - What the rest of the app calls
 
     /// <summary>
-    /// Confirms something Nayf just did. Shows the chip in the user's cursor colour with
+    /// Confirms something Vayme just did. Shows the chip in the user's cursor colour with
     /// a check on the end, and plays the completion chime — one call, so a caller can
     /// never end up with the sound and not the toast or the other way round.
     /// </summary>

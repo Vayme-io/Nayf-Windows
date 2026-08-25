@@ -75,8 +75,7 @@ public sealed class AuthManager : INotifyPropertyChanged
                 return false;
             }
 
-            var json = await File.ReadAllTextAsync(_sessionFilePath);
-            var stored = JsonSerializer.Deserialize<StoredSession>(json);
+            var stored = await ReadStoredSessionAsync();
             if (stored?.RefreshToken is null)
             {
                 Logger.Log("AuthManager", "Stored session has no refresh token.");
@@ -248,18 +247,121 @@ public sealed class AuthManager : INotifyPropertyChanged
     {
         try
         {
-            var stored = new StoredSession
+            WriteStoredSession(new StoredSession
             {
                 AccessToken = _accessToken,
                 RefreshToken = _refreshToken,
                 ExpiresAt = _accessTokenExpiresAt.ToUnixTimeSeconds(),
                 Email = CurrentUserEmail
-            };
-            File.WriteAllText(_sessionFilePath, JsonSerializer.Serialize(stored));
+            });
         }
         catch (Exception ex)
         {
             Logger.Log("AuthManager", $"Persist failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Serializes the session and encrypts it for this Windows user before it
+    /// touches the disk. See <see cref="CredentialProtection"/> for what that does
+    /// and does not defend against.
+    ///
+    /// Encryption is not optional here. If DPAPI fails, the exception propagates and
+    /// nothing is written at all: falling back to a plaintext write would undo the
+    /// entire point of this and leave a refresh token — which stays valid for weeks —
+    /// sitting in the clear, in the one case where we already know something is
+    /// wrong with the machine's crypto.
+    /// </summary>
+    private void WriteStoredSession(StoredSession session)
+    {
+        byte[] plaintextBytes = JsonSerializer.SerializeToUtf8Bytes(session);
+        try
+        {
+            byte[] encryptedBytes = CredentialProtection.EncryptForCurrentUser(plaintextBytes);
+            File.WriteAllBytes(_sessionFilePath, encryptedBytes);
+        }
+        finally
+        {
+            // The serialized copy holds both tokens. Clear it rather than leaving it
+            // for the garbage collector to hand to whatever allocates next.
+            Array.Clear(plaintextBytes);
+        }
+    }
+
+    /// <summary>
+    /// Reads and decrypts the stored session.
+    ///
+    /// Sessions written by builds from before this change are plaintext JSON. Those
+    /// are still read, and then immediately rewritten encrypted — upgrading must not
+    /// sign anyone out, and the plaintext copy must not survive the first launch that
+    /// notices it.
+    /// </summary>
+    private async Task<StoredSession?> ReadStoredSessionAsync()
+    {
+        byte[] fileBytes = await File.ReadAllBytesAsync(_sessionFilePath);
+        if (fileBytes.Length == 0)
+        {
+            Logger.Log("AuthManager", "Stored session file is empty.");
+            return null;
+        }
+
+        try
+        {
+            byte[] decryptedBytes = CredentialProtection.DecryptForCurrentUser(fileBytes);
+            try
+            {
+                return JsonSerializer.Deserialize<StoredSession>(decryptedBytes);
+            }
+            finally
+            {
+                Array.Clear(decryptedBytes);
+            }
+        }
+        catch (Exception decryptionFailure)
+        {
+            // Two very different things land here, and only one of them is
+            // recoverable: a plaintext file from an older build, or a file encrypted
+            // by a different Windows user. Only the first parses as JSON.
+            StoredSession? legacySession = TryReadPlaintextSessionFromOlderBuild(fileBytes);
+            if (legacySession is null)
+            {
+                Logger.Log("AuthManager", $"Stored session unreadable: {decryptionFailure.Message}");
+                return null;
+            }
+
+            // Rewrite now rather than waiting for the next token refresh to persist
+            // it: a launch with no network never reaches that path, so the plaintext
+            // would stay on disk for as long as the machine stayed offline.
+            try
+            {
+                WriteStoredSession(legacySession);
+                Logger.Log("AuthManager", "Migrated plaintext session to encrypted storage.");
+            }
+            catch (Exception migrationFailure)
+            {
+                // The session itself is still usable, so carry on and sign the user
+                // in. It stays plaintext until a later launch manages the rewrite.
+                Logger.Log("AuthManager", $"Session migration failed: {migrationFailure.Message}");
+            }
+
+            return legacySession;
+        }
+    }
+
+    /// <summary>
+    /// Interprets the file as the pre-encryption format — plain UTF-8 JSON. Returns
+    /// null when it is not that, which is what distinguishes an older build's file
+    /// from one belonging to a different Windows account.
+    /// </summary>
+    private static StoredSession? TryReadPlaintextSessionFromOlderBuild(byte[] fileBytes)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<StoredSession>(fileBytes);
+        }
+        catch (JsonException)
+        {
+            return null;
         }
     }
 

@@ -7,14 +7,14 @@
     <AssemblyName>NayfWindows</AssemblyName>
     <!-- The taskbar and Explorer label the app with FileDescription, which comes
          from AssemblyTitle. Without these it reads "NayfWindows" (the exe name).
-         AssemblyName itself stays put Ã¢â‚¬â€ the installer, the startup Run entry and
+         AssemblyName itself stays put — the installer, the startup Run entry and
          the update scripts all reference NayfWindows.exe. -->
     <AssemblyTitle>Vayme</AssemblyTitle>
     <Product>Vayme</Product>
     <Company>Vayme</Company>
     <!-- Shown on the panel's Settings page. Keep in step with MyAppVersion in
          installer\Nayf.iss so the app and the installer report the same build. -->
-    <Version>1.2.1</Version>
+    <Version>1.2.2</Version>
     <UseWinUI>true</UseWinUI>
     <WindowsPackageType>None</WindowsPackageType>
     <!-- Ship the Windows App SDK runtime inside the app rather than expecting it
@@ -22,7 +22,7 @@
          this the build carries the bootstrapper alone, which looks for a Windows App
          Runtime installed on the machine and, not finding one, puts up "Windows App SDK 2.0 runtime is not
          installed" and exits. That never showed up here because a dev machine has
-         it Ã¢â‚¬â€ it is what anyone we hand the installer to would see instead of Vayme. -->
+         it — it is what anyone we hand the installer to would see instead of Vayme. -->
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <!-- Tell the SDK our entry point is in Program.cs, not auto-generated -->
     <DefineConstants>DISABLE_XAML_GENERATED_MAIN</DefineConstants>

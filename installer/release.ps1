@@ -77,14 +77,20 @@ function Assert-LastExitCode($what) {
 
 Write-Step "Stamping version $Version"
 
-$csproj = Get-Content $csprojPath -Raw
+# Read through .NET, not Get-Content. Windows PowerShell 5.1 reads a file with no
+# byte-order mark as Windows-1252, and both of these are UTF-8 without one. Every
+# release therefore used to decode the em dashes in their comments into three
+# Latin-1 characters and write those back out as UTF-8 - so each run corrupted them
+# one layer further, and the diff for a version bump carried a pile of mojibake
+# alongside the one line that actually changed.
+$csproj = [System.IO.File]::ReadAllText($csprojPath)
 $csprojStamped = [regex]::Replace($csproj, '<Version>[^<]*</Version>', "<Version>$Version</Version>", 1)
 if ($csprojStamped -eq $csproj -and $csproj -notmatch [regex]::Escape("<Version>$Version</Version>")) {
     throw "Could not find a <Version> element in $csprojPath"
 }
 [System.IO.File]::WriteAllText($csprojPath, $csprojStamped, (New-Object System.Text.UTF8Encoding($false)))
 
-$inno = Get-Content $innoScriptPath -Raw
+$inno = [System.IO.File]::ReadAllText($innoScriptPath)
 $innoStamped = [regex]::Replace($inno, '#define MyAppVersion "[^"]*"', "#define MyAppVersion `"$Version`"", 1)
 if ($innoStamped -eq $inno -and $inno -notmatch [regex]::Escape("#define MyAppVersion `"$Version`"")) {
     throw "Could not find #define MyAppVersion in $innoScriptPath"

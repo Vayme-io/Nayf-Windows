@@ -58,6 +58,17 @@ public sealed class WindowsSpeechTranscriptionProvider : IDisposable
     private TaskCompletionSource<bool>? _firstResultTcs;
 
     /// <summary>
+    /// Whether the recognizer produced anything at all this session — a hypothesis counts,
+    /// not just a finished result.
+    ///
+    /// This is the difference between "Windows heard you and could not make out the words"
+    /// and "Windows was handed silence". Hypotheses fire readily on any audio, so none of
+    /// them across a whole utterance means the recognizer's input was dead, whatever the
+    /// microphone's own meter was reading at the time.
+    /// </summary>
+    public bool HeardSomething { get; private set; }
+
+    /// <summary>
     /// How long <c>StopAsync</c> gets before it is left to finish on its own. It normally
     /// returns in milliseconds, but a recognizer that has been fed noise instead of speech
     /// can sit inside it for the better part of a minute — and the entire turn queues behind
@@ -286,6 +297,7 @@ public sealed class WindowsSpeechTranscriptionProvider : IDisposable
     {
         // A hypothesis means the recognizer IS hearing audio, even if it never
         // finalizes — distinguishes "mic dead" from "low confidence".
+        HeardSomething = true;
         Logger.Log("WindowsSpeech", $"Hypothesis: '{args.Hypothesis.Text}'");
     }
 
@@ -301,6 +313,7 @@ public sealed class WindowsSpeechTranscriptionProvider : IDisposable
     {
         var text = args.Result.Text;
         var confidence = args.Result.Confidence;
+        HeardSomething = true;
         Logger.Log("WindowsSpeech", $"Result: '{text}' ({confidence})");
 
         if (string.IsNullOrWhiteSpace(text)) return;

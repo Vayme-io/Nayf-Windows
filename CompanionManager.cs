@@ -156,6 +156,28 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
         }
     }
 
+    private bool _roastMode = NayfSettings.LoadRoastMode();
+
+    /// <summary>
+    /// Whether Vayme is rude about the state of your screen while it helps you.
+    ///
+    /// Tone only. It changes what goes on the end of the system prompt and nothing else —
+    /// the tools, the walkthrough rhythm and the answers themselves are identical either
+    /// way, which is the whole reason it is safe to leave to a switch.
+    /// </summary>
+    public bool RoastMode
+    {
+        get => _roastMode;
+        set
+        {
+            if (_roastMode == value) return;
+            _roastMode = value;
+            NayfSettings.SaveRoastMode(value);
+            Logger.Log("CompanionManager", $"Roast mode {(value ? "on" : "off")}");
+            OnPropertyChanged();
+        }
+    }
+
     // Cursor pointing state — observed by OverlayWindowManager to animate the cursor
     private System.Drawing.PointF? _detectedElementPosition;
     public System.Drawing.PointF? DetectedElementPosition
@@ -322,6 +344,15 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
     /// after that goes back to looking at everything.
     /// </summary>
     private byte[]? _pendingFocusRegionImage;
+
+    /// <summary>
+    /// Whether the toast confirming <see cref="_pendingFocusRegionImage"/> has been shown yet.
+    ///
+    /// The crop outlives the gesture that made it, so "there is a crop and this turn had no
+    /// words" stays true for every later attempt to talk — which is what had "Region focused"
+    /// appearing on a user's screen every single time they tried to say something.
+    /// </summary>
+    private bool _focusRegionAnnounced;
     private readonly HttpClient _creditsHttp = new() { Timeout = TimeSpan.FromSeconds(10) };
     public readonly NayfAgentManager AgentManager;
 
@@ -391,9 +422,16 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
         right there next to the user.
 
         When you want to point at something on the screen, use this format:
-        [POINT:x,y:label:screen0]
-        where x and y are pixel coordinates, label is what you're pointing at, and screen0
-        is the screen index (screen0 for the primary display).
+        [POINT:x,y:label:screenN]
+        where x and y are pixel coordinates, label is what you're pointing at, and N is the
+        screen number.
+
+        The user may have more than one monitor, and you are sent one image per monitor. Each
+        image is followed by its own label, like [Screen 0, 1512x850] or [Screen 1, 1280x800].
+        Read x and y off the image the thing is actually in, and put that image's number in
+        the tag — coordinates from one monitor point at the wrong place on another. Don't
+        assume the app the user is asking about is on screen 0; look at every image before
+        you point.
 
         Keep your responses brief and conversational unless the user asks for detail.
         If you're not sure what the user wants, ask a clarifying question.
@@ -473,6 +511,43 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
         """;
 
     /// <summary>
+    /// Appended, last of everything, when the user has roast mode switched on.
+    ///
+    /// Last on purpose: it is a tone instruction and it must not read as permission to skip
+    /// any of the mechanics above it. It is also written to be dropped — a roast is funny
+    /// when the user is fine and cruel when they aren't, and the model is the only thing in
+    /// the loop that can tell which it is looking at.
+    /// </summary>
+    private const string RoastPromptSuffix =
+        """
+        ROAST MODE is on. The user turned it on themselves and can turn it off in Settings,
+        so don't check that they meant it, don't warn them, and don't apologise for it.
+
+        You are exactly as useful as you were a second ago. Every answer is still correct,
+        every step still works, and nothing helpful gets cut to make room for a joke. Roast
+        mode changes the tone of what you say, not what you say.
+
+        How it sounds: dry, quick, and rude about the WORK. The forty tabs. The folder called
+        "new folder (3)". The variable named data2. The eleven minutes they have spent
+        hovering over one button. One jab, then the actual answer — you're the friend who
+        takes the piss while handing them the right tool, not a comedian with a set to get
+        through. If you can't find a good one, skip it; a laboured joke is worse than none.
+
+        Never the user. Not their looks, body, age, accent, gender, race, intelligence, job,
+        or money — nothing about who they are. Their screen is fair game. They are not.
+
+        Read the room and drop it when the room says drop it. Someone stressed, stuck on
+        something that matters, out of time, or dealing with something personal gets a
+        straight answer and no jab. That is not breaking character, it's judgement — and
+        being able to tell the difference is the only reason this mode is any good.
+
+        Say it, don't write it. Anything the user has to READ stays plain and literal: the
+        label on a [POINT] tag, a step's label, a [MISSION:] label. Those are signposts, and
+        a funny signpost is one you have to read twice. In a walkthrough the spoken sentence
+        IS the instruction — it can be dry, it can't be vague.
+        """;
+
+    /// <summary>
     /// Appended on a walkthrough turn. Two jobs: undo the prompt above, which describes
     /// tools this turn does not have — left in, the model reads that it can click and type,
     /// tries to, and spends its steps being refused rather than teaching — and explain the
@@ -514,11 +589,24 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
           is traced in exactly those bounds and a wrong size looks wrong on screen.
         - An arrow means "drag from here to there", so send to_x and to_y only for a drag.
 
-        Use wait_for "click" when the step is a single click on the point you gave. Use
-        "continue" for a drag, for typing, or for anything with no one click to watch for.
+        Use wait_for "click" when the step is a single click on the point you gave. Use "key"
+        when the step is one keystroke — "press M to open the map", "hit Enter" — and put that
+        key in the "key" argument; the press is noticed the same way a click is. Use
+        "continue" for a drag, for typing a phrase, or for anything with no single input to
+        watch for.
+
+        A key step still needs x, y, w and h: outline what the key affects — the panel that
+        opens, the field that gets focus, the part of the HUD it changes — so they can see
+        what to look at while they press it.
 
         Coordinates are in the pixel space of the screenshot you are looking at, so take a
         fresh one for each step rather than reusing coordinates from an earlier screen.
+
+        take_screenshot returns one image per monitor, each followed by its own label like
+        [Screen 0, 1512x850]. Find the window the user is working in before you point — it is
+        often not on screen 0 — then read x and y off THAT image and pass its number as the
+        step's "screen" argument. Getting that number wrong draws the whole step on the wrong
+        monitor, where the user never sees it.
 
         Don't use [POINT] tags here — request_user_step does the pointing, and unlike a tag
         it waits. When the walkthrough is done, say so in one short sentence and stop.
@@ -557,6 +645,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
         _pushToTalkMonitor.PushToTalkPressed += OnPushToTalkPressed;
         _pushToTalkMonitor.PushToTalkReleased += OnPushToTalkReleased;
         _pushToTalkMonitor.MouseClicked += OnMouseClicked;
+        _pushToTalkMonitor.WatchedKeyPressed += OnWatchedKeyPressed;
 
         _pushToTalkMonitor.RegionFocusStarted += _regionFocusController.Begin;
         _pushToTalkMonitor.RegionFocusFinished += _regionFocusController.Finish;
@@ -1085,6 +1174,44 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
     }
 
     /// <summary>
+    /// Says something about a press that produced no words.
+    ///
+    /// Speech starting successfully and then transcribing nothing is the one failure that
+    /// used to leave no trace at all: every check passes, the pill lights up, the waveform
+    /// moves with the user's voice, and the turn ends in silence. From the outside that is
+    /// Vayme choosing not to answer, and it is how it was reported — "it reacts when he says
+    /// something, but it doesn't answer".
+    ///
+    /// Which of the three it was decides how loud the answer is. Not catching a word is
+    /// ordinary and gets a chip; a recognizer being fed silence while the microphone is
+    /// clearly working is a broken machine and gets the banner, with the way to fix it.
+    /// </summary>
+    private void ReportSilence(DictationSilence silence)
+    {
+        switch (silence)
+        {
+            case DictationSilence.NotUnderstood:
+                NayfActionToast.ShowNotUnderstood();
+                break;
+
+            case DictationSilence.RecognizerGotSilence:
+                SpeechProblem = SpeechProblem.Unknown;
+                SpeechProblemMessage =
+                    "Your microphone is working, but Windows speech recognition received " +
+                    "nothing from it. Check that Windows is set to the same microphone you " +
+                    "are speaking into, and that speech recognition is on.";
+                MicrophonePermissionNeeded = true;
+                break;
+
+            // Held the keys and said nothing. Not a fault, and not worth a word about.
+            case DictationSilence.NothingHeard:
+            case DictationSilence.None:
+            default:
+                break;
+        }
+    }
+
+    /// <summary>
     /// Calls off the turn that is running right now — the agent loop, whatever tool it was
     /// in the middle of, and the acknowledgment that was going to speak for it.
     ///
@@ -1118,11 +1245,11 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
         SetVoiceState(CompanionVoiceState.Processing);
         StopWatchdog();
 
-        string? transcript;
+        DictationResult dictation;
         try
         {
-            transcript = await _buddyDictationManager.StopRecordingAndGetTranscriptAsync();
-            Logger.Log("CompanionManager", $"Transcript: {transcript}");
+            dictation = await _buddyDictationManager.StopRecordingAndGetTranscriptAsync();
+            Logger.Log("CompanionManager", $"Transcript: {dictation.Transcript}");
         }
         catch (Exception ex)
         {
@@ -1130,6 +1257,8 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
             SetVoiceState(RestingState);
             return;
         }
+
+        var transcript = dictation.Transcript;
 
         // The user can cut in while the recognizer is still finalizing — it waits up to a
         // couple of seconds for its last result. By then that press has taken the state and
@@ -1147,8 +1276,16 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
             // something and said nothing. That is allowed — the crop keeps until their next
             // question — but without a word from Vayme the gesture has no visible result at
             // all, which is indistinguishable from the lasso having failed.
-            if (_pendingFocusRegionImage != null) NayfActionToast.ShowRegionFocused();
+            //
+            // Once per crop, though. The toast confirms the lasso, and repeating it on every
+            // silent turn afterwards stops confirming anything and starts looking like a bug.
+            if (_pendingFocusRegionImage != null && !_focusRegionAnnounced)
+            {
+                NayfActionToast.ShowRegionFocused();
+                _focusRegionAnnounced = true;
+            }
 
+            ReportSilence(dictation.Silence);
             SetVoiceState(RestingState);
             return;
         }
@@ -1321,6 +1458,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
     public void FinishRegionFocusVoiceCapture(byte[] regionImage)
     {
         _pendingFocusRegionImage = regionImage;
+        _focusRegionAnnounced = false;
         Logger.Log("CompanionManager", $"Region focus: {regionImage.Length / 1024} KB crop pending");
         OnPushToTalkReleased();
     }
@@ -1466,6 +1604,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
         // after this one goes back to looking at everything.
         var focusRegionImage = _pendingFocusRegionImage;
         _pendingFocusRegionImage = null;
+        _focusRegionAnnounced = false;
 
         List<CapturedScreenshot>? screenshots = null;
         if (focusRegionImage != null)
@@ -1521,6 +1660,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
             var systemPrompt = BuildSystemPrompt();
             if (toolMode == NayfToolMode.GuidedWalkthrough)
                 systemPrompt += "\n\n" + WalkthroughPromptSuffix;
+            if (RoastMode) systemPrompt += "\n\n" + RoastPromptSuffix;
             var memoryBlock = Memory.ContextBlock();
             if (memoryBlock.Length > 0) systemPrompt += "\n\n" + memoryBlock;
 
@@ -1766,7 +1906,16 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
                 {
                     if (s.ScreenIndex == screenIndex) { shot = s; break; }
                 }
-                shot ??= screenshots.Count > 0 ? screenshots[0] : null;
+
+                // Falling back to the primary screen points at the right coordinates on the
+                // wrong monitor, which looks like a working feature aimed at nothing — so say
+                // so, rather than leaving it to be reported as "it only draws on screen 1".
+                if (shot == null && screenshots.Count > 0)
+                {
+                    Logger.Log("CompanionManager",
+                        $"POINT named screen{screenIndex}, which wasn't captured — using screen 0");
+                    shot = screenshots[0];
+                }
             }
 
             if (shot != null && shot.ImageWidth > 0 && shot.ImageHeight > 0)
@@ -1869,6 +2018,8 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
         // saying so, and a hook watching for a click nobody is waiting for is pure cost.
         if (step.WaitFor == WalkthroughWaitFor.Click)
             _pushToTalkMonitor.StartWatchingClicks();
+        else if (step.WaitFor == WalkthroughWaitFor.Key && step.WaitKeyCode != 0)
+            _pushToTalkMonitor.WatchForKey(step.WaitKeyCode);
 
         _ = SpeakStepInstructionAsync(step, ct);
 
@@ -1882,6 +2033,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
             // Also on the cancelled path: an interrupted walkthrough must not leave a hook
             // installed or an outline drawn around a step nobody is on any more.
             _pushToTalkMonitor.StopWatchingClicks();
+            _pushToTalkMonitor.StopWatchingKeys();
             UpdateOnUI(() =>
             {
                 if (ReferenceEquals(_pendingStep, pending)) _pendingStep = null;
@@ -2020,6 +2172,21 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
         if (!IsClickOnTarget(pending.Step, point)) return;
 
         TryResumeWalkthrough(WalkthroughResumeReason.Clicked);
+    }
+
+    /// <summary>
+    /// The key a step was waiting for has been pressed.
+    ///
+    /// No target test, unlike a click: the monitor only reports the one key this step asked
+    /// for, so there is nothing left to check by the time it gets here.
+    /// </summary>
+    private void OnWatchedKeyPressed()
+    {
+        var pending = _pendingStep;
+        if (pending == null || pending.Step.WaitFor != WalkthroughWaitFor.Key) return;
+
+        Logger.Log("Walkthrough", $"key '{pending.Step.WaitKey}' pressed — step done");
+        TryResumeWalkthrough(WalkthroughResumeReason.Pressed);
     }
 
     /// <summary>

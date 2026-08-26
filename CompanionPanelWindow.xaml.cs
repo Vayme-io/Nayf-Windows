@@ -580,6 +580,23 @@ public sealed partial class CompanionPanelWindow : Window
             RefreshStartupToggle();
     }
 
+    // Same guard as the startup switch: syncing the toggle to the stored setting
+    // raises Toggled, and that isn't the user flipping it.
+    private bool _syncingRoastToggle;
+
+    private void RefreshRoastModeToggle()
+    {
+        _syncingRoastToggle = true;
+        RoastModeToggle.IsOn = _companionManager.RoastMode;
+        _syncingRoastToggle = false;
+    }
+
+    private void RoastModeToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_syncingRoastToggle) return;
+        _companionManager.RoastMode = RoastModeToggle.IsOn;
+    }
+
     /// <summary>
     /// The panel goes away first: the card lands in the middle of the screen and Vayme talks
     /// over it, and a settings pane still sitting there would be the one thing on screen the
@@ -1114,6 +1131,7 @@ public sealed partial class CompanionPanelWindow : Window
         if (page == PanelPage.Settings)
         {
             RefreshStartupToggle();
+            RefreshRoastModeToggle();
             ClearHistoryCaption.Text = "Forget what we've talked about this session";
         }
 

@@ -283,6 +283,14 @@ public sealed class NayfActionToast : IDisposable
         ShowWarning(WarningGlyph, "Couldn't capture that region", "Try circling it again");
 
     /// <summary>
+    /// Speech came back with no words. Said out loud in a chip because the alternative is
+    /// what users actually reported: the pill lights up when they talk and then nothing
+    /// happens, which is indistinguishable from Vayme having ignored them.
+    /// </summary>
+    public static void ShowNotUnderstood() =>
+        ShowWarning(WarningGlyph, "Didn't catch that", "Hold Ctrl+Alt and say it again");
+
+    /// <summary>
     /// Formats a calendar event's start the way the Mac does. Returns null when the
     /// Worker hands back something unparseable, in which case the subtitle is just the
     /// event's name — a wrong time is worse than no time.

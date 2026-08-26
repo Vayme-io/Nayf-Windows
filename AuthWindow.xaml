@@ -16,7 +16,7 @@
                         HorizontalAlignment="Right" VerticalAlignment="Top"
                         Width="26" Height="26" CornerRadius="13" Padding="0"
                         Background="#14FFFFFF" BorderThickness="0">
-                    <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE711;" FontSize="11" Foreground="#8E8E93"/>
+                    <FontIcon FontFamily="{StaticResource IconFont}" Glyph="&#xE711;" FontSize="11" Foreground="#8E8E93"/>
                 </Button>
             </Grid>
 
@@ -27,20 +27,20 @@
                     <Image x:Name="LogoImage" Width="36" Height="36"/>
                     <TextBlock Text="Vayme"
                                Foreground="White" FontSize="24" FontWeight="SemiBold"
-                               FontFamily="Segoe UI Variable" VerticalAlignment="Center"/>
+                               FontFamily="{StaticResource UiFont}" VerticalAlignment="Center"/>
                 </StackPanel>
 
                 <TextBlock x:Name="SubtitleText"
                            Text="Sign in to continue"
                            Foreground="#8E8E93" FontSize="13"
-                           FontFamily="Segoe UI Variable"
+                           FontFamily="{StaticResource UiFont}"
                            HorizontalAlignment="Center" Margin="0,0,0,6"/>
 
                 <!-- Email -->
                 <StackPanel Spacing="7">
                     <TextBlock Text="EMAIL"
                                Foreground="#8E8E93" FontSize="11" FontWeight="SemiBold"
-                               CharacterSpacing="80" FontFamily="Segoe UI Variable"/>
+                               CharacterSpacing="80" FontFamily="{StaticResource UiFont}"/>
                     <!-- The vertical padding is what centres the text, not
                          VerticalContentAlignment: WinUI's TextBox and PasswordBox
                          templates position both the text and the placeholder from
@@ -56,7 +56,7 @@
                 <StackPanel Spacing="7">
                     <TextBlock Text="PASSWORD"
                                Foreground="#8E8E93" FontSize="11" FontWeight="SemiBold"
-                               CharacterSpacing="80" FontFamily="Segoe UI Variable"/>
+                               CharacterSpacing="80" FontFamily="{StaticResource UiFont}"/>
                     <PasswordBox x:Name="PasswordBox"
                                  PlaceholderText="••••••••" FontSize="14"
                                  Height="40" CornerRadius="10" Padding="12,9,12,9"
@@ -67,7 +67,7 @@
                 <TextBlock x:Name="MessageText"
                            Text=""
                            Foreground="#FF453A" FontSize="12"
-                           FontFamily="Segoe UI Variable"
+                           FontFamily="{StaticResource UiFont}"
                            TextWrapping="Wrap"
                            Visibility="Collapsed"/>
 
@@ -77,7 +77,7 @@
                         HorizontalAlignment="Stretch" Height="42"
                         CornerRadius="10" Click="SubmitButton_Click"
                         Foreground="White" FontSize="14" FontWeight="SemiBold"
-                        FontFamily="Segoe UI Variable">
+                        FontFamily="{StaticResource UiFont}">
                     <Button.Background>
                         <SolidColorBrush Color="#0A84FF"/>
                     </Button.Background>
@@ -88,7 +88,7 @@
                     <TextBlock x:Name="ToggleHintText"
                                Text="Don't have an account?"
                                Foreground="#8E8E93" FontSize="12"
-                               FontFamily="Segoe UI Variable" VerticalAlignment="Center"/>
+                               FontFamily="{StaticResource UiFont}" VerticalAlignment="Center"/>
                     <HyperlinkButton x:Name="ToggleModeButton"
                                      Content="Create one"
                                      FontSize="12" Padding="0"

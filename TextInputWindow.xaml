@@ -19,7 +19,6 @@
             <SolidColorBrush x:Key="TextTertiary"  Color="#6E6E73"/>
             <SolidColorBrush x:Key="SurfaceMid"    Color="#12FFFFFF"/>
             <SolidColorBrush x:Key="Hairline"      Color="#14FFFFFF"/>
-            <x:String x:Key="UiFont">Segoe UI Variable</x:String>
         </Grid.Resources>
 
         <!-- Aligned rather than stretched: the window is sized from ActualHeight, and a

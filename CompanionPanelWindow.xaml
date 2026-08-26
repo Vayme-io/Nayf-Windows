@@ -26,7 +26,6 @@
             <SolidColorBrush x:Key="SurfaceMid"  Color="#12FFFFFF"/>
             <SolidColorBrush x:Key="Hairline"    Color="#14FFFFFF"/>
 
-            <x:String x:Key="UiFont">Segoe UI Variable</x:String>
 
             <!-- A flat row action: icon + label, no chrome until hovered. -->
             <Style x:Key="BarAction" TargetType="Button">
@@ -101,7 +100,7 @@
                     <Button x:Name="BackButton" Click="BackButton_Click"
                             Style="{StaticResource RoundIconButton}"
                             Width="26" Height="26" CornerRadius="13">
-                        <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE72B;" FontSize="11"
+                        <FontIcon FontFamily="{StaticResource IconFont}" Glyph="&#xE72B;" FontSize="11"
                                   Foreground="{StaticResource TextSecondary}"/>
                     </Button>
                     <TextBlock x:Name="PageTitleText" Text="Memory"
@@ -128,12 +127,12 @@
                     <Button x:Name="SettingsButton" Click="SettingsButton_Click"
                             Style="{StaticResource RoundIconButton}"
                             ToolTipService.ToolTip="Settings">
-                        <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE713;" FontSize="12"
+                        <FontIcon FontFamily="{StaticResource IconFont}" Glyph="&#xE713;" FontSize="12"
                                   Foreground="{StaticResource TextSecondary}"/>
                     </Button>
                     <Button x:Name="CloseButton" Click="CloseButton_Click"
                             Style="{StaticResource RoundIconButton}">
-                        <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE711;" FontSize="11"
+                        <FontIcon FontFamily="{StaticResource IconFont}" Glyph="&#xE711;" FontSize="11"
                                   Foreground="{StaticResource TextSecondary}"/>
                     </Button>
                 </StackPanel>
@@ -157,7 +156,7 @@
 
                         <Grid Width="44" Height="44" VerticalAlignment="Center">
                             <Ellipse x:Name="MicCircle" Width="44" Height="44" Fill="#2E458FFF"/>
-                            <FontIcon x:Name="MicGlyph" FontFamily="Segoe Fluent Icons"
+                            <FontIcon x:Name="MicGlyph" FontFamily="{StaticResource IconFont}"
                                       Glyph="&#xE720;" FontSize="19" Foreground="#458FFF"/>
                         </Grid>
 
@@ -200,7 +199,7 @@
 
                 <StackPanel x:Name="MemoryEmptyState" Spacing="12" Padding="0,20,0,20"
                             HorizontalAlignment="Stretch">
-                    <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE81C;" FontSize="28"
+                    <FontIcon FontFamily="{StaticResource IconFont}" Glyph="&#xE81C;" FontSize="28"
                               Foreground="#48484A" HorizontalAlignment="Center"/>
                     <TextBlock Text="Vayme will remember details about you as you chat — they'll show up here."
                                Foreground="{StaticResource TextSecondary}" FontSize="12.5"
@@ -219,10 +218,10 @@
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
-                                    <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xEC92;" FontSize="12"
+                                    <FontIcon FontFamily="{StaticResource IconFont}" Glyph="&#xEC92;" FontSize="12"
                                               Foreground="#A1A1A6" VerticalAlignment="Top" Margin="0,2,0,0"/>
                                     <TextBlock Grid.Column="1" Text="{Binding}" Margin="10,0,0,0"
-                                               Foreground="#F5F5F7" FontSize="13" FontFamily="Segoe UI Variable"
+                                               Foreground="#F5F5F7" FontSize="13" FontFamily="{StaticResource UiFont}"
                                                TextWrapping="Wrap"/>
                                     <!-- Forgets this one fact. Same shape as the trash button on an
                                          agent tile, so the two lists are operated the same way. -->
@@ -231,7 +230,7 @@
                                             Margin="6,0,0,0" BorderThickness="0" Background="Transparent"
                                             VerticalAlignment="Top"
                                             ToolTipService.ToolTip="Forget this">
-                                        <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE74D;"
+                                        <FontIcon FontFamily="{StaticResource IconFont}" Glyph="&#xE74D;"
                                                   FontSize="11" Foreground="#6E6E73"/>
                                     </Button>
                                 </Grid>
@@ -243,7 +242,7 @@
                 <HyperlinkButton x:Name="ClearMemoryButton" Click="ClearMemoryButton_Click"
                                  HorizontalAlignment="Center" Padding="0">
                     <StackPanel Orientation="Horizontal" Spacing="6">
-                        <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE74D;" FontSize="12"
+                        <FontIcon FontFamily="{StaticResource IconFont}" Glyph="&#xE74D;" FontSize="12"
                                   Foreground="{StaticResource TextSecondary}"/>
                         <TextBlock Text="Clear all memory" Foreground="{StaticResource TextSecondary}"
                                    FontSize="12.5" FontFamily="{StaticResource UiFont}"/>
@@ -262,7 +261,7 @@
 
                 <StackPanel x:Name="AgentsEmptyState" Spacing="12" Padding="0,20,0,20"
                             HorizontalAlignment="Stretch">
-                    <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE945;" FontSize="28"
+                    <FontIcon FontFamily="{StaticResource IconFont}" Glyph="&#xE945;" FontSize="28"
                               Foreground="#48484A" HorizontalAlignment="Center"/>
                     <TextBlock Text="No agent tasks yet."
                                Foreground="{StaticResource TextPrimary}" FontSize="13"
@@ -308,7 +307,7 @@
                                         <Border Width="30" Height="30" CornerRadius="9"
                                                 HorizontalAlignment="Left"
                                                 Background="{Binding ChipFillBrush}">
-                                            <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE945;"
+                                            <FontIcon FontFamily="{StaticResource IconFont}" Glyph="&#xE945;"
                                                       FontSize="13" Foreground="{Binding AccentBrush}"/>
                                         </Border>
                                         <Button Tag="{Binding Id}" Click="AgentTaskDelete_Click"
@@ -316,20 +315,20 @@
                                                 BorderThickness="0" Background="Transparent"
                                                 HorizontalAlignment="Right" VerticalAlignment="Top"
                                                 ToolTipService.ToolTip="Delete task">
-                                            <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE74D;"
+                                            <FontIcon FontFamily="{StaticResource IconFont}" Glyph="&#xE74D;"
                                                       FontSize="11" Foreground="#6E6E73"/>
                                         </Button>
                                     </Grid>
 
                                     <TextBlock Grid.Row="1" Text="{Binding Title}" Margin="0,9,0,0"
                                                Foreground="#F5F5F7" FontSize="13" FontWeight="SemiBold"
-                                               FontFamily="Segoe UI Variable"
+                                               FontFamily="{StaticResource UiFont}"
                                                TextWrapping="Wrap" MaxLines="2"
                                                TextTrimming="CharacterEllipsis"/>
 
                                     <TextBlock Grid.Row="2" Text="{Binding Summary}" Margin="0,4,0,0"
                                                Foreground="#A1A1A6" FontSize="11.5"
-                                               FontFamily="Segoe UI Variable"
+                                               FontFamily="{StaticResource UiFont}"
                                                TextWrapping="Wrap" MaxLines="2"
                                                TextTrimming="CharacterEllipsis"
                                                VerticalAlignment="Top"/>
@@ -342,7 +341,7 @@
                 <HyperlinkButton x:Name="ClearAgentsButton" Click="ClearAgentsButton_Click"
                                  HorizontalAlignment="Center" Padding="0">
                     <StackPanel Orientation="Horizontal" Spacing="6">
-                        <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE74D;" FontSize="12"
+                        <FontIcon FontFamily="{StaticResource IconFont}" Glyph="&#xE74D;" FontSize="12"
                                   Foreground="{StaticResource TextSecondary}"/>
                         <TextBlock Text="Clear all agents" Foreground="{StaticResource TextSecondary}"
                                    FontSize="12.5" FontFamily="{StaticResource UiFont}"/>
@@ -374,7 +373,7 @@
                         </Grid.ColumnDefinitions>
                         <Border x:Name="CalendarIconBackground" Width="34" Height="34" CornerRadius="10"
                                 Background="#1A4285F4" VerticalAlignment="Center">
-                            <FontIcon x:Name="CalendarIcon" FontFamily="Segoe Fluent Icons"
+                            <FontIcon x:Name="CalendarIcon" FontFamily="{StaticResource IconFont}"
                                       Glyph="&#xE787;" FontSize="16" Foreground="#4285F4"/>
                         </Border>
                         <StackPanel Grid.Column="1" Margin="12,0,12,0" VerticalAlignment="Center" Spacing="2">
@@ -415,7 +414,7 @@
                         </Grid.ColumnDefinitions>
                         <Border x:Name="GitHubIconBackground" Width="34" Height="34" CornerRadius="10"
                                 Background="#1AD5D5DA" VerticalAlignment="Center">
-                            <FontIcon x:Name="GitHubIcon" FontFamily="Segoe Fluent Icons"
+                            <FontIcon x:Name="GitHubIcon" FontFamily="{StaticResource IconFont}"
                                       Glyph="&#xE943;" FontSize="16" Foreground="#D5D5DA"/>
                         </Border>
                         <StackPanel Grid.Column="1" Margin="12,0,12,0" VerticalAlignment="Center" Spacing="2">
@@ -454,7 +453,7 @@
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
                         <Border Width="34" Height="34" CornerRadius="10" Background="#1AEA4335" VerticalAlignment="Center">
-                            <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE715;" FontSize="16" Foreground="#EA4335"/>
+                            <FontIcon FontFamily="{StaticResource IconFont}" Glyph="&#xE715;" FontSize="16" Foreground="#EA4335"/>
                         </Border>
                         <StackPanel Grid.Column="1" Margin="12,0,12,0" VerticalAlignment="Center" Spacing="2">
                             <TextBlock Text="Gmail" Foreground="{StaticResource TextPrimary}"
@@ -479,7 +478,7 @@
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
                         <Border Width="34" Height="34" CornerRadius="10" Background="#1A611F69" VerticalAlignment="Center">
-                            <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE8BD;" FontSize="16" Foreground="#C084D8"/>
+                            <FontIcon FontFamily="{StaticResource IconFont}" Glyph="&#xE8BD;" FontSize="16" Foreground="#C084D8"/>
                         </Border>
                         <StackPanel Grid.Column="1" Margin="12,0,12,0" VerticalAlignment="Center" Spacing="2">
                             <TextBlock Text="Slack" Foreground="{StaticResource TextPrimary}"
@@ -504,7 +503,7 @@
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
                         <Border Width="34" Height="34" CornerRadius="10" Background="{StaticResource SurfaceMid}" VerticalAlignment="Center">
-                            <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE8A5;" FontSize="16" Foreground="#D5D5DA"/>
+                            <FontIcon FontFamily="{StaticResource IconFont}" Glyph="&#xE8A5;" FontSize="16" Foreground="#D5D5DA"/>
                         </Border>
                         <StackPanel Grid.Column="1" Margin="12,0,12,0" VerticalAlignment="Center" Spacing="2">
                             <TextBlock Text="Notion" Foreground="{StaticResource TextPrimary}"
@@ -565,7 +564,7 @@
                             Background="{StaticResource SurfaceLow}" BorderThickness="0"
                             CornerRadius="12" Padding="12,9,12,9">
                         <StackPanel Orientation="Horizontal" Spacing="7">
-                            <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE10E;" FontSize="12"
+                            <FontIcon FontFamily="{StaticResource IconFont}" Glyph="&#xE10E;" FontSize="12"
                                       Foreground="{StaticResource TextSecondary}"/>
                             <TextBlock Text="Cancel a purchase (right of withdrawal)"
                                        Foreground="{StaticResource TextSecondary}" FontSize="11.5"
@@ -606,7 +605,7 @@
                             Background="#1A0A84FF" CornerRadius="12" Padding="14">
                         <StackPanel Spacing="8">
                             <StackPanel Orientation="Horizontal" Spacing="7">
-                                <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE930;" FontSize="14"
+                                <FontIcon FontFamily="{StaticResource IconFont}" Glyph="&#xE930;" FontSize="14"
                                           Foreground="{StaticResource AccentLink}"/>
                                 <TextBlock Text="Request received"
                                            Foreground="{StaticResource TextPrimary}" FontSize="13"
@@ -639,7 +638,7 @@
                      so the user tells us when it's done and the balance is re-read. -->
                 <StackPanel x:Name="TokensCheckoutView" Visibility="Collapsed" Spacing="12"
                             Padding="0,16,0,8" HorizontalAlignment="Stretch">
-                    <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE774;" FontSize="28"
+                    <FontIcon FontFamily="{StaticResource IconFont}" Glyph="&#xE774;" FontSize="28"
                               Foreground="{StaticResource AccentLink}" HorizontalAlignment="Center"/>
                     <TextBlock Text="Finish your purchase in the browser"
                                Foreground="{StaticResource TextPrimary}" FontSize="14"
@@ -683,7 +682,7 @@
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xEA80;" FontSize="15"
+                            <FontIcon FontFamily="{StaticResource IconFont}" Glyph="&#xEA80;" FontSize="15"
                                       Foreground="{StaticResource TextSecondary}"
                                       VerticalAlignment="Center" Width="22"/>
                             <StackPanel Grid.Column="1" Margin="11,0,10,0" VerticalAlignment="Center" Spacing="2">
@@ -695,11 +694,40 @@
                                            Foreground="{StaticResource TextTertiary}"
                                            FontSize="11" FontFamily="{StaticResource UiFont}"/>
                             </StackPanel>
-                            <FontIcon Grid.Column="2" FontFamily="Segoe Fluent Icons" Glyph="&#xE76C;"
+                            <FontIcon Grid.Column="2" FontFamily="{StaticResource IconFont}" Glyph="&#xE76C;"
                                       FontSize="10" Foreground="{StaticResource TextTertiary}"
                                       VerticalAlignment="Center"/>
                         </Grid>
                     </Button>
+
+                    <!-- Roast mode. A tone setting and only a tone setting: Vayme is exactly
+                         as useful with it on, it is just markedly less polite about the
+                         state of your desktop. -->
+                    <Border Style="{StaticResource SettingsRow}">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <FontIcon FontFamily="{StaticResource IconFont}" Glyph="&#xE899;" FontSize="15"
+                                      Foreground="{StaticResource TextSecondary}"
+                                      VerticalAlignment="Center" Width="22"/>
+                            <StackPanel Grid.Column="1" Margin="11,0,10,0" VerticalAlignment="Center" Spacing="2">
+                                <TextBlock Text="Roast mode"
+                                           Foreground="{StaticResource TextPrimary}"
+                                           FontSize="13" FontWeight="SemiBold"
+                                           FontFamily="{StaticResource UiFont}"/>
+                                <TextBlock Text="Same help, considerably less politeness"
+                                           Foreground="{StaticResource TextTertiary}"
+                                           FontSize="11" FontFamily="{StaticResource UiFont}"/>
+                            </StackPanel>
+                            <ToggleSwitch x:Name="RoastModeToggle" Grid.Column="2"
+                                          Toggled="RoastModeToggle_Toggled"
+                                          OnContent="" OffContent="" MinWidth="0"
+                                          VerticalAlignment="Center"/>
+                        </Grid>
+                    </Border>
 
                     <!-- Launch at sign-in. This is the same HKCU Run entry the
                          installer offers to create, so the two stay in agreement. -->
@@ -710,7 +738,7 @@
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE7E8;" FontSize="15"
+                            <FontIcon FontFamily="{StaticResource IconFont}" Glyph="&#xE7E8;" FontSize="15"
                                       Foreground="{StaticResource TextSecondary}"
                                       VerticalAlignment="Center" Width="22"/>
                             <StackPanel Grid.Column="1" Margin="11,0,10,0" VerticalAlignment="Center" Spacing="2">
@@ -740,7 +768,7 @@
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE720;" FontSize="15"
+                            <FontIcon FontFamily="{StaticResource IconFont}" Glyph="&#xE720;" FontSize="15"
                                       Foreground="{StaticResource TextSecondary}"
                                       VerticalAlignment="Center" Width="22"/>
                             <StackPanel Grid.Column="1" Margin="11,0,10,0" VerticalAlignment="Center" Spacing="2">
@@ -752,7 +780,7 @@
                                            Foreground="{StaticResource TextTertiary}"
                                            FontSize="11" FontFamily="{StaticResource UiFont}"/>
                             </StackPanel>
-                            <FontIcon Grid.Column="2" FontFamily="Segoe Fluent Icons" Glyph="&#xE76C;"
+                            <FontIcon Grid.Column="2" FontFamily="{StaticResource IconFont}" Glyph="&#xE76C;"
                                       FontSize="10" Foreground="{StaticResource TextTertiary}"
                                       VerticalAlignment="Center"/>
                         </Grid>
@@ -771,7 +799,7 @@
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE777;" FontSize="15"
+                            <FontIcon FontFamily="{StaticResource IconFont}" Glyph="&#xE777;" FontSize="15"
                                       Foreground="{StaticResource TextSecondary}"
                                       VerticalAlignment="Center" Width="22"/>
                             <StackPanel Grid.Column="1" Margin="11,0,10,0" VerticalAlignment="Center" Spacing="2">
@@ -806,7 +834,7 @@
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE74D;" FontSize="15"
+                            <FontIcon FontFamily="{StaticResource IconFont}" Glyph="&#xE74D;" FontSize="15"
                                       Foreground="{StaticResource TextSecondary}"
                                       VerticalAlignment="Center" Width="22"/>
                             <StackPanel Grid.Column="1" Margin="11,0,10,0" VerticalAlignment="Center" Spacing="2">
@@ -941,7 +969,7 @@
                 <StackPanel Orientation="Horizontal" Spacing="2">
                     <Button x:Name="ConnectAppsButton" Click="ConnectAppsButton_Click" Style="{StaticResource BarAction}">
                         <StackPanel Orientation="Horizontal" Spacing="7">
-                            <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE71B;" FontSize="13"
+                            <FontIcon FontFamily="{StaticResource IconFont}" Glyph="&#xE71B;" FontSize="13"
                                       Foreground="{StaticResource TextSecondary}"/>
                             <TextBlock x:Name="ConnectAppsLabel" Text="Connect apps"
                                        Foreground="{StaticResource TextSecondary}"
@@ -950,7 +978,7 @@
                     </Button>
                     <Button x:Name="MemoryButton" Click="MemoryButton_Click" Style="{StaticResource BarAction}">
                         <StackPanel Orientation="Horizontal" Spacing="7">
-                            <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE81C;" FontSize="13"
+                            <FontIcon FontFamily="{StaticResource IconFont}" Glyph="&#xE81C;" FontSize="13"
                                       Foreground="{StaticResource TextSecondary}"/>
                             <TextBlock Text="Memory" Foreground="{StaticResource TextSecondary}"
                                        FontSize="12.5" FontFamily="{StaticResource UiFont}" VerticalAlignment="Center"/>
@@ -958,7 +986,7 @@
                     </Button>
                     <Button x:Name="AgentsButton" Click="AgentsButton_Click" Style="{StaticResource BarAction}">
                         <StackPanel Orientation="Horizontal" Spacing="7">
-                            <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE945;" FontSize="13"
+                            <FontIcon FontFamily="{StaticResource IconFont}" Glyph="&#xE945;" FontSize="13"
                                       Foreground="{StaticResource TextSecondary}"/>
                             <TextBlock Text="Agents" Foreground="{StaticResource TextSecondary}"
                                        FontSize="12.5" FontFamily="{StaticResource UiFont}" VerticalAlignment="Center"/>
@@ -996,7 +1024,7 @@
 
                 <!-- Tokens -->
                 <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Center">
-                    <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE734;" FontSize="11"
+                    <FontIcon FontFamily="{StaticResource IconFont}" Glyph="&#xE734;" FontSize="11"
                               Foreground="{StaticResource TextTertiary}"/>
                     <TextBlock x:Name="CreditBalanceText" Text="Loading tokens…"
                                Foreground="{StaticResource TextSecondary}" FontSize="11.5"
@@ -1011,7 +1039,7 @@
                         Margin="0,0,8,0" Background="{StaticResource SurfaceLow}"
                         ToolTipService.ToolTip="Vayme routes each request to the right model">
                     <StackPanel Orientation="Horizontal" Spacing="5">
-                        <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE945;" FontSize="10"
+                        <FontIcon FontFamily="{StaticResource IconFont}" Glyph="&#xE945;" FontSize="10"
                                   Foreground="{StaticResource TextTertiary}"/>
                         <TextBlock x:Name="ActiveModelText" Text="Auto"
                                    Foreground="{StaticResource TextSecondary}" FontSize="11"
@@ -1024,7 +1052,7 @@
                         Style="{StaticResource RoundIconButton}" Width="26" Height="26" CornerRadius="13"
                         Background="{StaticResource SurfaceLow}"
                         ToolTipService.ToolTip="Quit Vayme">
-                    <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xE7E8;" FontSize="11"
+                    <FontIcon FontFamily="{StaticResource IconFont}" Glyph="&#xE7E8;" FontSize="11"
                               Foreground="{StaticResource TextSecondary}"/>
                 </Button>
             </Grid>

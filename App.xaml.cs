@@ -54,6 +54,11 @@ public partial class App : Application
         try
         {
             Log("OnLaunched", "Starting...");
+
+            // Before any window exists: StaticResource is resolved as each window's XAML is
+            // parsed, so these two keys have to be in place by the time the first one loads.
+            NayfFonts.PublishAsApplicationResources();
+
             _authManager = new AuthManager();
             _ = InitializeAsync();
         }

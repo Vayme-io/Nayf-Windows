@@ -7,6 +7,41 @@ using NAudio.Wave;
 
 namespace NayfWindows;
 
+/// <summary>Why one press of push-to-talk produced no words.</summary>
+public enum DictationSilence
+{
+    /// <summary>It didn't — there is a transcript.</summary>
+    None,
+
+    /// <summary>
+    /// Neither the microphone's meter nor the recognizer registered anything. The user held
+    /// the keys and didn't speak, or the microphone is muted or unplugged.
+    /// </summary>
+    NothingHeard,
+
+    /// <summary>
+    /// The microphone was picking up sound the whole time and the recognizer still received
+    /// nothing — the two are not looking at the same device, or Windows speech is not
+    /// working on this machine however configured it appears to be.
+    /// </summary>
+    RecognizerGotSilence,
+
+    /// <summary>
+    /// The recognizer heard speech but could not make out any words worth keeping — too
+    /// quiet, too noisy, or not the language it dictates in.
+    /// </summary>
+    NotUnderstood
+}
+
+/// <summary>
+/// What one press of push-to-talk produced: the words, and — when there were none — enough
+/// to tell the user something more useful than nothing at all.
+/// </summary>
+public readonly record struct DictationResult(string? Transcript, DictationSilence Silence)
+{
+    public static readonly DictationResult Nothing = new(null, DictationSilence.NothingHeard);
+}
+
 /// <summary>
 /// Push-to-talk voice pipeline. Starts Windows built-in speech recognition
 /// when push-to-talk begins and delivers the finalized transcript on key-up.
@@ -103,12 +138,12 @@ public sealed class BuddyDictationManager : IDisposable
     /// Stops speech recognition and returns the full transcript.
     /// Call when the user releases the push-to-talk key.
     /// </summary>
-    public async Task<string?> StopRecordingAndGetTranscriptAsync()
+    public async Task<DictationResult> StopRecordingAndGetTranscriptAsync()
     {
         DictationSession session;
         lock (_recordingLock)
         {
-            if (_activeSession == null) return null;
+            if (_activeSession == null) return DictationResult.Nothing;
             session = _activeSession;
 
             // Handed back before the wait below, so a user who cuts in gets a new
@@ -116,12 +151,15 @@ public sealed class BuddyDictationManager : IDisposable
             _activeSession = null;
         }
 
+        // Read before the meter is torn down, and while it still belongs to this session.
+        float peak = _peakLevelSeen;
         StopMicrophonePowerMonitor();
 
         // The final result usually arrives during this call, so the handlers stay attached
         // until it returns — they write into this session's own transcript, never into
         // whatever recording has started in the meantime.
         await session.Provider.EndSessionAsync();
+        bool recognizerHeardSomething = session.Provider.HeardSomething;
         session.Provider.Dispose();
 
         string fullTranscript;
@@ -132,13 +170,47 @@ public sealed class BuddyDictationManager : IDisposable
                 fullTranscript = session.CurrentPartialTranscript.Trim();
         }
 
-        return string.IsNullOrWhiteSpace(fullTranscript) ? null : fullTranscript;
+        if (!string.IsNullOrWhiteSpace(fullTranscript))
+            return new DictationResult(fullTranscript, DictationSilence.None);
+
+        // No words. Which of the three reasons it was decides what the user is told, and the
+        // two signals disagreeing is itself the diagnosis: the meter watches the default
+        // communications capture device, the recognizer picks its own, and a machine where
+        // those are not the same one produces a mic level that dances while Windows speech
+        // is handed silence.
+        var silence =
+            recognizerHeardSomething ? DictationSilence.NotUnderstood
+            : peak >= SpeechDetectedPeak ? DictationSilence.RecognizerGotSilence
+            : DictationSilence.NothingHeard;
+
+        Logger.Log("Dictation",
+            $"no transcript: peak={peak:0.000} recognizerHeard={recognizerHeardSomething} -> {silence}");
+
+        return new DictationResult(null, silence);
     }
 
     private DateTime _lastPowerLog = DateTime.MinValue;
 
+    /// <summary>
+    /// The loudest the microphone got during this recording, 0–1.
+    ///
+    /// Kept so that a press producing no words can say whether the microphone was working.
+    /// The peak meter is what the waveform already runs on, so this costs nothing extra.
+    /// </summary>
+    private float _peakLevelSeen;
+
+    /// <summary>
+    /// A peak this high means someone spoke rather than the room being quiet.
+    ///
+    /// Well above a silent room's floor and well below normal speech, because the only
+    /// question asked of it is which of two very different stories to tell the user.
+    /// </summary>
+    private const float SpeechDetectedPeak = 0.05f;
+
     private void StartMicrophonePowerMonitor()
     {
+        _peakLevelSeen = 0f;
+
         // Poll the device's peak meter (no capture stream → doesn't disturb the
         // recognizer). All COM work happens inside the timer callback so the
         // MMDevice is created and read on the same (threadpool) apartment.
@@ -157,6 +229,7 @@ public sealed class BuddyDictationManager : IDisposable
             }
 
             float peak = _meterDevice.AudioMeterInformation.MasterPeakValue;
+            if (peak > _peakLevelSeen) _peakLevelSeen = peak;
             AudioPowerLevelChanged?.Invoke(peak);
         }
         catch (Exception ex)

@@ -85,7 +85,7 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
     private static readonly object TakeScreenshotTool = new
     {
         name = "take_screenshot",
-        description = "Capture the user's current screen so you can see where they are before giving the next step. Read-only — it changes nothing. Coordinates you read off this image are the same pixel space you use when you point at something.",
+        description = "Capture the user's screens so you can see where they are before giving the next step. Read-only — it changes nothing. Returns one image per monitor, each followed by a label like \"[Screen 0, 1512x850]\". Coordinates you read off an image are the pixel space you point in for that screen, so look through all of them and point using the number on the one the target is in.",
         input_schema = new
         {
             type = "object",
@@ -299,8 +299,13 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
                 wait_for = new
                 {
                     type = "string",
-                    @enum = new[] { "click", "continue" },
-                    description = "\"click\" when the step is a single click on (x, y) — that click is noticed and the walkthrough carries on by itself. \"continue\" for a drag, for typing, or for anything with no one click to watch for; the user says when they're done."
+                    @enum = new[] { "click", "key", "continue" },
+                    description = "\"click\" when the step is a single click on (x, y) — that click is noticed and the walkthrough carries on by itself. \"key\" when the step is one keystroke, like pressing M or Enter — send the key in \"key\" and that press is noticed the same way. \"continue\" for a drag, for typing a phrase, or for anything with no single input to watch for; the user says when they're done."
+                },
+                key = new
+                {
+                    type = "string",
+                    description = "The single key to press, when wait_for is \"key\". A letter or digit (\"M\", \"5\"), a named key (\"Enter\", \"Escape\", \"Space\", \"Tab\", \"Delete\", \"Home\", \"End\", \"Up\", \"Down\", \"Left\", \"Right\", \"Page Up\", \"Page Down\"), or a function key (\"F5\"). One key only — not a combination, and not a word to type."
                 },
                 to_x = new
                 {
@@ -311,6 +316,11 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
                 {
                     type = "integer",
                     description = "Drag destination Y, screenshot pixels."
+                },
+                screen = new
+                {
+                    type = "integer",
+                    description = "Which display the target is on — the number in the \"[Screen N]\" label under the screenshot you read these coordinates off. Required whenever there is more than one screenshot, because x and y mean different places on different displays."
                 }
             },
             // w and h are required because they are the only description of the target's
@@ -555,28 +565,35 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
                     _runningToolLabel = null;
                 }
 
-                // A screenshot must go back as an image block so Claude can see it;
+                // Screenshots must go back as image blocks so Claude can see them;
                 // everything else is plain text.
-                if (toolResult.ScreenshotJpeg != null)
+                if (toolResult.Screenshots.Count > 0)
                 {
+                    // One image per monitor, each followed by its own label. The label has to
+                    // sit immediately after its image or the model has no way to tell which
+                    // display it is looking at, and picks a screen number by guessing.
+                    var content = new List<object>();
+                    foreach (var shot in toolResult.Screenshots)
+                    {
+                        content.Add(new
+                        {
+                            type = "image",
+                            source = new
+                            {
+                                type = "base64",
+                                media_type = "image/jpeg",
+                                data = Convert.ToBase64String(shot.ImageData)
+                            }
+                        });
+                        content.Add(new { type = "text", text = $"[{shot.ScreenLabel}]" });
+                    }
+                    content.Add(new { type = "text", text = toolResult.Text });
+
                     toolResults.Add(new
                     {
                         type = "tool_result",
                         tool_use_id = toolCall.ToolUseId,
-                        content = new object[]
-                        {
-                            new
-                            {
-                                type = "image",
-                                source = new
-                                {
-                                    type = "base64",
-                                    media_type = "image/jpeg",
-                                    data = Convert.ToBase64String(toolResult.ScreenshotJpeg)
-                                }
-                            },
-                            new { type = "text", text = toolResult.Text }
-                        }
+                        content = content.ToArray()
                     });
                 }
                 else
@@ -645,7 +662,8 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
                 "I can't show a step right now. Explain the remaining steps out loud instead.");
         }
 
-        var shot = ReferenceScreenshot(screenshots);
+        var namedScreen = TryGetNumber(toolCall.InputJson, "screen");
+        var shot = ReferenceScreenshot(screenshots, namedScreen == null ? null : (int)namedScreen.Value);
         if (shot == null)
         {
             return AgentToolResult.Message(
@@ -676,6 +694,10 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
             WalkthroughResumeReason.Clicked =>
                 "The user clicked the spot you pointed at. Take a fresh screenshot to see what " +
                 "changed, then give the next step.",
+
+            WalkthroughResumeReason.Pressed =>
+                $"The user pressed {step.WaitKey}. Take a fresh screenshot to see what changed, " +
+                "then give the next step.",
 
             _ =>
                 $"The user said: \"{reply.Transcript}\". " +
@@ -728,16 +750,36 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
             ? ToScreenPoint(shot, toX.Value, toY.Value)
             : null;
 
-        var waitFor = string.Equals(
-            input.TryGetValue("wait_for", out var rawWait) ? rawWait?.ToString() : null,
-            "continue", StringComparison.OrdinalIgnoreCase)
-            ? WalkthroughWaitFor.Continue
-            : WalkthroughWaitFor.Click;
+        var rawWaitFor = input.TryGetValue("wait_for", out var rawWait) ? rawWait?.ToString() : null;
+        var waitFor = rawWaitFor?.ToLowerInvariant() switch
+        {
+            "continue" => WalkthroughWaitFor.Continue,
+            "key" => WalkthroughWaitFor.Key,
+            _ => WalkthroughWaitFor.Click
+        };
 
         // A drag always waits to be told. Watching for a click would watch the wrong place —
         // the button comes back up at the destination, not at the target — and the user
         // would be left standing on a step they had already finished.
         if (dragTo != null) waitFor = WalkthroughWaitFor.Continue;
+
+        var waitKey = input.TryGetValue("key", out var rawKey) ? rawKey?.ToString()?.Trim() : null;
+        uint waitKeyCode = 0;
+
+        if (waitFor == WalkthroughWaitFor.Key)
+        {
+            waitKeyCode = GlobalPushToTalkMonitor.VirtualKeyFor(waitKey);
+
+            // A key we can't watch for is the failure this whole branch exists to prevent: the
+            // step would sit on "your turn" while the user pressed it over and over. Waiting
+            // to be told is slower, but it ends.
+            if (waitKeyCode == 0)
+            {
+                Logger.Log("Walkthrough",
+                    $"step asked to wait for key '{waitKey ?? "none"}', which can't be watched — waiting to be told instead");
+                waitFor = WalkthroughWaitFor.Continue;
+            }
+        }
 
         return new WalkthroughStep
         {
@@ -746,18 +788,44 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
             Label = label,
             Spoken = narration,
             WaitFor = waitFor,
+            WaitKey = waitFor == WalkthroughWaitFor.Key ? waitKey : null,
+            WaitKeyCode = waitKeyCode,
             DragTo = dragTo
         };
     }
 
     /// <summary>
-    /// The screenshot a step's coordinates were read off: the last one the model asked for,
-    /// or the primary screen captured when the turn started if it hasn't asked yet.
+    /// The screenshot a step's coordinates were read off.
+    ///
+    /// <paramref name="screenIndex"/> is the display the model said it was looking at, and it
+    /// decides the answer whenever it matches something we actually captured — the coordinates
+    /// are only meaningful against that monitor's image, and mapping them through screen 0
+    /// puts the outline on the wrong display.
+    ///
+    /// Without it we fall back to the model's most recent capture, then to the primary screen
+    /// from the start of the turn — the old behaviour, and right only when there is one screen.
     /// </summary>
-    private CapturedScreenshot? ReferenceScreenshot(List<CapturedScreenshot>? turnScreenshots)
+    private CapturedScreenshot? ReferenceScreenshot(
+        List<CapturedScreenshot>? turnScreenshots, int? screenIndex)
     {
-        if (_toolExecutor.LastScreenshot is { ImageWidth: > 0, ImageHeight: > 0 } latest)
-            return latest;
+        if (screenIndex is { } wanted)
+        {
+            if (_toolExecutor.LastScreenshotForScreen(wanted) is
+                { ImageWidth: > 0, ImageHeight: > 0 } named) return named;
+
+            if (turnScreenshots != null)
+            {
+                foreach (var shot in turnScreenshots)
+                    if (shot.ScreenIndex == wanted && shot is { ImageWidth: > 0, ImageHeight: > 0 })
+                        return shot;
+            }
+
+            Logger.Log("Walkthrough", $"step named screen {wanted}, which wasn't captured — falling back");
+        }
+
+        foreach (var shot in _toolExecutor.LastScreenshots)
+            if (shot is { ScreenIndex: 0, ImageWidth: > 0, ImageHeight: > 0 }) return shot;
+        if (_toolExecutor.LastScreenshots.Count > 0) return _toolExecutor.LastScreenshots[0];
 
         if (turnScreenshots == null) return null;
         foreach (var shot in turnScreenshots)

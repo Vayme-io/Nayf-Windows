@@ -51,6 +51,23 @@ public sealed class GlobalPushToTalkMonitor : IDisposable
     /// </summary>
     public event Action<System.Drawing.Point>? MouseClicked;
 
+    /// <summary>
+    /// The one key a walkthrough step is waiting for has been pressed. Raised only between
+    /// <see cref="WatchForKey"/> and <see cref="StopWatchingKeys"/>, only for that exact key,
+    /// and never in place of it — the app underneath still receives the keystroke.
+    /// </summary>
+    public event Action? WatchedKeyPressed;
+
+    /// <summary>
+    /// The virtual-key code a step is waiting for, or 0 for none.
+    ///
+    /// One specific key rather than a general key-down event, because the keyboard hook sees
+    /// everything the user types and there is no reason for any of it to reach the rest of
+    /// the app. Matching in here means the only thing that leaves this class is "the key we
+    /// were told to expect happened".
+    /// </summary>
+    private uint _watchedKeyCode;
+
     private IntPtr _hookHandle = IntPtr.Zero;
     private readonly NativeMethods.LowLevelKeyboardProc _hookCallback;
     private readonly DispatcherQueue _dispatcherQueue;
@@ -180,6 +197,7 @@ public sealed class GlobalPushToTalkMonitor : IDisposable
         _isRegionFocusActive = false;
         _regionInvalidated = false;
         _regionEscapeHeld = false;
+        _watchedKeyCode = 0;
         _otherKeysDown.Clear();
     }
 
@@ -217,6 +235,73 @@ public sealed class GlobalPushToTalkMonitor : IDisposable
     /// <summary>Stops reporting clicks and takes the hook back out.</summary>
     public void StopWatchingClicks() => _dispatcherQueue.TryEnqueue(UnhookMouse);
 
+    /// <summary>
+    /// Starts reporting one key through <see cref="WatchedKeyPressed"/>.
+    ///
+    /// No hook to install — the keyboard hook is already there for push-to-talk, so this is
+    /// only a filter on what it reports. Passing 0 watches for nothing.
+    /// </summary>
+    public void WatchForKey(uint virtualKey)
+    {
+        _dispatcherQueue.TryEnqueue(() =>
+        {
+            _watchedKeyCode = virtualKey;
+            Logger.Log("GlobalPTT", $"Watching for key 0x{virtualKey:X2}");
+        });
+    }
+
+    /// <summary>Stops reporting the watched key.</summary>
+    public void StopWatchingKeys() => _dispatcherQueue.TryEnqueue(() => _watchedKeyCode = 0);
+
+    /// <summary>
+    /// The virtual-key code for a key named the way a person would say it — "M", "Enter",
+    /// "F5", "Space" — or 0 when it isn't one we can watch for.
+    ///
+    /// Deliberately narrow. A step whose key isn't here waits to be told it is done instead,
+    /// which is slower but always works; guessing at a code would leave the user pressing a
+    /// key nothing was listening for.
+    /// </summary>
+    public static uint VirtualKeyFor(string? keyName)
+    {
+        var name = keyName?.Trim() ?? "";
+        if (name.Length == 0) return 0;
+
+        // A single letter or digit is its own code — the VK values for A–Z and 0–9 are the
+        // ASCII codes of the uppercase characters.
+        if (name.Length == 1)
+        {
+            char c = char.ToUpperInvariant(name[0]);
+            if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) return c;
+        }
+
+        // F1–F24 run consecutively from VK_F1.
+        if ((name[0] == 'F' || name[0] == 'f') && name.Length is 2 or 3 &&
+            int.TryParse(name.AsSpan(1), out int fn) && fn is >= 1 and <= 24)
+        {
+            return (uint)(0x70 + fn - 1);
+        }
+
+        return name.ToLowerInvariant() switch
+        {
+            "enter" or "return" => 0x0D,
+            "esc" or "escape" => 0x1B,
+            "space" or "spacebar" => 0x20,
+            "tab" => 0x09,
+            "backspace" => 0x08,
+            "delete" or "del" => 0x2E,
+            "insert" or "ins" => 0x2D,
+            "home" => 0x24,
+            "end" => 0x23,
+            "pageup" or "page up" or "pgup" => 0x21,
+            "pagedown" or "page down" or "pgdn" => 0x22,
+            "up" or "up arrow" => 0x26,
+            "down" or "down arrow" => 0x28,
+            "left" or "left arrow" => 0x25,
+            "right" or "right arrow" => 0x27,
+            _ => 0
+        };
+    }
+
     private void UnhookMouse()
     {
         if (_mouseHookHandle == IntPtr.Zero) return;
@@ -252,6 +337,25 @@ public sealed class GlobalPushToTalkMonitor : IDisposable
             var kbStruct = Marshal.PtrToStructure<NativeMethods.KBDLLHOOKSTRUCT>(lParam);
             bool isKeyDown = (wParam == (IntPtr)NativeMethods.WM_KEYDOWN || wParam == (IntPtr)NativeMethods.WM_SYSKEYDOWN);
             bool isKeyUp = (wParam == (IntPtr)NativeMethods.WM_KEYUP || wParam == (IntPtr)NativeMethods.WM_SYSKEYUP);
+
+            // The key a walkthrough step is waiting for. Reported, never swallowed: pressing
+            // it is the user operating their own application — the whole point of the step —
+            // and Vayme is only noting that it happened.
+            if (isKeyDown && _watchedKeyCode != 0 && kbStruct.vkCode == _watchedKeyCode)
+            {
+                // Ctrl+S is not the S the step asked for. Shift is allowed through because a
+                // capital letter is still that letter, and a step may well name one.
+                bool modified =
+                    NativeMethods.IsKeyDown(NativeMethods.VK_LCONTROL) ||
+                    NativeMethods.IsKeyDown(NativeMethods.VK_RCONTROL) ||
+                    NativeMethods.IsKeyDown(NativeMethods.VK_LMENU) ||
+                    NativeMethods.IsKeyDown(NativeMethods.VK_RMENU) ||
+                    NativeMethods.IsKeyDown(NativeMethods.VK_LWIN) ||
+                    NativeMethods.IsKeyDown(NativeMethods.VK_RWIN);
+
+                // Same rule as the text chord: never call out from inside a hook.
+                if (!modified) _dispatcherQueue.TryEnqueue(() => WatchedKeyPressed?.Invoke());
+            }
 
             // Swallowing the key stops Alt+T from reaching the app underneath as
             // well, where it would trip whatever T is the menu mnemonic for.

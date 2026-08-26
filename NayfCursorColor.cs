@@ -2,6 +2,7 @@ using System;
 using System.Drawing;
 using System.IO;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace NayfWindows;
 
@@ -27,36 +28,66 @@ public static class NayfCursorColorExtensions
 }
 
 /// <summary>
-/// Lightweight persisted app settings (currently just the cursor color),
-/// stored as JSON in %LOCALAPPDATA%\Vayme\settings.json.
+/// Lightweight persisted app settings, stored as JSON in
+/// %LOCALAPPDATA%\Vayme\settings.json.
 /// </summary>
 public static class NayfSettings
 {
     private static readonly string FilePath = AppPaths.InDataDirectory("settings.json");
 
-    public static NayfCursorColor LoadCursorColor()
+    /// <summary>
+    /// Everything the file holds, in one object.
+    ///
+    /// The file is rewritten whole on every change, so the settings have to be saved
+    /// together — writing just the one that changed would drop the others.
+    /// </summary>
+    private sealed class Stored
     {
+        [JsonPropertyName("cursorColor")] public string? CursorColor { get; set; }
+        [JsonPropertyName("roastMode")] public bool RoastMode { get; set; }
+    }
+
+    private static Stored? _cache;
+
+    private static Stored Current()
+    {
+        if (_cache != null) return _cache;
         try
         {
             if (File.Exists(FilePath))
-            {
-                using var doc = JsonDocument.Parse(File.ReadAllText(FilePath));
-                if (doc.RootElement.TryGetProperty("cursorColor", out var v) &&
-                    Enum.TryParse<NayfCursorColor>(v.GetString(), out var color))
-                    return color;
-            }
+                _cache = JsonSerializer.Deserialize<Stored>(File.ReadAllText(FilePath));
         }
-        catch { /* fall back to default */ }
-        return NayfCursorColor.Blue;
+        catch { /* fall back to defaults */ }
+        return _cache ??= new Stored();
     }
 
-    public static void SaveCursorColor(NayfCursorColor color)
+    private static void Persist()
     {
         try
         {
             Directory.CreateDirectory(AppPaths.DataDirectory);
-            File.WriteAllText(FilePath, JsonSerializer.Serialize(new { cursorColor = color.ToString() }));
+            File.WriteAllText(FilePath, JsonSerializer.Serialize(Current()));
         }
         catch { /* non-fatal */ }
+    }
+
+    public static NayfCursorColor LoadCursorColor() =>
+        Enum.TryParse<NayfCursorColor>(Current().CursorColor, out var color)
+            ? color
+            : NayfCursorColor.Blue;
+
+    public static void SaveCursorColor(NayfCursorColor color)
+    {
+        Current().CursorColor = color.ToString();
+        Persist();
+    }
+
+    /// <summary>Whether Vayme talks like it's fond of you and unimpressed by your desktop.</summary>
+    public static bool LoadRoastMode() => Current().RoastMode;
+
+    public static void SaveRoastMode(bool enabled)
+    {
+        Current().RoastMode = enabled;
+        Persist();
     }
 }

@@ -100,6 +100,16 @@ public enum WalkthroughWaitFor
     Click,
 
     /// <summary>
+    /// The step is one keystroke — "press M to open the map" — so Vayme watches for that one
+    /// key and carries on by itself.
+    ///
+    /// Separate from <see cref="Continue"/> because a keyboard step used to fall into it, and
+    /// then nothing on screen ever registered that the user had pressed the key: the step sat
+    /// on "your turn" while they carried on playing.
+    /// </summary>
+    Key,
+
+    /// <summary>
     /// A drag, some typing, anything with no one click to watch for — the user says when
     /// they are done.
     /// </summary>
@@ -134,6 +144,21 @@ public class WalkthroughStep
 
     public WalkthroughWaitFor WaitFor { get; init; }
 
+    /// <summary>
+    /// The key that finishes the step, as the user would say it — "M", "Enter", "F5". Set
+    /// only when <see cref="WaitFor"/> is <see cref="WalkthroughWaitFor.Key"/>, and shown in
+    /// the step's chip so the user can see what they are being asked to press.
+    /// </summary>
+    public string? WaitKey { get; init; }
+
+    /// <summary>
+    /// <see cref="WaitKey"/> as a virtual-key code — the only form the keyboard hook can
+    /// match against. Zero when the key wasn't one we recognise, which is what turns the step
+    /// back into a <see cref="WalkthroughWaitFor.Continue"/> rather than one that can never
+    /// finish.
+    /// </summary>
+    public uint WaitKeyCode { get; init; }
+
     /// <summary>Where a drag ends. Set only for a drag, and draws the arrow.</summary>
     public PointF? DragTo { get; init; }
 }
@@ -143,6 +168,10 @@ public enum WalkthroughResumeReason
 {
     /// <summary>The user clicked the thing that was pointed at.</summary>
     Clicked,
+
+    /// <summary>The user pressed the key the step asked for.</summary>
+    Pressed,
+
     Spoke,
     Typed
 }

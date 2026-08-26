@@ -11,7 +11,7 @@ namespace NayfWindows;
 /// <summary>
 /// Multi-monitor screenshot capture using Windows GDI BitBlt.
 /// Returns JPEG-encoded screenshots for each connected display,
-/// labelled "Screen 1", "Screen 2", etc. — matches the Mac's
+/// labelled "Screen 0", "Screen 1", etc. — matches the Mac's
 /// ScreenCaptureKit multi-monitor output format.
 /// </summary>
 public static class ScreenCaptureUtility
@@ -35,11 +35,19 @@ public static class ScreenCaptureUtility
                     var (imageData, imgW, imgH) =
                         CaptureScreenRegion(rect.Left, rect.Top, rect.Width, rect.Height);
                     Logger.Log("ScreenCapture",
-                        $"Screen {i + 1}: {rect.Width}x{rect.Height} -> {imgW}x{imgH}, {imageData.Length / 1024} KB");
+                        $"Screen {i}: {rect.Width}x{rect.Height} at ({rect.Left},{rect.Top}) " +
+                        $"-> {imgW}x{imgH}, {imageData.Length / 1024} KB");
                     results.Add(new CapturedScreenshot(
                         ImageData: imageData,
                         ScreenIndex: i,
-                        ScreenLabel: $"Screen {i + 1}",
+                        // Numbered from 0, because this label is the only place the model
+                        // learns what to write in a [POINT:...:screenN] tag or a step's
+                        // "screen" argument, and both are matched against ScreenIndex.
+
+                        // Labelling the first image "Screen 1" while the prompt asked for
+                        // screen0 left the model to guess which of the two numbering schemes
+                        // a tag meant, and a wrong guess draws on the wrong monitor.
+                        ScreenLabel: $"Screen {i}, {imgW}x{imgH}",
                         ImageWidth: imgW,
                         ImageHeight: imgH,
                         MonitorLeft: rect.Left,

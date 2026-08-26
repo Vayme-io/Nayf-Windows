@@ -11,12 +11,19 @@ using System.Threading.Tasks;
 
 namespace NayfWindows;
 
-/// <summary>The output of one tool call — text, plus an optional screenshot image.</summary>
+/// <summary>The output of one tool call — text, plus any screenshots Claude should see.</summary>
 public sealed class AgentToolResult
 {
     public string Text { get; init; } = "";
-    /// <summary>JPEG bytes when the tool produced a screenshot Claude should see.</summary>
-    public byte[]? ScreenshotJpeg { get; init; }
+
+    /// <summary>
+    /// One entry per monitor when the tool produced screenshots, empty otherwise.
+    ///
+    /// A list rather than a single image because the app the user is working in is often
+    /// not on the primary display, and a model that was only ever shown screen 0 has no
+    /// way to point at anything on screen 1.
+    /// </summary>
+    public IReadOnlyList<CapturedScreenshot> Screenshots { get; init; } = Array.Empty<CapturedScreenshot>();
 
     public static AgentToolResult Message(string text) => new() { Text = text };
 }
@@ -66,13 +73,30 @@ public sealed class NayfAgentToolExecutor
     };
 
     /// <summary>
-    /// The last screenshot handed to the model, or null if it hasn't asked for one yet.
+    /// The screenshots last handed to the model — one per monitor — or empty if it hasn't
+    /// asked for any yet.
     ///
-    /// Kept because a step's coordinates were read off this image, and pointing at the real
-    /// spot means mapping them back to screen pixels — done by <see cref="NayfAgentManager"/>,
-    /// which draws the step. Nothing here turns a coordinate into a click.
+    /// Kept because a step's coordinates were read off one of these images, and pointing at
+    /// the real spot means mapping them back to screen pixels — done by
+    /// <see cref="NayfAgentManager"/>, which draws the step. Nothing here turns a coordinate
+    /// into a click.
     /// </summary>
-    public CapturedScreenshot? LastScreenshot { get; private set; }
+    public IReadOnlyList<CapturedScreenshot> LastScreenshots { get; private set; } =
+        Array.Empty<CapturedScreenshot>();
+
+    /// <summary>
+    /// The screenshot for one display out of <see cref="LastScreenshots"/>, or null when that
+    /// screen wasn't among them — which is what happens if the model names a monitor that
+    /// isn't there, so callers must fall back rather than assume a hit.
+    /// </summary>
+    public CapturedScreenshot? LastScreenshotForScreen(int screenIndex)
+    {
+        foreach (var shot in LastScreenshots)
+        {
+            if (shot.ScreenIndex == screenIndex) return shot;
+        }
+        return null;
+    }
 
     /// <summary>Executes a tool call and returns the result for Claude's tool_result.</summary>
     public async Task<AgentToolResult> ExecuteToolAsync(
@@ -392,17 +416,32 @@ public sealed class NayfAgentToolExecutor
             var screenshots = await ScreenCaptureUtility.CaptureAllScreensAsync();
             if (screenshots.Count == 0) return AgentToolResult.Message("No screenshot available");
 
-            var shot = screenshots[0]; // primary display
-            // Kept for pointing: a step's coordinates are read off this image, and the
-            // monitor bounds on it are what map them back to the real screen.
-            if (shot.ImageWidth > 0 && shot.ImageHeight > 0) LastScreenshot = shot;
-
-            return new AgentToolResult
+            // Every monitor, not just the primary one. The window the user is asking about
+            // is regularly on their second display, and a screenshot of screen 0 shows the
+            // model an empty desktop and no reason to think it is missing anything.
+            var usable = new List<CapturedScreenshot>();
+            foreach (var shot in screenshots)
             {
-                Text = $"Screenshot of the primary screen ({shot.ImageWidth}x{shot.ImageHeight}). " +
-                       "Coordinates you read off this image are the pixel space you point in.",
-                ScreenshotJpeg = shot.ImageData
-            };
+                if (shot.ImageWidth > 0 && shot.ImageHeight > 0) usable.Add(shot);
+            }
+            if (usable.Count == 0) return AgentToolResult.Message("No screenshot available");
+
+            // Kept for pointing: a step's coordinates are read off one of these images, and
+            // the monitor bounds on it are what map them back to the real screen.
+            LastScreenshots = usable;
+
+            var text = new StringBuilder();
+            text.Append(usable.Count == 1 ? "Screenshot of " : $"Screenshots of all {usable.Count} displays: ");
+            for (int i = 0; i < usable.Count; i++)
+            {
+                if (i > 0) text.Append("; ");
+                text.Append($"{usable[i].ScreenLabel}");
+            }
+            text.Append(". Each image is labelled with its screen number — use that number in a ")
+                .Append("[POINT] tag or a step's \"screen\" argument, and read coordinates off ")
+                .Append("that screen's own image.");
+
+            return new AgentToolResult { Text = text.ToString(), Screenshots = usable };
         }
         catch (Exception ex)
         {

@@ -30,9 +30,18 @@ public static class NayfFonts
     public static string IconFamily { get; } = ResolveFace(
         "Segoe Fluent Icons", "Segoe MDL2 Assets", "Segoe UI Symbol");
 
-    /// <summary>The UI text face.</summary>
-    public static string UiFamily { get; } = ResolveFace(
-        "Segoe UI Variable", "Segoe UI");
+    /// <summary>
+    /// The UI text face.
+    ///
+    /// <para>Probed by a different name than it is used under. <i>Segoe UI Variable</i> is an
+    /// umbrella family that DirectWrite — and so XAML — resolves, but GDI is enumerating the
+    /// three concrete faces underneath it (<i>Text</i>, <i>Display</i>, <i>Small</i>) and has
+    /// no entry for the umbrella itself. Asking for it directly therefore comes back "not
+    /// installed" on a Windows 11 machine that has it, and the panel quietly drops to plain
+    /// Segoe UI on exactly the machines this class exists to leave untouched.</para>
+    /// </summary>
+    public static string UiFamily { get; } =
+        IsInstalled("Segoe UI Variable Text") ? "Segoe UI Variable" : ResolveFace("Segoe UI");
 
     /// <summary>
     /// Picks the first installed face from a preference list, falling back to whatever this
@@ -41,16 +50,23 @@ public static class NayfFonts
     public static string ResolveFace(params string[] names)
     {
         foreach (var name in names)
-        {
-            try
-            {
-                using var family = new FontFamily(name);
-                if (family.IsStyleAvailable(FontStyle.Regular)) return name;
-            }
-            catch (ArgumentException) { /* not installed — try the next one */ }
-        }
+            if (IsInstalled(name)) return name;
 
         return FontFamily.GenericSansSerif.Name;
+    }
+
+    /// <summary>Whether this PC has a face by that exact name.</summary>
+    private static bool IsInstalled(string name)
+    {
+        try
+        {
+            using var family = new FontFamily(name);
+            return family.IsStyleAvailable(FontStyle.Regular);
+        }
+        catch (ArgumentException)
+        {
+            return false; // not installed
+        }
     }
 
     /// <summary>

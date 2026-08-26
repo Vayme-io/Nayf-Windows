@@ -786,7 +786,12 @@ public sealed partial class CompanionPanelWindow : Window
 
     private Button BuildProductCard(PaddleProduct product, bool isRecommended)
     {
-        var uiFont = new FontFamily((string)RootGrid.Resources["UiFont"]);
+        // From NayfFonts rather than the resource dictionary. The brushes below live in
+        // RootGrid.Resources, but the font faces are published on Application.Resources so
+        // that every window shares one answer - and this indexer only looks in the
+        // dictionary it is called on. Unlike {StaticResource}, it does not walk up to the
+        // application's, so asking RootGrid for "UiFont" throws.
+        var uiFont = new FontFamily(NayfFonts.UiFamily);
         var primary = (Brush)RootGrid.Resources["TextPrimary"];
         var tertiary = (Brush)RootGrid.Resources["TextTertiary"];
         var accent = (Brush)RootGrid.Resources["AccentLink"];

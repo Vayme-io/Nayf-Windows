@@ -199,27 +199,47 @@ function Invoke-PublishedUrlCheck {
         [switch]$SingleByte
     )
 
-    $headers = @{}
-    if ($SingleByte) { $headers['Range'] = 'bytes=0-0' }
-
     $failure = 'no response'
 
     # An R2 write and a Worker deploy both take a moment to reach every edge, so one
     # miss immediately after uploading means nothing. Three tries over ~20s does.
     for ($attempt = 1; $attempt -le 3; $attempt++) {
+        $response = $null
         try {
-            $response = Invoke-WebRequest -Uri $Url -Headers $headers -UseBasicParsing -TimeoutSec 20
-            if ($response.StatusCode -eq 200 -or $response.StatusCode -eq 206) {
+            # HttpWebRequest rather than Invoke-WebRequest, because of Range. Range is
+            # one of .NET's restricted headers: Windows PowerShell 5.1 refuses to set it
+            # through -Headers and throws before the request is ever made. That throw is
+            # a client-side argument error carrying no Response, so a catch block that
+            # reads a status code off the response sees nothing and reports the route as
+            # unreachable - a green release failing its own verification, which is how
+            # this was found. AddRange is the supported way to ask for a byte range.
+            $request = [System.Net.HttpWebRequest]::Create($Url)
+            $request.Method = 'GET'
+            $request.Timeout = 20000
+            $request.UserAgent = 'vayme-release-check'
+            if ($SingleByte) { $request.AddRange(0, 0) }
+
+            $response = $request.GetResponse()
+            $statusCode = [int]$response.StatusCode
+            if ($statusCode -eq 200 -or $statusCode -eq 206) {
                 Write-Host "    ok   $What"
                 return
             }
-            $failure = "HTTP $($response.StatusCode)"
+            $failure = "HTTP $statusCode"
         }
-        catch {
+        catch [System.Net.WebException] {
             $failure = $_.Exception.Message
             if ($null -ne $_.Exception.Response) {
                 $failure = "HTTP $([int]$_.Exception.Response.StatusCode)"
             }
+        }
+        catch {
+            # Anything that is not a WebException never reached the network, so report it
+            # as itself rather than dressing it up as an unreachable route.
+            $failure = $_.Exception.Message
+        }
+        finally {
+            if ($null -ne $response) { $response.Close() }
         }
 
         if ($attempt -lt 3) { Start-Sleep -Seconds 10 }

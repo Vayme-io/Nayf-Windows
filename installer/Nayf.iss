@@ -1,4 +1,4 @@
-; Inno Setup script for Vayme â€” the Windows AI desktop companion.
+; Inno Setup script for Vayme Ã¢â‚¬â€ the Windows AI desktop companion.
 ; Builds a single-file, per-user installer (no admin required):
 ;   * installs to %LOCALAPPDATA%\Programs\Vayme
 ;   * Start Menu shortcut (+ optional desktop shortcut)
@@ -9,13 +9,13 @@
 ;   "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" installer\Nayf.iss
 
 #define MyAppName "Vayme"
-#define MyAppVersion "1.2.0"
+#define MyAppVersion "1.2.1"
 #define MyAppPublisher "Vayme"
 #define MyAppExeName "NayfWindows.exe"
 #define MyAppId "{{28D4999F-2007-47C3-ADFA-AD5A1D0FA72D}"
 
 ; The app shipped as Nayf up to 1.1.0 and had its own product code. Setup
-; removes that install before laying this one down â€” see RemoveLegacyInstall â€”
+; removes that install before laying this one down Ã¢â‚¬â€ see RemoveLegacyInstall Ã¢â‚¬â€
 ; so an upgraded machine doesn't end up with two entries in Installed apps and
 ; two Start Menu shortcuts pointing at the same executable.
 #define LegacyAppId "{A7F3C2E1-9B4D-4E6A-8C1F-2D5B7E9A0C34}_is1"
@@ -66,7 +66,7 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch Vayme now"; \
   Flags: nowait postinstall skipifsilent
 
-; The same launch, for the silent case â€” which is how an in-app update arrives.
+; The same launch, for the silent case Ã¢â‚¬â€ which is how an in-app update arrives.
 ; The entry above can't cover it: skipifsilent is what stops it running behind the
 ; back of someone scripting an install, and without a second entry the update lands
 ; and leaves the user with no Vayme running until they next sign in.
@@ -85,7 +85,7 @@ end;
 { Runs the pre-rename uninstaller if this machine has one. Silent, and any
   failure is ignored: a leftover Nayf entry is untidy, but refusing to install
   over it would be worse. The user's data lives in %LOCALAPPDATA% and is never
-  touched here â€” the app migrates it on first launch. }
+  touched here Ã¢â‚¬â€ the app migrates it on first launch. }
 procedure RemoveLegacyInstall();
 var
   UninstallKey, UninstallCommand: String;

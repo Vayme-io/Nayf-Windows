@@ -15,9 +15,16 @@
          its own assembly version against the published one, so a build that reports
          1.1.0 while the manifest says 1.2.0 downloads, installs, and then finds itself
          still behind - an update loop that repeats every six hours forever.
-      2. Publish and compile the installer.
-      3. Upload the installer under its versioned name, and again under the stable
-         name the website's download button points at.
+      2. Publish, then compile the installer TWICE - once whole, once without the
+         speech model. The model is ~150 MB and identical in every release, so an
+         update that carried it would spend that on every installed copy, every
+         release, to deliver a few megabytes of app. Inno never deletes files a
+         script does not list, so the update installer lands on an existing install
+         and leaves its model alone.
+      3. Upload both. The full one goes under the stable name the website's download
+         button points at, so a first-time install arrives ready to listen. The
+         model-less one goes under the versioned name, which is what the manifest
+         names and therefore what the updater fetches.
       4. Upload the manifest LAST. Until it lands, no installed copy knows there is
          anything to fetch - which is exactly the right failure mode if a step above
          goes wrong. The reverse order announces a build that isn't there yet.
@@ -54,9 +61,15 @@ $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $csprojPath     = Join-Path $repositoryRoot 'NayfWindows.csproj'
 $innoScriptPath = Join-Path $PSScriptRoot   'Nayf.iss'
 $publishPath    = Join-Path $repositoryRoot 'publish\Nayf'
-$installerName  = "Vayme-Setup-$Version.exe"
-$installerPath  = Join-Path $PSScriptRoot "Output\$installerName"
 $innoCompiler   = Join-Path $env:LOCALAPPDATA 'Programs\Inno Setup 6\ISCC.exe'
+
+# The whole thing, model included. What a new user downloads from the website.
+$fullInstallerName = "Vayme-Setup-$Version.exe"
+$fullInstallerPath = Join-Path $PSScriptRoot "Output\$fullInstallerName"
+
+# Everything but the model. What an installed copy fetches when it updates itself.
+$updateInstallerName = "Vayme-Update-$Version.exe"
+$updateInstallerPath = Join-Path $PSScriptRoot "Output\$updateInstallerName"
 
 $bucket             = 'nayf-releases'
 $stableInstallerKey = 'Nayf-Setup.exe'
@@ -113,26 +126,51 @@ if (Test-Path $publishPath) { Remove-Item $publishPath -Recurse -Force }
 dotnet publish $csprojPath -c Release -r win-x64 --self-contained true -o $publishPath
 Assert-LastExitCode 'dotnet publish'
 
-Write-Step 'Compiling the installer'
+Write-Step 'Compiling the installers'
 
 if (-not (Test-Path $innoCompiler)) {
     throw "Inno Setup 6 not found at $innoCompiler - install it from https://jrsoftware.org/isdl.php"
 }
 
+# The publish output has to actually contain a model, or the full installer would
+# quietly ship without one and every new user would download it themselves on first
+# run. The build fetches it, so its absence means something upstream went wrong.
+$publishedModel = Join-Path $publishPath 'Models\ggml-base.en.bin'
+if (-not (Test-Path $publishedModel)) {
+    throw "No speech model in the publish output at $publishedModel - the FetchWhisperModel target in NayfWindows.csproj should have downloaded it."
+}
+
 & $innoCompiler $innoScriptPath
-Assert-LastExitCode 'ISCC'
+Assert-LastExitCode 'ISCC (full)'
 
-if (-not (Test-Path $installerPath)) { throw "Expected installer at $installerPath" }
+& $innoCompiler '/DSkipModel' $innoScriptPath
+Assert-LastExitCode 'ISCC (update)'
 
-$installerHash = (Get-FileHash -Algorithm SHA256 -Path $installerPath).Hash
-$installerSize = [math]::Round((Get-Item $installerPath).Length / 1MB, 1)
+if (-not (Test-Path $fullInstallerPath))   { throw "Expected installer at $fullInstallerPath" }
+if (-not (Test-Path $updateInstallerPath)) { throw "Expected installer at $updateInstallerPath" }
 
-Write-Host "    $installerName - $installerSize MB"
+$fullInstallerHash = (Get-FileHash -Algorithm SHA256 -Path $fullInstallerPath).Hash
+$fullInstallerSize = [math]::Round((Get-Item $fullInstallerPath).Length / 1MB, 1)
+
+# The manifest carries this one: it is what every installed copy downloads and checks.
+$installerHash = (Get-FileHash -Algorithm SHA256 -Path $updateInstallerPath).Hash
+$updateInstallerSize = [math]::Round((Get-Item $updateInstallerPath).Length / 1MB, 1)
+
+Write-Host "    $fullInstallerName - $fullInstallerSize MB (website download)"
+Write-Host "    sha256 $fullInstallerHash"
+Write-Host "    $updateInstallerName - $updateInstallerSize MB (auto-update)"
 Write-Host "    sha256 $installerHash"
+
+# The split is the whole point of building twice, so it is worth failing on rather
+# than discovering later as a 150 MB update.
+if ($updateInstallerSize -ge $fullInstallerSize) {
+    throw "The update installer ($updateInstallerSize MB) is not smaller than the full one ($fullInstallerSize MB), so the model was not excluded. Check the SkipModel block in Nayf.iss."
+}
 
 if ($BuildOnly) {
     Write-Step 'BuildOnly - nothing published'
-    Write-Host "    The installer is at $installerPath"
+    Write-Host "    The installers are at $fullInstallerPath"
+    Write-Host "    and $updateInstallerPath"
     return
 }
 
@@ -140,18 +178,24 @@ if ($BuildOnly) {
 # 3. Upload the installer (versioned, then the stable website link)
 # ---------------------------------------------------------------------------
 
-Write-Step 'Uploading the installer'
+Write-Step 'Uploading the installers'
 
 $installerContentType = 'application/vnd.microsoft.portable-executable'
 
-# The name the updater fetches. Versioned, so it is safe to cache forever and can
-# never be served stale the way an overwritten name can be.
-npx wrangler r2 object put "$bucket/$installerName" --file="$installerPath" --content-type="$installerContentType" --remote
-Assert-LastExitCode "wrangler r2 object put $installerName"
+# The name the updater fetches, and the one the manifest names. Versioned, so it is
+# safe to cache forever and can never be served stale the way an overwritten name can.
+npx wrangler r2 object put "$bucket/$updateInstallerName" --file="$updateInstallerPath" --content-type="$installerContentType" --remote
+Assert-LastExitCode "wrangler r2 object put $updateInstallerName"
 
-# The name the website's download button points at. Overwritten every release, which
-# is why the updater does not use it.
-npx wrangler r2 object put "$bucket/$stableInstallerKey" --file="$installerPath" --content-type="$installerContentType" --remote
+# The full build, kept under its own versioned name so a specific release can always
+# be installed from scratch, not only the current one.
+npx wrangler r2 object put "$bucket/$fullInstallerName" --file="$fullInstallerPath" --content-type="$installerContentType" --remote
+Assert-LastExitCode "wrangler r2 object put $fullInstallerName"
+
+# The name the website's download button points at, which has to be the full build:
+# it is somebody's first install, and it should arrive able to listen rather than
+# downloading 150 MB of speech model before it can answer them.
+npx wrangler r2 object put "$bucket/$stableInstallerKey" --file="$fullInstallerPath" --content-type="$installerContentType" --remote
 Assert-LastExitCode "wrangler r2 object put $stableInstallerKey"
 
 # ---------------------------------------------------------------------------
@@ -160,9 +204,11 @@ Assert-LastExitCode "wrangler r2 object put $stableInstallerKey"
 
 Write-Step 'Publishing the release manifest'
 
+# Points at the model-less build. An installed copy already has the model, and one
+# that somehow does not downloads it by itself on the next start.
 $manifest = [ordered]@{
     version = $Version
-    url     = "$downloadBaseUrl/$installerName"
+    url     = "$downloadBaseUrl/$updateInstallerName"
     sha256  = $installerHash
 }
 
@@ -201,8 +247,8 @@ function Invoke-PublishedUrlCheck {
     param(
         [Parameter(Mandatory = $true)][string]$Url,
         [Parameter(Mandatory = $true)][string]$What,
-        # Installers are ~68 MB. Ask for one byte: the point is to prove the route
-        # answers, not to pull the file down again on every release.
+        # Installers run from ~70 MB to ~200 MB. Ask for one byte: the point is to
+        # prove the route answers, not to pull the file down again on every release.
         [switch]$SingleByte
     )
 
@@ -258,7 +304,8 @@ function Invoke-PublishedUrlCheck {
 
 # --- the release this script just published ---
 
-Invoke-PublishedUrlCheck -Url "$downloadBaseUrl/$installerName" -What "installer $installerName" -SingleByte
+Invoke-PublishedUrlCheck -Url "$downloadBaseUrl/$updateInstallerName" -What "update installer $updateInstallerName" -SingleByte
+Invoke-PublishedUrlCheck -Url "$downloadBaseUrl/$fullInstallerName" -What "full installer $fullInstallerName" -SingleByte
 Invoke-PublishedUrlCheck -Url $downloadBaseUrl -What 'stable installer link (website download button)' -SingleByte
 
 # The manifest is checked by content, not just reachability. Every installed copy

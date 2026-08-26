@@ -9,3 +9,7 @@ installer/Output/
 
 # Local wrangler cache, written when release.ps1 uploads to R2
 .wrangler/
+
+# Speech model weights (~150 MB). Downloaded by the FetchWhisperModel target on
+# first build; identical for every checkout, so never committed.
+Models/

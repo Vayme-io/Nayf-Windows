@@ -40,11 +40,37 @@
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.1839" PrivateAssets="all" />
     <PackageReference Include="NAudio" Version="2.2.1" />
     <PackageReference Include="NAudio.WinMM" Version="2.2.1" />
+    <!-- Local speech recognition. Runtime carries the native whisper.cpp binaries;
+         the weights are the separate download below. -->
+    <PackageReference Include="Whisper.net" Version="1.8.1" />
+    <PackageReference Include="Whisper.net.Runtime" Version="1.8.1" />
   </ItemGroup>
 
   <!-- Copy assets to output -->
   <ItemGroup>
     <Content Include="Assets\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- The speech model. ~150 MB of weights, fetched once rather than committed:
+       a binary that size in the repository would be cloned in full by everyone
+       forever, and it never changes between releases. Gitignored, downloaded on
+       the first build of a fresh checkout, and shipped inside the installer. -->
+  <PropertyGroup>
+    <WhisperModelFileName>ggml-base.en.bin</WhisperModelFileName>
+    <WhisperModelPath>$(MSBuildProjectDirectory)\Models\$(WhisperModelFileName)</WhisperModelPath>
+  </PropertyGroup>
+
+  <Target Name="FetchWhisperModel" BeforeTargets="BeforeBuild" Condition="!Exists('$(WhisperModelPath)')">
+    <Message Importance="high" Text="Vayme: downloading $(WhisperModelFileName) (~150 MB, once per checkout)..." />
+    <DownloadFile SourceUrl="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/$(WhisperModelFileName)"
+                  DestinationFolder="$(MSBuildProjectDirectory)\Models"
+                  DestinationFileName="$(WhisperModelFileName)"
+                  Retries="3" />
+  </Target>
+
+  <ItemGroup>
+    <Content Include="Models\$(WhisperModelFileName)" Link="Models\$(WhisperModelFileName)"
+             CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <!-- WORKAROUND: `dotnet publish` for unpackaged WinUI 3 apps drops the compiled

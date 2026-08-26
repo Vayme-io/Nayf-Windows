@@ -13,7 +13,6 @@ public static class NayfConfig
 
     public const string ChatEndpoint = $"{WorkerBaseURL}/chat";
     public const string TTSEndpoint = $"{WorkerBaseURL}/tts";
-    public const string TranscribeTokenEndpoint = $"{WorkerBaseURL}/transcribe-token";
     public const string CreditsEndpoint = $"{WorkerBaseURL}/credits";
     public const string WebSearchEndpoint = $"{WorkerBaseURL}/search";
 
@@ -79,7 +78,11 @@ public static class NayfConfig
     /// <summary>Watchdog timeout in seconds — resets pipeline if stuck.</summary>
     public const int VoiceStateWatchdogTimeoutSeconds = 30;
 
-    /// <summary>Audio sample rate used for AssemblyAI streaming (PCM16 mono).</summary>
+    /// <summary>
+    /// What the microphone is resampled to and what the speech model reads: 16 kHz mono
+    /// PCM16. Whisper is trained at this rate and resamples anything else itself, so
+    /// handing it exactly this is both what it wants and the smallest thing to carry.
+    /// </summary>
     public const int AudioSampleRate = 16000;
     public const int AudioChannels = 1;
     public const int AudioBitsPerSample = 16;

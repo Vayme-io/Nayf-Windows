@@ -7,6 +7,19 @@
 ;
 ; Compile with:
 ;   "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" installer\Nayf.iss
+;
+; Two installers come out of this one script:
+;
+;   ISCC installer\Nayf.iss                 full — includes the speech model
+;   ISCC /DSkipModel installer\Nayf.iss     update — everything but the speech model
+;
+; The model is ~150 MB and identical in every release, so putting it in the payload
+; the auto-updater downloads would cost every user that much bandwidth every six
+; hours' worth of checking, forever, to deliver a few megabytes of app. Inno never
+; deletes files a script does not list, so the update installer lands on top of an
+; existing install and leaves its model exactly where it is. The full installer is
+; what the website hands to someone installing for the first time, and Vayme
+; downloads the model itself if it ever finds itself without one.
 
 #define MyAppName "Vayme"
 #define MyAppVersion "1.2.4"
@@ -31,7 +44,11 @@ DisableProgramGroupPage=yes
 DisableDirPage=yes
 PrivilegesRequired=lowest
 OutputDir=Output
+#ifdef SkipModel
+OutputBaseFilename=Vayme-Update-{#MyAppVersion}
+#else
 OutputBaseFilename=Vayme-Setup-{#MyAppVersion}
+#endif
 SetupIconFile=..\Assets\NayfIcon.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 UninstallDisplayName={#MyAppName}
@@ -57,7 +74,14 @@ Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription
 Name: "startup"; Description: "Start Vayme automatically when I sign in"; GroupDescription: "Startup:"
 
 [Files]
+#ifdef SkipModel
+; Everything but Models\. See the note at the top: the existing model survives,
+; because Inno only ever adds and replaces what a script lists.
+Source: "..\publish\Nayf\*"; DestDir: "{app}"; Excludes: "Models\*"; \
+  Flags: recursesubdirs createallsubdirs ignoreversion
+#else
 Source: "..\publish\Nayf\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
+#endif
 
 [Icons]
 Name: "{autoprograms}\Vayme"; Filename: "{app}\{#MyAppExeName}"

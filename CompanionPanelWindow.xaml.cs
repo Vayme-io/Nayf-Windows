@@ -290,10 +290,8 @@ public sealed partial class CompanionPanelWindow : Window
         OpenSpeechSettingsButton.Content = _companionManager.SpeechProblem switch
         {
             SpeechProblem.MicrophoneBlocked => "Open Microphone Settings",
-            SpeechProblem.MicrophoneBusy => "Open Sound Settings",
-            SpeechProblem.MicrophoneLevel => "Open Sound Settings",
-            SpeechProblem.LanguageUnsupported => "Open Language Settings",
-            _ => "Open Speech Settings"
+            SpeechProblem.MicrophoneUnavailable => "Open Sound Settings",
+            _ => "Open Sound Settings"
         };
     }
 
@@ -624,19 +622,12 @@ public sealed partial class CompanionPanelWindow : Window
         OpenSettingsPage(_companionManager.SpeechProblem switch
         {
             SpeechProblem.MicrophoneBlocked => "ms-settings:privacy-microphone",
-            // Sound rather than privacy: nothing is blocked, the microphone is simply
-            // spoken for. This page is where the other app's device can be seen and a
-            // different one picked for it.
-            SpeechProblem.MicrophoneBusy => "ms-settings:sound",
 
-            // The input volume slider and the device's on/off state both live here. Clipping
-            // is most often Microphone Boost, which is another two clicks in past this page,
-            // but this is as deep as ms-settings: links go.
-            SpeechProblem.MicrophoneLevel => "ms-settings:sound",
-            // Time and language rather than privacy: this one is about which language
-            // Windows dictates in, not about what it is allowed to hear.
-            SpeechProblem.LanguageUnsupported => "ms-settings:regionlanguage",
-            _ => "ms-settings:privacy-speech"
+            // Sound rather than privacy: nothing is blocked, there is simply no device
+            // answering. This page is where a headset that is off or disconnected shows up.
+            // Deliberately no longer the speech privacy page — nothing Vayme does needs it
+            // now that transcription runs on this machine.
+            _ => "ms-settings:sound"
         });
     }
 

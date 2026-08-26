@@ -278,7 +278,9 @@ public sealed class UpdateChecker : INotifyPropertyChanged, IDisposable
     {
         string directory = UpdateDirectory;
         Directory.CreateDirectory(directory);
-        string installerPath = Path.Combine(directory, $"Vayme-Setup-{version}.exe");
+        // Named for what the manifest points at: the update build, which carries the app
+        // but not the speech model an installed copy already has.
+        string installerPath = Path.Combine(directory, $"Vayme-Update-{version}.exe");
 
         // A build already fetched and verified outlives the app, so an update that arrives
         // while someone is mid-something isn't downloaded again after the next launch.
@@ -469,7 +471,9 @@ public sealed class UpdateChecker : INotifyPropertyChanged, IDisposable
     {
         try
         {
-            foreach (string file in Directory.GetFiles(directory, "Vayme-Setup-*.exe"))
+            // Broad enough to catch installers left by builds that named them differently,
+            // so a rename does not strand a couple of hundred megabytes in the temp folder.
+            foreach (string file in Directory.GetFiles(directory, "Vayme-*.exe"))
                 if (!string.Equals(file, keepPath, StringComparison.OrdinalIgnoreCase))
                     TryDelete(file);
         }

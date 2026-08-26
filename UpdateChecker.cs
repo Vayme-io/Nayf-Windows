@@ -48,11 +48,18 @@ public sealed class UpdateChecker : INotifyPropertyChanged, IDisposable
     public static Version CurrentVersion { get; } =
         Normalize(Assembly.GetExecutingAssembly().GetName().Version ?? new Version(1, 0, 0));
 
-    // Not at launch. The first minutes after sign-in are the busiest the app gets, and on
-    // a machine that just booted the network is often not up yet — a check then mostly
-    // measures how fast Wi-Fi associates.
-    private static readonly TimeSpan FirstCheckDelay = TimeSpan.FromMinutes(2);
+    // At launch, and then every six hours for a copy that stays open. A check is one small
+    // request, and starting the app is both the moment a user is most likely to be about to
+    // use it and the moment least likely to have anything in flight to interrupt.
+    //
+    // This used to wait two minutes first, because a machine that has just booted often has
+    // no network yet and a check then mostly measures how fast Wi-Fi associates. That is a
+    // real problem, but delaying every launch is the expensive answer to it: a failed check
+    // is retried instead, closely at first and then further apart, so a cold network costs
+    // seconds rather than the whole six-hour interval.
     private static readonly TimeSpan CheckInterval = TimeSpan.FromHours(6);
+    private static readonly TimeSpan FirstRetryDelay = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan MaxRetryDelay = TimeSpan.FromMinutes(5);
 
     // How often "can we restart yet?" gets asked once a build is on disk, and how many
     // consecutive yeses it takes. Five quiet minutes rather than one: the gap between two
@@ -141,7 +148,7 @@ public sealed class UpdateChecker : INotifyPropertyChanged, IDisposable
     {
         try
         {
-            await Task.Delay(FirstCheckDelay, cancellationToken);
+            TimeSpan retryDelay = FirstRetryDelay;
 
             while (!cancellationToken.IsCancellationRequested)
             {
@@ -155,6 +162,19 @@ public sealed class UpdateChecker : INotifyPropertyChanged, IDisposable
                     return;
                 }
 
+                if (Stage == UpdateStage.Failed)
+                {
+                    // Doubling rather than retrying at a fixed rate: the usual cause is a
+                    // network that hasn't finished coming up, which clears in seconds, but
+                    // the same failure covers an outage that won't clear at all — and that
+                    // one shouldn't be asked about every fifteen seconds all day.
+                    await Task.Delay(retryDelay, cancellationToken);
+                    retryDelay = TimeSpan.FromTicks(
+                        Math.Min(retryDelay.Ticks * 2, MaxRetryDelay.Ticks));
+                    continue;
+                }
+
+                retryDelay = FirstRetryDelay;
                 await Task.Delay(CheckInterval, cancellationToken);
             }
         }

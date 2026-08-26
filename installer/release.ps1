@@ -3,8 +3,9 @@
     Builds a Vayme release and publishes it so installed copies update themselves.
 
 .DESCRIPTION
-    Every installed copy asks the Worker what the current Windows build is, roughly
-    every six hours, and installs it if this machine is behind. That check reads one
+    Every installed copy asks the Worker what the current Windows build is when it
+    starts, and every six hours after that if it is left running, and installs it if
+    this machine is behind. That check reads one
     file - windows-latest.json in the nayf-releases bucket - so publishing a release
     means getting that file and the installer it names into R2, in that order.
 
@@ -312,8 +313,8 @@ catch {
 }
 
 Write-Step "Vayme $Version is live"
-Write-Host '    Installed copies pick it up within about six hours, or immediately'
-Write-Host '    from Settings -> Check for updates.'
+Write-Host '    Installed copies pick it up the next time they start, within about six'
+Write-Host '    hours if left running, or immediately from Settings -> Check for updates.'
 Write-Host ''
 Write-Host '    Still to do by hand:'
 Write-Host '      - commit the version bump'

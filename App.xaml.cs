@@ -22,6 +22,19 @@ public partial class App : Application
     private bool _companionStarted;
     private bool _authSucceeded;
 
+    /// <summary>
+    /// Owned here rather than by <see cref="CompanionManager"/> so that it starts on every
+    /// launch, whatever else does or doesn't happen afterwards.
+    ///
+    /// <para>It used to start at the end of the companion's own startup, which meant it only
+    /// ran on a launch that got all the way there. 1.2.2 did not: it threw while building the
+    /// panel, several steps earlier, so the updater never started and the build could not
+    /// replace itself. A broken release that cannot fetch its own fix has to be reinstalled
+    /// by hand on every machine that took it, which is the one failure this class exists to
+    /// prevent — so it now starts before the first window is built, and before sign-in.</para>
+    /// </summary>
+    private readonly UpdateChecker _updates = new();
+
     // The UI/dispatcher thread. The tray icon's message loop runs on its own
     // thread, so its callbacks must marshal here before touching any window.
     private Microsoft.UI.Dispatching.DispatcherQueue? _uiDispatcher;
@@ -58,6 +71,25 @@ public partial class App : Application
             // Before any window exists: StaticResource is resolved as each window's XAML is
             // parsed, so these two keys have to be in place by the time the first one loads.
             NayfFonts.PublishAsApplicationResources();
+
+            // Ask what the current build is now, before anything else is constructed. The
+            // manifest endpoint takes no credentials precisely so this can run here, ahead
+            // of sign-in.
+            //
+            // Until the companion exists there is nobody to say whether restarting would
+            // interrupt anything, so the sign-in window speaks for itself: replacing the app
+            // out from under someone half way through typing their password is the one
+            // moment at this stage that is obviously wrong. CompanionManager replaces this
+            // with its own answer once it is up, by which point the window has closed.
+            _updates.IsSafeToRestart = () => _authWindow == null;
+
+            // An update that reaches this point has been downloaded, verified and handed to
+            // the installer, which will kill this process shortly whatever we do. Going
+            // through the normal quit means the teardown runs first — pending memories
+            // written, hooks removed, tray icon gone — rather than the installer's taskkill
+            // taking them with it.
+            _updates.RestartRequested += QuitApp;
+            _updates.Start();
 
             _authManager = new AuthManager();
             _ = InitializeAsync();
@@ -170,14 +202,11 @@ public partial class App : Application
 
             NayfSoundPlayer.Warmup();
 
-            _companionManager = new CompanionManager(_authManager!);
+            // The checker is already running by now — it was started in OnLaunched, and
+            // RestartRequested was wired there too, once, rather than again on every
+            // sign-in.
+            _companionManager = new CompanionManager(_authManager!, _updates);
             Log("Step", "CompanionManager created");
-
-            // An update has been downloaded, verified and handed to the installer, which
-            // will kill this process shortly whatever we do. Going through the normal quit
-            // means the teardown runs first — pending memories written, hooks removed, tray
-            // icon gone — rather than the installer's taskkill taking them with it.
-            _companionManager.Updates.RestartRequested += QuitApp;
 
             _overlayWindowManager = new OverlayWindowManager(_companionManager);
             _overlayWindowManager.CreateOverlaysForAllMonitors();

@@ -382,7 +382,12 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
     /// waiting to be reinstalled, because the people running it are not the people who
     /// follow the repo — a fix they never hear about is a fix they never get.
     /// </summary>
-    public UpdateChecker Updates { get; } = new();
+    /// <summary>
+    /// The app's update checker, which is already running by the time this class is built —
+    /// App owns it and starts it at launch, so that a launch which never gets this far still
+    /// checks. Held here for the Settings row and for <see cref="UpdateChecker.IsSafeToRestart"/>.
+    /// </summary>
+    public UpdateChecker Updates { get; }
 
     /// <summary>Raised when a saved task should be shown on its floating card.</summary>
     public event Action<SavedAgentTask>? AgentCardRequested;
@@ -618,10 +623,11 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
         they wanted to be taught takes the task away from them.
         """;
 
-    public CompanionManager(AuthManager authManager)
+    public CompanionManager(AuthManager authManager, UpdateChecker updates)
     {
         _dispatcherQueue = DispatcherQueue.GetForCurrentThread();
         _authManager = authManager;
+        Updates = updates;
 
         // Apply the saved cursor color before the overlays start rendering.
         NativeOverlayWindow.CursorBlue = _selectedCursorColor.ToDrawingColor();
@@ -700,7 +706,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
     public void StartAsync()
     {
         _pushToTalkMonitor.Start();
-        Updates.Start();
+        // Not Updates.Start() — App started it at launch, before any of this existed.
         _ = FetchCreditBalanceAsync();
         // Ask up front which providers the account has connected, so the panel opens
         // already knowing — rather than showing "Connect" to someone who connected

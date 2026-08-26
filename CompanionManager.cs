@@ -1211,8 +1211,9 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
             case DictationSilence.MicrophoneTooLoud:
                 ReportAudioLevelProblem(
                     "Your microphone is too loud for Windows speech recognition — it is " +
-                    "clipping, and clipped audio comes through as no words at all. Turn the " +
-                    "microphone's input volume down, and turn off Microphone Boost if it is on.");
+                    "clipping, and clipped audio comes through as no words at all. Turn its " +
+                    "input volume down under Sound settings, and turn down any mic gain or " +
+                    "boost in the headset's own software.");
                 break;
 
             case DictationSilence.MicrophoneTooQuiet:

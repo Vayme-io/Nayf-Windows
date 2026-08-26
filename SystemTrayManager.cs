@@ -53,12 +53,12 @@ public sealed class SystemTrayManager : IDisposable
             cbSize = (uint)Marshal.SizeOf<NativeMethods.WNDCLASSEX>(),
             lpfnWndProc = _wndProcDelegate,
             hInstance = NativeMethods.GetModuleHandle(null),
-            lpszClassName = "NayfTrayMessageWindow"
+            lpszClassName = MessageWindowClassName
         };
         NativeMethods.RegisterClassEx(ref wndClass);
 
         _messageWindowHandle = NativeMethods.CreateWindowEx(
-            0, "NayfTrayMessageWindow", "NayfTray",
+            0, MessageWindowClassName, "NayfTray",
             0, 0, 0, 0, 0,
             IntPtr.Zero, IntPtr.Zero,
             NativeMethods.GetModuleHandle(null), IntPtr.Zero);
@@ -109,9 +109,17 @@ public sealed class SystemTrayManager : IDisposable
         NativeMethods.Shell_NotifyIcon(NativeMethods.NIM_SETVERSION, ref _notifyIconData);
     }
 
-    private const uint WM_COMMAND = 0x0111;
+    /// <summary>
+    /// The class of the always-listening tray window, and the command that opens the
+    /// panel. Both are internal rather than private because a second launch of Vayme finds
+    /// this window and posts that command to it, so the copy already running is what comes
+    /// to the front — see <see cref="SingleInstance"/>.
+    /// </summary>
+    internal const string MessageWindowClassName = "NayfTrayMessageWindow";
+
+    internal const uint WM_COMMAND = 0x0111;
+    internal const uint MENU_ID_OPEN = 1002;
     private const uint MENU_ID_QUIT = 1001;
-    private const uint MENU_ID_OPEN = 1002;
 
     private IntPtr TrayWindowProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam)
     {

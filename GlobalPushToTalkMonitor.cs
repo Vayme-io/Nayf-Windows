@@ -139,6 +139,17 @@ public sealed class GlobalPushToTalkMonitor : IDisposable
 
     private readonly DispatcherQueueTimer _regionHoldTimer;
 
+    /// <summary>
+    /// How often the hook is taken out and put back.
+    ///
+    /// Also the longest push-to-talk can stay dead after Windows drops the hook, so it is
+    /// short enough that a user who has just lost the hotkey gets it back before they give up
+    /// on it, and long enough that the reinstall itself is nothing.
+    /// </summary>
+    private static readonly TimeSpan HookHealthInterval = TimeSpan.FromSeconds(15);
+
+    private readonly DispatcherQueueTimer _hookHealthTimer;
+
     public GlobalPushToTalkMonitor()
     {
         _dispatcherQueue = DispatcherQueue.GetForCurrentThread();
@@ -157,11 +168,26 @@ public sealed class GlobalPushToTalkMonitor : IDisposable
         _regionHoldTimer.Interval = RegionHoldDelay;
         _regionHoldTimer.IsRepeating = false;
         _regionHoldTimer.Tick += (_, _) => OnRegionHoldElapsed();
+
+        _hookHealthTimer = _dispatcherQueue.CreateTimer();
+        _hookHealthTimer.Interval = HookHealthInterval;
+        _hookHealthTimer.IsRepeating = true;
+        _hookHealthTimer.Tick += (_, _) => RefreshKeyboardHook();
     }
 
     public void Start()
     {
         if (_hookHandle != IntPtr.Zero) return;
+        InstallKeyboardHook();
+
+        // Runs for the life of the app, not just while something is being held. What it
+        // guards against is the hook going away underneath us, which happens when nothing
+        // is happening at all.
+        if (!_hookHealthTimer.IsRunning) _hookHealthTimer.Start();
+    }
+
+    private void InstallKeyboardHook(bool logSuccess = true)
+    {
         var hModule = NativeMethods.GetModuleHandle(null);
         _hookHandle = NativeMethods.SetWindowsHookEx(
             NativeMethods.WH_KEYBOARD_LL,
@@ -173,11 +199,51 @@ public sealed class GlobalPushToTalkMonitor : IDisposable
         {
             var error = Marshal.GetLastWin32Error();
             Logger.Log("GlobalPTT", $"Failed to install keyboard hook, error={error}");
+            return;
         }
-        else
-        {
-            Logger.Log("GlobalPTT", "Keyboard hook installed");
-        }
+
+        if (logSuccess) Logger.Log("GlobalPTT", "Keyboard hook installed");
+    }
+
+    /// <summary>
+    /// Takes the keyboard hook out and puts it straight back, so that a hook Windows has
+    /// already removed is replaced by a working one.
+    ///
+    /// <para>Windows removes them silently. A low-level hook whose thread does not return
+    /// within <c>LowLevelHooksTimeout</c> — five seconds by default — is dropped from the
+    /// chain and nothing tells the process: <see cref="_hookHandle"/> stays valid-looking,
+    /// every later <see cref="Start"/> returns early because of it, and push-to-talk is dead
+    /// until the app is restarted. This hook runs on the UI thread's message pump, so
+    /// anything that blocks that thread for five seconds costs the user their hotkey for the
+    /// rest of the session. It was reported as "nothing happens when he presses
+    /// Ctrl+Alt".</para>
+    ///
+    /// <para>No API asks whether a hook is still installed, and the obvious way to infer it
+    /// does not work: comparing our last callback against <c>GetLastInputInfo</c> counts
+    /// mouse movement as keyboard input we failed to see, so on a machine being used
+    /// normally it reports a dead hook every time it looks. Reinstalling unconditionally
+    /// needs no inference and cannot be wrong about it — the cost is one unhook and one hook
+    /// per interval, which is nothing, and <see cref="NativeMethods.UnhookWindowsHookEx"/>
+    /// failing is then a real signal rather than a guess: it means Windows had already taken
+    /// this one out, which is the fault itself, in the log, on the machine it happened
+    /// to.</para>
+    /// </summary>
+    private void RefreshKeyboardHook()
+    {
+        if (_hookHandle == IntPtr.Zero) return;
+
+        // Never mid-chord. Swapping the hook under a held Ctrl+Alt would drop the key-up that
+        // ends the utterance, and the recording would run on with nobody speaking into it —
+        // breaking push-to-talk in the course of keeping it alive.
+        if (_isPttActive || _otherKeysDown.Count > 0) return;
+
+        bool wasStillInstalled = NativeMethods.UnhookWindowsHookEx(_hookHandle);
+        _hookHandle = IntPtr.Zero;
+
+        if (!wasStillInstalled)
+            Logger.Log("GlobalPTT", "Windows had removed the keyboard hook — reinstalling");
+
+        InstallKeyboardHook(logSuccess: !wasStillInstalled);
     }
 
     public void Stop()
@@ -185,6 +251,8 @@ public sealed class GlobalPushToTalkMonitor : IDisposable
         // Directly, not via StopWatchingClicks: Stop runs at shutdown, and by then the
         // dispatcher may never get round to a queued item.
         UnhookMouse();
+
+        _hookHealthTimer.Stop();
 
         if (_hookHandle == IntPtr.Zero) return;
         NativeMethods.UnhookWindowsHookEx(_hookHandle);
@@ -707,6 +775,7 @@ public static class NativeMethods
 
     /// <summary>True while the key is physically held, regardless of focus.</summary>
     public static bool IsKeyDown(int vKey) => (GetAsyncKeyState(vKey) & 0x8000) != 0;
+
 
     // Window style constants
     public const int GWL_EXSTYLE = -20;

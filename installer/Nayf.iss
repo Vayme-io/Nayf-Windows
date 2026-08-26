@@ -40,6 +40,12 @@ SolidCompression=yes
 WizardStyle=modern
 CloseApplications=yes
 RestartApplications=no
+; The name Vayme's own single-instance guard holds (SingleInstance.MutexName — the two
+; strings have to stay in step). Restart Manager alone was not enough: it looks for windows
+; to ask politely to close, and Vayme spends most of its life as a tray icon with its panel
+; hidden, so an upgrade could leave the old build running and then launch the new one beside
+; it. This is what makes the installer notice.
+AppMutex=Vayme.SingleInstance
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 

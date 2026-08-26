@@ -1189,8 +1189,8 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
     /// something, but it doesn't answer".
     ///
     /// Which of the three it was decides how loud the answer is. Not catching a word is
-    /// ordinary and gets a chip; a recognizer being fed silence while the microphone is
-    /// clearly working is a broken machine and gets the banner, with the way to fix it.
+    /// ordinary and gets a chip; a recognizer being fed silence while the meter was moving
+    /// is something outside Vayme and gets the banner, with the way to fix it.
     /// </summary>
     private void ReportSilence(DictationSilence silence)
     {
@@ -1201,12 +1201,33 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
                 break;
 
             case DictationSilence.RecognizerGotSilence:
-                SpeechProblem = SpeechProblem.Unknown;
-                SpeechProblemMessage =
-                    "Your microphone is working, but Windows speech recognition received " +
-                    "nothing from it. Check that Windows is set to the same microphone you " +
-                    "are speaking into, and that speech recognition is on.";
-                MicrophonePermissionNeeded = true;
+                ReportRecognizerGotSilence();
+                break;
+
+            // Windows said what was wrong with the audio, so the banner repeats it instead
+            // of guessing. Both of these are one slider on one Settings page, which is why
+            // they get a banner with a button rather than the toast that just says the words
+            // did not land.
+            case DictationSilence.MicrophoneTooLoud:
+                ReportAudioLevelProblem(
+                    "Your microphone is too loud for Windows speech recognition — it is " +
+                    "clipping, and clipped audio comes through as no words at all. Turn the " +
+                    "microphone's input volume down, and turn off Microphone Boost if it is on.");
+                break;
+
+            case DictationSilence.MicrophoneTooQuiet:
+                ReportAudioLevelProblem(
+                    "Your microphone is too quiet for Windows speech recognition to make out " +
+                    "any words. Turn its input volume up, or move it closer.");
+                break;
+
+            case DictationSilence.MicrophoneUnavailable:
+                // Not a level and not a permission — there is no device to open. Said plainly,
+                // because the usual advice about speaking up is worse than useless when the
+                // headset is asleep on the desk.
+                ReportAudioLevelProblem(
+                    "Windows could not open your microphone. If it is a wireless headset, check " +
+                    "that it is switched on and connected, then hold Ctrl and Alt again.");
                 break;
 
             // Held the keys and said nothing. Not a fault, and not worth a word about.
@@ -1216,6 +1237,89 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
                 break;
         }
     }
+
+    /// <summary>
+    /// Puts a problem with the microphone's signal in front of the user, pointed at the
+    /// Sound page where all of them are settled.
+    ///
+    /// <para>These come from Windows saying so, not from us inferring it, which is what
+    /// makes them worth a banner: the recognizer reports clipping and low input on the
+    /// quality-degrading event and we logged it and moved on, leaving the user to be told
+    /// nothing was heard while Windows had already said exactly what was wrong.</para>
+    /// </summary>
+    private void ReportAudioLevelProblem(string message)
+    {
+        SpeechProblem = SpeechProblem.MicrophoneLevel;
+        SpeechProblemMessage = message;
+        MicrophonePermissionNeeded = true;
+    }
+
+    /// <summary>
+    /// Says why the recognizer was handed silence, naming the program responsible where
+    /// there is one.
+    ///
+    /// <para>This banner used to open by telling the user their microphone was working. It
+    /// was reading that off the peak meter, which is not evidence of any such thing: the
+    /// meter reports the signal passing through the endpoint whoever opened it, so a Discord
+    /// call keeps it reading healthy levels for a device Vayme never received a sample from.
+    /// The sentence after it then sent the user to check which microphone Windows was set
+    /// to, and the first person who saw it changed his microphone while the actual cause sat
+    /// in his system tray.</para>
+    /// </summary>
+    private void ReportRecognizerGotSilence()
+    {
+        var otherApps = SpeechDiagnostics.OtherAppsUsingMicrophone();
+        Logger.Log("CompanionManager",
+            $"Recognizer got silence; mic also open by [{string.Join(", ", otherApps)}]");
+
+        if (otherApps.Count > 0)
+        {
+            SpeechProblem = SpeechProblem.MicrophoneBusy;
+
+            // A leftover copy of Vayme gets its own sentence rather than being named like
+            // any other program. Newer builds refuse to start twice, but an older one that
+            // an upgrade failed to close is still out there holding the microphone, and
+            // "Vayme is using your microphone" reads as a bug in the app the user is
+            // looking at rather than as something they can go and quit.
+            SpeechProblemMessage = IsOurselves(otherApps[0])
+                ? "An older copy of Vayme is still running and has your microphone. Quit it " +
+                  "from its icon in the system tray — right-click, Quit — then hold Ctrl and " +
+                  "Alt again."
+                // Only the first of the others is named. Listing every capture session turns
+                // a sentence someone can act on into an inventory they have to read first.
+                : $"{otherApps[0]} is using your microphone, and Windows speech recognition " +
+                  "got nothing while it was. Close it, or point it at a different microphone, " +
+                  "and hold Ctrl and Alt again.";
+        }
+        else
+        {
+            // Nothing else holds the microphone and Windows speech still heard none of it.
+            // Deliberately no longer suggests changing which microphone is selected: that
+            // advice cost the first user who got it two device changes and did not help.
+            SpeechProblem = SpeechProblem.Unknown;
+            SpeechProblemMessage =
+                "Windows speech recognition received no audio from your microphone. " +
+                "Restarting Vayme usually clears it — Windows ties speech to a microphone " +
+                "when it starts, and does not follow one that changes underneath it.";
+        }
+
+        MicrophonePermissionNeeded = true;
+    }
+
+    /// <summary>
+    /// Whether a program holding the microphone is another copy of this app.
+    ///
+    /// <para>Matched against every name the app has shipped under, not just the current
+    /// one, because the copy still running is by definition the old build: it may report
+    /// itself as Nayf, or as the executable name from before the rename. A user who never
+    /// saw those names does not have to recognise them — they only decide which sentence
+    /// gets shown.</para>
+    /// </summary>
+    private static bool IsOurselves(string appName) =>
+        OurNames.Contains(appName.Trim());
+
+    private static readonly HashSet<string> OurNames =
+        new(StringComparer.OrdinalIgnoreCase) { "Vayme", "Nayf", "NayfWindows", "Vayf" };
 
     /// <summary>
     /// Calls off the turn that is running right now — the agent loop, whatever tool it was

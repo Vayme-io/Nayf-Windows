@@ -29,6 +29,16 @@ static class Program
         // startup. On a machine without it there is nothing to find and it fails outright.
         // Self-contained apps do not use the bootstrapper.
 
+        // Before anything is constructed, and before the log gets a line suggesting this
+        // launch went anywhere. A second copy of Vayme is not a harmless duplicate: the two
+        // fight over the keyboard hook and the microphone, and the loser of the microphone
+        // shows the user a warning about their audio hardware that is really about us.
+        if (!SingleInstance.TryAcquire())
+        {
+            Log("Startup", "Vayme is already running — asked the running copy to open, exiting");
+            return;
+        }
+
         try
         {
             // WinUI 3 startup — must call Application.Start with a DispatcherQueue

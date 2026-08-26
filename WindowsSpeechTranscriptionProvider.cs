@@ -18,6 +18,20 @@ public enum SpeechProblem
     /// <summary>Windows is refusing the microphone to desktop apps, or to this user.</summary>
     MicrophoneBlocked,
 
+    /// <summary>
+    /// Another program is capturing from the microphone, and Windows speech got nothing
+    /// while it was. No settings page fixes this one — the other program has to let go —
+    /// so it is kept apart from <see cref="MicrophoneBlocked"/>, which a toggle does fix.
+    /// </summary>
+    MicrophoneBusy,
+
+    /// <summary>
+    /// The microphone is there and permitted, but its signal is unusable — clipping, too
+    /// faint, or the device is switched off. Every one of those is settled on the Sound
+    /// page rather than the privacy one, which is the only reason this is its own case.
+    /// </summary>
+    MicrophoneLevel,
+
     /// <summary>There is no dictation engine for the speech language this PC is set to.</summary>
     LanguageUnsupported,
 
@@ -67,6 +81,28 @@ public sealed class WindowsSpeechTranscriptionProvider : IDisposable
     /// microphone's own meter was reading at the time.
     /// </summary>
     public bool HeardSomething { get; private set; }
+
+    /// <summary>
+    /// The last thing Windows complained about the audio this session, if it complained.
+    ///
+    /// <para>Kept because it is usually the whole answer and we were throwing it away. A
+    /// microphone driven into clipping produces a recognizer that returns no words at all,
+    /// exactly like a microphone that is switched off — and the user was being told the
+    /// second thing while Windows had already said the first. It is a level to turn down,
+    /// not a fault to hunt.</para>
+    ///
+    /// <para>The last one wins rather than the first: a session that starts clipping and
+    /// settles is worth less to report than one that ends that way.</para>
+    /// </summary>
+    public SpeechRecognitionAudioProblem? LastAudioProblem { get; private set; }
+
+    /// <summary>
+    /// Whether the session ended because Windows could not open the microphone at all.
+    ///
+    /// Distinct from hearing nothing through one: wireless headsets sleep, and the user is
+    /// then told to speak up into a device that is not switched on.
+    /// </summary>
+    public bool MicrophoneWasUnavailable { get; private set; }
 
     /// <summary>
     /// How long <c>StopAsync</c> gets before it is left to finish on its own. It normally
@@ -178,6 +214,13 @@ public sealed class WindowsSpeechTranscriptionProvider : IDisposable
         {
             Logger.Log("WindowsSpeech", $"Could not read speech environment: {ex.Message}");
         }
+
+        // Off the calling thread on purpose, for both of the usual reasons: enumerating
+        // endpoints and their sessions is COM work the rest of this file's audio code
+        // already keeps on a threadpool apartment, and push-to-talk should start listening
+        // now rather than after a device survey. Nothing reads the result — it goes to the
+        // log, to be read after the fact by whoever is holding the user's log file.
+        _ = Task.Run(() => Logger.Log("WindowsSpeech", $"capture[{SpeechDiagnostics.DescribeCaptureDevices()}]"));
     }
 
     /// <summary>
@@ -304,6 +347,7 @@ public sealed class WindowsSpeechTranscriptionProvider : IDisposable
     private void OnQualityDegrading(
         SpeechRecognizer sender, SpeechRecognitionQualityDegradingEventArgs args)
     {
+        LastAudioProblem = args.Problem;
         Logger.Log("WindowsSpeech", $"Audio problem: {args.Problem}");
     }
 
@@ -338,6 +382,10 @@ public sealed class WindowsSpeechTranscriptionProvider : IDisposable
         SpeechContinuousRecognitionCompletedEventArgs args)
     {
         Logger.Log("WindowsSpeech", $"Session completed: {args.Status}");
+
+        if (args.Status == SpeechRecognitionResultStatus.MicrophoneUnavailable)
+            MicrophoneWasUnavailable = true;
+
         _isSessionActive = false;
     }
 

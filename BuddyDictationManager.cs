@@ -4,6 +4,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using NAudio.CoreAudioApi;
 using NAudio.Wave;
+using Windows.Media.SpeechRecognition;
 
 namespace NayfWindows;
 
@@ -30,7 +31,23 @@ public enum DictationSilence
     /// The recognizer heard speech but could not make out any words worth keeping — too
     /// quiet, too noisy, or not the language it dictates in.
     /// </summary>
-    NotUnderstood
+    NotUnderstood,
+
+    /// <summary>
+    /// Windows reported the input as clipping. The recognizer returns nothing at all from a
+    /// signal this hot, so it looks identical to a dead microphone from every other angle —
+    /// and it is the one cause here that the user fixes with a slider rather than a device.
+    /// </summary>
+    MicrophoneTooLoud,
+
+    /// <summary>The opposite, and the same kind of fix: the input level is too low to decode.</summary>
+    MicrophoneTooQuiet,
+
+    /// <summary>
+    /// Windows could not open the microphone. The device is switched off, asleep, or gone —
+    /// a wireless headset between the user and Vayme, most often.
+    /// </summary>
+    MicrophoneUnavailable
 }
 
 /// <summary>
@@ -160,6 +177,12 @@ public sealed class BuddyDictationManager : IDisposable
         // whatever recording has started in the meantime.
         await session.Provider.EndSessionAsync();
         bool recognizerHeardSomething = session.Provider.HeardSomething;
+
+        // Both read off the provider before it is disposed, and used below only if this
+        // session produced no words. What Windows said about the audio outranks anything
+        // inferable from the levels we sampled ourselves.
+        var audioProblem = session.Provider.LastAudioProblem;
+        bool microphoneWasUnavailable = session.Provider.MicrophoneWasUnavailable;
         session.Provider.Dispose();
 
         string fullTranscript;
@@ -173,18 +196,30 @@ public sealed class BuddyDictationManager : IDisposable
         if (!string.IsNullOrWhiteSpace(fullTranscript))
             return new DictationResult(fullTranscript, DictationSilence.None);
 
-        // No words. Which of the three reasons it was decides what the user is told, and the
-        // two signals disagreeing is itself the diagnosis: the meter watches the default
-        // communications capture device, the recognizer picks its own, and a machine where
-        // those are not the same one produces a mic level that dances while Windows speech
-        // is handed silence.
+        // No words. Which reason it was decides what the user is told.
+        //
+        // Windows' own complaints are read before anything is inferred from the meter,
+        // because when Windows has said what is wrong there is nothing left to deduce and
+        // deducing anyway gets it wrong: a clipping microphone yields no words, no
+        // hypotheses and a meter pinned near the top, which the guesswork below reads as
+        // "the recognizer was handed silence" — sending the user off to change devices over
+        // an input slider that is turned up too far.
+        //
+        // Only past those does the meter-versus-recognizer disagreement mean anything: the
+        // meter watches the default communications capture device, the recognizer picks its
+        // own, and a machine where those are not the same one produces a mic level that
+        // dances while Windows speech is handed silence.
         var silence =
-            recognizerHeardSomething ? DictationSilence.NotUnderstood
+            microphoneWasUnavailable ? DictationSilence.MicrophoneUnavailable
+            : audioProblem == SpeechRecognitionAudioProblem.TooLoud ? DictationSilence.MicrophoneTooLoud
+            : audioProblem == SpeechRecognitionAudioProblem.TooQuiet ? DictationSilence.MicrophoneTooQuiet
+            : recognizerHeardSomething ? DictationSilence.NotUnderstood
             : peak >= SpeechDetectedPeak ? DictationSilence.RecognizerGotSilence
             : DictationSilence.NothingHeard;
 
         Logger.Log("Dictation",
-            $"no transcript: peak={peak:0.000} recognizerHeard={recognizerHeardSomething} -> {silence}");
+            $"no transcript: peak={peak:0.000} recognizerHeard={recognizerHeardSomething} " +
+            $"audioProblem={audioProblem?.ToString() ?? "none"} -> {silence}");
 
         return new DictationResult(null, silence);
     }

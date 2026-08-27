@@ -10,14 +10,16 @@ using System.Threading;
 namespace NayfWindows;
 
 /// <summary>
-/// The status pill: a dark bar that drops from the top edge of the screen while Vayme
-/// is listening, thinking, speaking or running a task, and slides back up when it's
-/// done. Port of the Mac's NotchStatusHUD (NotchHandleView.swift).
+/// The status pill: a floating capsule that appears near the top of the screen while
+/// Vayme is listening, thinking, speaking or running a task, and folds away when it's
+/// done. Port of the Mac's NayfVoiceStatusPill.swift.
 ///
-/// On the Mac the pill also has a resting state that hangs under the notch and opens
-/// the panel when clicked. Windows has no notch and Vayme already has a taskbar button
-/// for that, so only the live HUD is ported — it exists while Vayme is doing something
-/// and not a moment longer.
+/// This replaced an earlier port of the Mac's notch HUD, which hung off the top edge of
+/// the screen as a square-topped bar of fixed width. The Mac retired that design along
+/// with the notch handles, and the shape it moved to says something the old one didn't:
+/// a capsule detached from every edge reads as a readout floating over the desktop,
+/// where a bar welded to the top edge reads as a piece of system chrome the user might
+/// be able to click. This one is neither — it never takes a click.
 ///
 /// Built like <see cref="NativeOverlayWindow"/>: a layered, click-through, top-most
 /// tool window drawn with GDI+ on its own thread, so it floats above every app and
@@ -28,67 +30,72 @@ public sealed class NativeStatusPillWindow : IDisposable
     private readonly CompanionManager _companionManager;
 
     /// <summary>
-    /// The Mac's numbers describe a bar that fills about a fifth of a laptop screen.
-    /// Reused as-is on a desktop monitor they'd draw a sliver, so every measurement is
-    /// taken up together — the proportions stay exactly the Mac's, the bar just claims
-    /// the same share of the screen it does there.
+    /// The Mac's numbers describe a pill sized against a laptop screen and a menu bar.
+    /// Reused as-is on a desktop monitor they'd draw something noticeably small, so every
+    /// measurement is taken up together — the proportions stay exactly the Mac's, the
+    /// pill just claims the same share of the screen it does there.
     /// </summary>
     private const float DesignScale = 1.25f;
 
     // Layout at 96 DPI, in the Mac's units. Multiplied by DesignScale and then by the
     // monitor's DPI factor when drawn, because the window is sized in physical pixels
     // and the app is PerMonitorV2.
-    private const float PillWidth = 320f;
-    private const float PillHeight = 28f;
-    private const float PillCornerRadius = 16f;
-    private const float PillPaddingX = 18f;
-    private const float IndicatorWidth = 38f;
+    private const float PillHeight = 32f;
+    private const float PillPaddingX = 16f;
+    private const float IndicatorWidth = 34f;
     /// <summary>
     /// The Mac's HStack spacing (12) either side of a Spacer with a minimum length of
-    /// 18 — so the title can never crowd the indicator by more than this.
+    /// 14. Under .fixedSize() the Spacer collapses to exactly that minimum, so this is
+    /// the whole gap rather than a floor on it.
     /// </summary>
-    private const float TitleIndicatorGap = 12f + 18f + 12f;
-    private const float TitleFontSize = 13f;
+    private const float TitleIndicatorGap = 12f + 14f + 12f;
+    private const float TitleFontSize = 12.5f;
     /// <summary>
-    /// Slack around the pill inside the bitmap: antialiased edges, the drop shadow,
-    /// and the bit of overshoot the spring adds on the way in.
+    /// How wide the title may get before it is ellipsised. The Mac lets .fixedSize()
+    /// take whatever width the text asks for and leaves the hosting panel to clip it;
+    /// a mission like "Looking through your open windows" would run most of the way
+    /// across a desktop monitor, so it is truncated here instead of overrunning.
+    /// </summary>
+    private const float MaxTitleWidth = 240f;
+    /// <summary>
+    /// Slack around the pill inside the bitmap, on every side now that it floats:
+    /// antialiased edges, the drop shadow, and the bit of overshoot the spring adds on
+    /// the way in.
     /// </summary>
     private const float BitmapMargin = 16f;
+    /// <summary>
+    /// The gap between the top of the work area and the top of the pill. The Mac sits
+    /// its pill immediately under the menu bar, which is what detaches it from the
+    /// screen edge; Windows has no menu bar, so the gap has to be drawn rather than
+    /// inherited — without it this is the old bar again.
+    /// </summary>
+    private const float TopMargin = 16f;
 
-    /// <summary>How long the bar takes to settle onto a new state, per the Mac's easeInOut.</summary>
-    private const float LookTransitionSeconds = 0.25f;
+    /// <summary>How long the pill takes to settle onto a new state, per the Mac's easeInOut.</summary>
+    private const float LookTransitionSeconds = 0.2f;
 
     // The Mac scales the pill up from 0.9 anchored at its top edge and springs it into
     // place rather than sliding it — response/damping copied from its SwiftUI spring,
-    // including the slight overshoot at 0.82 that gives it the little settle at the end.
-    private const float SpringResponse = 0.42f;
-    private const float SpringDamping = 0.82f;
+    // including the slight overshoot at 0.78 that gives it the little settle at the end.
+    private const float SpringResponse = 0.34f;
+    private const float SpringDamping = 0.78f;
     private const float EnterScale = 0.9f;
 
     /// <summary>
-    /// How square the rounded corners are. 2 is a plain circular arc; a little above
-    /// that eases the join where the curve meets the straight edge, the way Apple's
-    /// continuous corners do. Much higher and the curve hugs the corner instead, which
-    /// reads as a far smaller radius than it really is.
+    /// The Mac's near-black, which is a touch blue rather than neutral. Opaque: the
+    /// depth in this design comes from the accent wash and the lit rim, and a
+    /// translucent capsule floating over arbitrary Windows content picks up whatever
+    /// is behind it instead — the one thing a status readout must not do is become
+    /// hard to read because of what the user happens to have open.
     /// </summary>
-    private const float CornerExponent = 2.2f;
-
-    // Matched to the companion panel rather than to the Mac's flat near-black bar, so
-    // the two surfaces read as the same app. The panel is DesktopAcrylic tinted
-    // (24,24,27); a layered GDI window can't host an acrylic backdrop, but at this
-    // alpha the desktop tints through much the same way — see CompanionPanelWindow.
-    private static readonly Color PillFill = Color.FromArgb(209, 24, 24, 27);
-    /// <summary>The panel's Hairline token, #14FFFFFF.</summary>
-    private static readonly Color PillBorder = Color.FromArgb(20, 255, 255, 255);
-    /// <summary>The panel's TextPrimary token, #F5F5F7 — not pure white.</summary>
-    private static readonly Color TitleColor = Color.FromArgb(255, 0xF5, 0xF5, 0xF7);
+    private static readonly Color PillFill = Color.FromArgb(255, 8, 10, 15);
+    /// <summary>Pure white, as the Mac sets it — the panel's softer #F5F5F7 disappears
+    /// against a fill this dark at this size.</summary>
+    private static readonly Color TitleColor = Color.FromArgb(255, 255, 255, 255);
 
     /// <summary>How far the drop shadow reaches, in the Mac's units.</summary>
     private const int ShadowLayers = 5;
     private const float ShadowStep = 1.5f;
-
-    /// <summary>How far the bar is drawn past the top of the screen, to be clipped there.</summary>
-    private const float TopOverhang = 2f;
 
     /// <summary>
     /// Windows 11's current UI face. The older "Segoe UI Semibold" is the Windows 8
@@ -148,16 +155,21 @@ public sealed class NativeStatusPillWindow : IDisposable
     /// </summary>
     private float _smoothedLevel;
 
-    // Where the pill is drawn, chosen when it appears and then left alone — it would
-    // be maddening for the bar to hop monitors mid-sentence because the mouse moved.
+    // Which monitor the pill is drawn on, chosen when it appears and then left alone —
+    // it would be maddening for the pill to hop monitors mid-sentence because the mouse
+    // moved. The window's own position and size are recomputed every frame, because the
+    // pill is only as wide as what it currently says.
+    private NativeMethods.RECT _workArea;
     private int _windowX, _windowY;
     private int _bitmapWidth, _bitmapHeight;
     private float _scale = 1f;
 
-    // Rasterised titles, keyed by their text. Only ever touched from the render thread.
+    // Rasterised titles, keyed by their text — each one only as wide as it needs to be,
+    // since that width is also what decides how wide the pill is. Only ever touched from
+    // the render thread.
     private readonly Dictionary<string, Bitmap> _titleSprites = new();
     private float _spriteFontPx;
-    private int _spriteWidth, _spriteHeight;
+    private int _spriteHeight;
 
     private const int WS_EX_LAYERED     = 0x00080000;
     private const int WS_EX_TRANSPARENT = 0x00000020;
@@ -262,7 +274,7 @@ public sealed class NativeStatusPillWindow : IDisposable
 
         // Pick the screen at the moment the pill appears. From then on it stays put.
         bool isFirstFrame = !_isWindowShown;
-        if (isFirstFrame) PositionOnMonitorUnderCursor();
+        if (isFirstFrame) PickMonitor();
 
         AdvanceLook(voiceState, runningTool, elapsed, isFirstFrame);
         AdvanceSpring(shouldShow ? 1f : 0f, elapsed);
@@ -277,6 +289,13 @@ public sealed class NativeStatusPillWindow : IDisposable
             return;
         }
 
+        // The pill hugs its title, so "Listening" and "Searching the web…" are different
+        // widths and the capsule has to grow between them. Interpolating on the same
+        // curve that cross-fades the text means the two read as one movement rather than
+        // a resize that happens to coincide with a relabel.
+        float pillWidth = Lerp(PillWidthFor(_previousLook.Title), PillWidthFor(_look.Title), LookMix);
+        LayoutForWidth(pillWidth);
+
         using var bitmap = new Bitmap(_bitmapWidth, _bitmapHeight, PixelFormat.Format32bppArgb);
         using var g = Graphics.FromImage(bitmap);
         g.SmoothingMode = SmoothingMode.AntiAlias;
@@ -289,7 +308,7 @@ public sealed class NativeStatusPillWindow : IDisposable
         g.TextRenderingHint = TextRenderingHint.AntiAlias;
         g.Clear(Color.Transparent);
 
-        DrawPill(g);
+        DrawPill(g, pillWidth);
 
         // Paint before the first ShowWindow, so the pill never flashes empty.
         if (!_isWindowShown)
@@ -335,14 +354,14 @@ public sealed class NativeStatusPillWindow : IDisposable
     }
 
     /// <summary>
-    /// Centres the pill on the top edge of whichever monitor the cursor is on, and
-    /// reads that monitor's DPI so the bar is the same physical size everywhere. Uses
-    /// the work area rather than the monitor bounds, so a taskbar docked to the top
-    /// doesn't sit on top of it.
+    /// Settles on whichever monitor the cursor is on and reads its DPI, so the pill is
+    /// the same physical size everywhere. Uses the work area rather than the monitor
+    /// bounds, so a taskbar docked to the top pushes the pill below it instead of being
+    /// covered by it.
     /// </summary>
-    private void PositionOnMonitorUnderCursor()
+    private void PickMonitor()
     {
-        var workArea = new NativeMethods.RECT
+        _workArea = new NativeMethods.RECT
         {
             Left = 0,
             Top = 0,
@@ -360,7 +379,7 @@ public sealed class NativeStatusPillWindow : IDisposable
                 {
                     cbSize = (uint)Marshal.SizeOf<NativeMethods.MONITORINFOEX>()
                 };
-                if (NativeMethods.GetMonitorInfo(monitor, ref info)) workArea = info.rcWork;
+                if (NativeMethods.GetMonitorInfo(monitor, ref info)) _workArea = info.rcWork;
 
                 if (GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, out uint dpiX, out _) == 0 && dpiX > 0)
                     _scale = dpiX / 96f;
@@ -368,11 +387,39 @@ public sealed class NativeStatusPillWindow : IDisposable
         }
 
         _scale *= DesignScale;
+    }
 
-        _bitmapWidth = (int)MathF.Ceiling((PillWidth + BitmapMargin * 2) * _scale);
-        _bitmapHeight = (int)MathF.Ceiling((PillHeight + BitmapMargin) * _scale);
-        _windowX = workArea.Left + (workArea.Right - workArea.Left - _bitmapWidth) / 2;
-        _windowY = workArea.Top;
+    /// <summary>
+    /// Sizes the bitmap around a pill of the given width and re-centres the window on
+    /// the chosen monitor. Runs every frame: the pill changes width whenever its title
+    /// does, and staying centred through that is the whole point of re-deriving it
+    /// rather than picking a size once.
+    /// </summary>
+    private void LayoutForWidth(float pillWidth)
+    {
+        float margin = BitmapMargin * _scale;
+        _bitmapWidth = (int)MathF.Ceiling(pillWidth + margin * 2f);
+        _bitmapHeight = (int)MathF.Ceiling(PillHeight * _scale + margin * 2f);
+        _windowX = _workArea.Left + (_workArea.Right - _workArea.Left - _bitmapWidth) / 2;
+        // The pill sits TopMargin below the work area; the bitmap carries BitmapMargin of
+        // slack above it, so the window starts that much higher.
+        _windowY = _workArea.Top + (int)MathF.Round((TopMargin - BitmapMargin) * _scale);
+    }
+
+    /// <summary>
+    /// How wide the capsule has to be to hold <paramref name="title"/> — the Mac's
+    /// .fixedSize() on an HStack, worked out by hand. With no title it collapses to
+    /// just the indicator and its padding.
+    /// </summary>
+    private float PillWidthFor(string title)
+    {
+        float padding = PillPaddingX * _scale;
+        float indicator = IndicatorWidth * _scale;
+
+        var sprite = TitleSprite(title);
+        if (sprite == null) return padding * 2f + indicator;
+
+        return padding * 2f + sprite.Width + TitleIndicatorGap * _scale + indicator;
     }
 
     // MARK: - Drawing
@@ -414,6 +461,13 @@ public sealed class NativeStatusPillWindow : IDisposable
             _lookTransition = MathF.Min(1f, _lookTransition + elapsed / LookTransitionSeconds);
         }
     }
+
+    /// <summary>
+    /// How far the hand-over from the previous look to the current one has got, eased.
+    /// Everything that changes with the state — title, accent, indicator, and the width
+    /// of the capsule itself — moves on this one number, so they move together.
+    /// </summary>
+    private float LookMix => _lookTransition * _lookTransition * (3f - 2f * _lookTransition);
 
     private PillLook ComputeLook(CompanionVoiceState state, string? runningTool)
     {
@@ -463,15 +517,14 @@ public sealed class NativeStatusPillWindow : IDisposable
         return new PillLook(title, AccentFor(state, runningTool), indicator, amplitude);
     }
 
-    private void DrawPill(Graphics g)
+    private void DrawPill(Graphics g, float pillWidth)
     {
-        float pillWidth = PillWidth * _scale;
         float pillHeight = PillHeight * _scale;
         float left = BitmapMargin * _scale;
-        const float top = 0f; // flush with the top edge of the screen
+        float top = BitmapMargin * _scale;
 
-        // Grows into place from 90% about its own top edge, so it reads as unfolding
-        // out of the edge rather than being flown in from somewhere off-screen.
+        // Grows into place from 90% about its own top edge, matching the Mac's
+        // scaleEffect(anchor: .top) — it unfolds downward from where it will settle.
         float grow = EnterScale + (1f - EnterScale) * _presence;
         var savedTransform = g.Save();
         g.TranslateTransform(left + pillWidth / 2f, top);
@@ -481,51 +534,67 @@ public sealed class NativeStatusPillWindow : IDisposable
         // The spring overshoots past 1 on the way in; opacity must not.
         int alpha = (int)(255 * Math.Clamp(_presence, 0f, 1f));
 
-        // Ease the hand-over between states, so nothing in the bar changes abruptly.
-        float mix = _lookTransition * _lookTransition * (3f - 2f * _lookTransition);
+        // Ease the hand-over between states, so nothing in the pill changes abruptly.
+        float mix = LookMix;
 
-        // Radius is clamped to half the height, which is what SwiftUI does with the
-        // Mac's 16 on a 28-tall bar — the bottom is a full cap either way.
-        float radius = MathF.Min(PillCornerRadius, PillHeight / 2f) * _scale;
+        // A capsule: the radius is half the height, so both ends are full caps and the
+        // corners are exact semicircles. This is why the superellipse the old bar used
+        // is gone — at this radius a "continuous" corner has no straight edge left to
+        // ease into, so it only distorted the caps.
+        float radius = pillHeight / 2f;
 
-        // Start the shape above the screen edge and let it clip there. The bar must sit
-        // hard against the top with nothing showing through; drawing it flush leaves
-        // the top row at the mercy of rounding, and the top edge is square anyway, so
-        // the overhang costs nothing. It also takes the top hairline off-screen, which
-        // is where the Mac's is too — swallowed by the notch.
-        float overhang = TopOverhang * _scale;
-        float drawnTop = top - overhang;
-        float drawnHeight = pillHeight + overhang;
+        // The accent tints the glass and lights the rim, so it cross-fades with
+        // everything else rather than snapping teal to purple in a single frame.
+        var accent = BlendColor(_previousLook.Accent, _look.Accent, mix);
 
-        using (var path = BottomRoundedRect(left, drawnTop, pillWidth, drawnHeight, radius))
+        using (var path = RoundedRect(left, top, pillWidth, pillHeight, radius))
         {
-            DrawShadow(g, path, left, drawnTop, pillWidth, drawnHeight, radius, alpha);
+            DrawShadow(g, path, left, top, pillWidth, pillHeight, alpha);
 
             using var fill = new SolidBrush(Scaled(PillFill, alpha));
             g.FillPath(fill, path);
+
+            // A wash of the accent across the capsule, strongest at the bottom-left and
+            // gone by the top-right. It is what keeps a near-black pill from reading as
+            // a flat slab, and it is the only place the state's colour appears at any
+            // size — the indicator is five small bars.
+            using var wash = DiagonalGradient(left, top, pillWidth, pillHeight, fromBottomLeading: true,
+                new[]
+                {
+                    Fade(accent, 0.22f * alpha / 255f),
+                    Fade(accent, 0.05f * alpha / 255f),
+                    Fade(accent, 0f)
+                });
+            g.FillPath(wash, path);
         }
 
-        // Inset by half the pen width so the hairline lands inside the shape instead
-        // of straddling the edge, where half of it would blur into the background.
-        using (var border = new Pen(Scaled(PillBorder, alpha), 1f))
-        using (var borderPath = BottomRoundedRect(left + 0.5f, drawnTop, pillWidth - 1f, drawnHeight - 0.5f, radius))
+        // A lit rim, bright at the top-right, through the accent, dim at the bottom-left.
+        // SwiftUI's strokeBorder draws inside the shape, so the path is inset by half the
+        // pen — stroking the outline itself would put half the rim outside the capsule,
+        // where it would blur into whatever is behind.
+        float penWidth = MathF.Max(1f, _scale);
+        using (var rim = DiagonalGradient(left, top, pillWidth, pillHeight, fromBottomLeading: false,
+            new[]
+            {
+                Fade(Color.White, 0.45f * alpha / 255f),
+                Fade(accent, 0.60f * alpha / 255f),
+                Fade(Color.White, 0.15f * alpha / 255f)
+            }))
+        using (var pen = new Pen(rim, penWidth))
+        using (var borderPath = RoundedRect(
+                   left + penWidth / 2f, top + penWidth / 2f,
+                   pillWidth - penWidth, pillHeight - penWidth,
+                   radius - penWidth / 2f))
         {
-            g.DrawPath(border, borderPath);
+            g.DrawPath(pen, borderPath);
         }
 
         // Title on the left, indicator on the right, same as the Mac's HStack.
         float titleLeft = left + PillPaddingX * _scale;
-        float titleWidth = pillWidth - (PillPaddingX * 2 + IndicatorWidth + TitleIndicatorGap) * _scale;
+        DrawTitle(g, _previousLook.Title, titleLeft, top, (int)(alpha * (1f - mix)));
+        DrawTitle(g, _look.Title, titleLeft, top, (int)(alpha * mix));
 
-        if (titleWidth > 0)
-        {
-            DrawTitle(g, _previousLook.Title, titleLeft, top, titleWidth, pillHeight,
-                      (int)(alpha * (1f - mix)));
-            DrawTitle(g, _look.Title, titleLeft, top, titleWidth, pillHeight,
-                      (int)(alpha * mix));
-        }
-
-        float indicatorCenterX = left + pillWidth - (PillPaddingX + IndicatorWidth / 2) * _scale;
+        float indicatorCenterX = left + pillWidth - (PillPaddingX + IndicatorWidth / 2f) * _scale;
         float indicatorCenterY = top + pillHeight / 2f;
         double t = _clock.Elapsed.TotalSeconds;
 
@@ -538,13 +607,62 @@ public sealed class NativeStatusPillWindow : IDisposable
     }
 
     /// <summary>
-    /// The soft shadow the companion panel casts, approximated by stacking the pill's
-    /// own outline at growing sizes — GDI+ has no blur. Clipped to everything *outside*
-    /// the pill, because the fill is translucent now and shadow left underneath it
-    /// would darken the glass instead of the desktop.
+    /// A two-point linear gradient across the capsule, either from its bottom-left
+    /// corner to its top-right or the other way — the two diagonals the Mac's
+    /// LinearGradients run along.
+    /// </summary>
+    private static LinearGradientBrush DiagonalGradient(
+        float x, float y, float w, float h, bool fromBottomLeading, Color[] colors)
+    {
+        var start = fromBottomLeading ? new PointF(x, y + h) : new PointF(x + w, y);
+        var end   = fromBottomLeading ? new PointF(x + w, y) : new PointF(x, y + h);
+
+        var positions = new float[colors.Length];
+        for (int i = 0; i < colors.Length; i++) positions[i] = i / (float)(colors.Length - 1);
+
+        var brush = new LinearGradientBrush(start, end, colors[0], colors[^1])
+        {
+            // GDI+ samples half a pixel beyond each end of the span. Without a mirrored
+            // tile that lands as a hairline of the opposite stop along the capsule's edge.
+            WrapMode = WrapMode.TileFlipXY
+        };
+        brush.InterpolationColors = new ColorBlend(colors.Length)
+        {
+            Colors = colors,
+            Positions = positions
+        };
+        return brush;
+    }
+
+    /// <summary>Straight-line blend between two accents, used across a state change.</summary>
+    private static Color BlendColor(Color from, Color to, float t)
+    {
+        t = Math.Clamp(t, 0f, 1f);
+        return Color.FromArgb(255,
+            (int)(from.R + (to.R - from.R) * t),
+            (int)(from.G + (to.G - from.G) * t),
+            (int)(from.B + (to.B - from.B) * t));
+    }
+
+    /// <summary>SwiftUI's <c>.opacity()</c> on a colour: sets alpha outright.</summary>
+    private static Color Fade(Color c, float opacity) =>
+        Color.FromArgb((int)Math.Clamp(opacity * 255f, 0f, 255f), c.R, c.G, c.B);
+
+    private static float Lerp(float a, float b, float t) => a + (b - a) * t;
+
+    /// <summary>
+    /// A soft shadow, approximated by stacking the capsule's own outline at growing
+    /// sizes — GDI+ has no blur. The Mac's panel doesn't cast one, because it sits under
+    /// a menu bar against a known dark strip; here the pill floats over whatever the
+    /// user has open, and without a shadow it loses its edge entirely against a light
+    /// document.
+    ///
+    /// Clipped to everything *outside* the capsule: while the pill is fading in, its
+    /// fill is still translucent, and shadow left underneath would darken the pill
+    /// rather than the desktop.
     /// </summary>
     private void DrawShadow(Graphics g, GraphicsPath pillPath, float left, float top,
-                            float pillWidth, float pillHeight, float radius, int alpha)
+                            float pillWidth, float pillHeight, int alpha)
     {
         if (alpha <= 0) return;
 
@@ -558,10 +676,15 @@ public sealed class NativeStatusPillWindow : IDisposable
         for (int layer = ShadowLayers; layer >= 1; layer--)
         {
             float spread = layer * ShadowStep * _scale;
+            // Weighted downward, the way a light from above throws it. Even now the pill
+            // is detached from the screen edge, a shadow sitting evenly all round reads
+            // as a glow rather than as height.
+            float shadowTop = top - spread * 0.4f;
+            float shadowHeight = pillHeight + spread * 1.4f;
             using var brush = new SolidBrush(
                 Color.FromArgb(alpha * 11 / 255, 0, 0, 0));
-            using var path = BottomRoundedRect(
-                left - spread, top, pillWidth + spread * 2f, pillHeight + spread, radius + spread);
+            using var path = RoundedRect(
+                left - spread, shadowTop, pillWidth + spread * 2f, shadowHeight, shadowHeight / 2f);
             g.FillPath(brush, path);
         }
 
@@ -582,11 +705,11 @@ public sealed class NativeStatusPillWindow : IDisposable
     private static Color Scaled(Color c, int alpha) =>
         Color.FromArgb(Math.Clamp(c.A * alpha / 255, 0, 255), c.R, c.G, c.B);
 
-    private void DrawTitle(Graphics g, string title, float x, float top, float width, float height, int alpha)
+    private void DrawTitle(Graphics g, string title, float x, float top, int alpha)
     {
         if (alpha <= 0 || title.Length == 0) return;
 
-        var sprite = TitleSprite(title, (int)MathF.Ceiling(width), (int)MathF.Ceiling(height));
+        var sprite = TitleSprite(title);
         if (sprite == null) return;
 
         // The two titles cross-fade during a state change, so the sprite is composited at
@@ -618,73 +741,110 @@ public sealed class NativeStatusPillWindow : IDisposable
     ///
     /// GDI cannot draw with an alpha channel at all, hence the white-on-black mask.
     ///
-    /// Cached because building one costs a bitmap, a DC and a full pixel walk, and the
-    /// title changes a few times per turn against sixty frames a second.
+    /// The sprite is exactly as wide as the text, because that width is also what decides
+    /// how wide the capsule is drawn — the pill hugs its title rather than reserving a
+    /// fixed column for it.
+    ///
+    /// Cached because building one costs two DCs, a measure, a bitmap and a full pixel
+    /// walk, and the title changes a few times per turn against sixty frames a second.
     /// </summary>
-    private Bitmap? TitleSprite(string title, int width, int height)
+    private Bitmap? TitleSprite(string title)
     {
-        if (width <= 0 || height <= 0) return null;
+        if (title.Length == 0) return null;
 
         // Font size follows the monitor, so a move between displays invalidates every
         // sprite built for the old one.
         float fontPx = TitleFontSize * _scale;
-        if (fontPx != _spriteFontPx || width != _spriteWidth || height != _spriteHeight)
+        int height = (int)MathF.Ceiling(PillHeight * _scale);
+        if (height <= 0) return null;
+
+        if (fontPx != _spriteFontPx || height != _spriteHeight)
         {
             foreach (var stale in _titleSprites.Values) stale.Dispose();
             _titleSprites.Clear();
             _spriteFontPx = fontPx;
-            _spriteWidth = width;
             _spriteHeight = height;
         }
 
         if (_titleSprites.TryGetValue(title, out var cached)) return cached;
 
-        var sprite = new Bitmap(width, height, PixelFormat.Format32bppArgb);
-        using (var sg = Graphics.FromImage(sprite))
+        IntPtr font = CreateFontW(-(int)MathF.Round(fontPx), 0, 0, 0, FW_SEMIBOLD,
+                                  0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY,
+                                  0, TitleFamily.Name);
+        if (font == IntPtr.Zero) return null;
+
+        try
         {
-            // Opaque black, so every byte GDI leaves behind is glyph coverage and nothing
-            // else — the alpha byte it zeroes included.
-            sg.Clear(Color.Black);
+            int width = MeasureTitle(title, font, height);
+            if (width <= 0) return null;
 
-            IntPtr hdc = sg.GetHdc();
-            try
+            var sprite = new Bitmap(width, height, PixelFormat.Format32bppArgb);
+            using (var sg = Graphics.FromImage(sprite))
             {
-                IntPtr font = CreateFontW(-(int)MathF.Round(fontPx), 0, 0, 0, FW_SEMIBOLD,
-                                          0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY,
-                                          0, TitleFamily.Name);
-                if (font == IntPtr.Zero) return null;
+                // Opaque black, so every byte GDI leaves behind is glyph coverage and
+                // nothing else — the alpha byte it zeroes included.
+                sg.Clear(Color.Black);
 
-                IntPtr previousFont = SelectObject(hdc, font);
-                SetBkMode(hdc, TRANSPARENT_BK);
-                SetTextColor(hdc, 0x00FFFFFF);
-
-                // DrawString used to inset the text by about a sixth of an em inside its
-                // layout rectangle. That padding is a GDI+ quirk rather than a design
-                // choice, but reproducing it is what keeps the pill's left padding looking
-                // exactly as it did before the label changed rasterisers.
-                var box = new NativeMethods.RECT
+                IntPtr hdc = sg.GetHdc();
+                try
                 {
-                    Left = (int)MathF.Round(fontPx / 6f),
-                    Top = 0,
-                    Right = width,
-                    Bottom = height
-                };
+                    IntPtr previousFont = SelectObject(hdc, font);
+                    SetBkMode(hdc, TRANSPARENT_BK);
+                    SetTextColor(hdc, 0x00FFFFFF);
 
-                // Centred by GDI on its own cell metrics. The old code did the arithmetic
-                // itself off GDI+'s ascent and descent, which no longer describe the face
-                // GDI actually mapped -- integer heights mean it is a whole pixel smaller.
-                DrawTextW(hdc, title, title.Length, ref box,
-                          DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+                    var box = new NativeMethods.RECT
+                    {
+                        Left = 0,
+                        Top = 0,
+                        Right = width,
+                        Bottom = height
+                    };
 
-                SelectObject(hdc, previousFont);
-                DeleteObject(font);
+                    // Centred by GDI on its own cell metrics. Doing the arithmetic here
+                    // off GDI+'s ascent and descent would be a pixel out, because those
+                    // no longer describe the face GDI actually mapped. DT_END_ELLIPSIS
+                    // only bites when MeasureTitle hit the cap.
+                    DrawTextW(hdc, title, title.Length, ref box,
+                              DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+
+                    SelectObject(hdc, previousFont);
+                }
+                finally { sg.ReleaseHdc(hdc); }
             }
-            finally { sg.ReleaseHdc(hdc); }
-        }
 
-        CoverageToAlpha(sprite);
-        _titleSprites[title] = sprite;
-        return sprite;
+            CoverageToAlpha(sprite);
+            _titleSprites[title] = sprite;
+            return sprite;
+        }
+        finally { DeleteObject(font); }
+    }
+
+    /// <summary>
+    /// How wide <paramref name="title"/> wants to be, capped at <see cref="MaxTitleWidth"/>
+    /// so one long mission can't stretch the capsule across the monitor. Measured through
+    /// GDI with the same font that will draw it, because GDI+'s metrics describe a
+    /// different mapping of the face and would leave the text a pixel or two clipped.
+    /// </summary>
+    private int MeasureTitle(string title, IntPtr font, int height)
+    {
+        using var scratch = new Bitmap(1, 1, PixelFormat.Format32bppArgb);
+        using var sg = Graphics.FromImage(scratch);
+
+        IntPtr hdc = sg.GetHdc();
+        try
+        {
+            IntPtr previousFont = SelectObject(hdc, font);
+            var box = new NativeMethods.RECT { Left = 0, Top = 0, Right = 0, Bottom = height };
+            DrawTextW(hdc, title, title.Length, ref box,
+                      DT_LEFT | DT_SINGLELINE | DT_NOPREFIX | DT_CALCRECT);
+            SelectObject(hdc, previousFont);
+
+            // A pixel of slack: DT_CALCRECT reports advance widths, and the antialiased
+            // edge of the last glyph reaches just past where the next one would start.
+            int measured = box.Right - box.Left + 1;
+            return Math.Min(measured, (int)MathF.Ceiling(MaxTitleWidth * _scale));
+        }
+        finally { sg.ReleaseHdc(hdc); }
     }
 
     /// <summary>
@@ -829,52 +989,10 @@ public sealed class NativeStatusPillWindow : IDisposable
     }
 
     /// <summary>
-    /// The pill's shape: square across the top so it reads as hanging off the screen
-    /// edge, rounded along the bottom. Mirrors the Mac's UnevenRoundedRectangle with
-    /// its .continuous corner style, which is a superellipse rather than an arc — a
-    /// plain arc meets the straight edge at a visible kink at this size.
+    /// The capsule, and the equalizer bars inside it. Clamping the radius to half the
+    /// smaller side is what makes this a capsule when handed the pill's own height:
+    /// the two arcs on each end meet, leaving no straight edge between them.
     /// </summary>
-    private static GraphicsPath BottomRoundedRect(float x, float y, float w, float h, float r)
-    {
-        r = MathF.Min(r, MathF.Min(w / 2f, h / 2f));
-
-        const int steps = 16;
-        var points = new PointF[2 + (steps + 1) * 2];
-        int i = 0;
-        points[i++] = new PointF(x, y);
-        points[i++] = new PointF(x + w, y);
-
-        // Bottom-right, sweeping from the right edge round to the bottom edge.
-        for (int s = 0; s <= steps; s++)
-        {
-            var (cx, cy) = SuperellipsePoint(s / (float)steps);
-            points[i++] = new PointF(x + w - r + r * cx, y + h - r + r * cy);
-        }
-
-        // Bottom-left, mirrored, sweeping from the bottom edge round to the left edge.
-        for (int s = steps; s >= 0; s--)
-        {
-            var (cx, cy) = SuperellipsePoint(s / (float)steps);
-            points[i++] = new PointF(x + r - r * cx, y + h - r + r * cy);
-        }
-
-        var path = new GraphicsPath();
-        path.AddPolygon(points);
-        return path;
-    }
-
-    /// <summary>
-    /// A point on the unit superellipse quarter, from (1,0) at t=0 to (0,1) at t=1.
-    /// With <see cref="CornerExponent"/> of 2 this is exactly a circular arc; higher
-    /// values flatten the flanks toward Apple's continuous corner.
-    /// </summary>
-    private static (float X, float Y) SuperellipsePoint(float t)
-    {
-        double angle = t * Math.PI / 2.0;
-        double p = 2.0 / CornerExponent;
-        return ((float)Math.Pow(Math.Cos(angle), p), (float)Math.Pow(Math.Sin(angle), p));
-    }
-
     private static GraphicsPath RoundedRect(float x, float y, float w, float h, float r)
     {
         r = MathF.Min(r, MathF.Min(w / 2f, h / 2f));
@@ -953,6 +1071,8 @@ public sealed class NativeStatusPillWindow : IDisposable
     private const uint DT_SINGLELINE = 0x0020;
     private const uint DT_NOPREFIX = 0x0800;
     private const uint DT_END_ELLIPSIS = 0x8000;
+    /// <summary>Measure instead of drawing — fills the rect with what the text needs.</summary>
+    private const uint DT_CALCRECT = 0x0400;
     [DllImport("user32.dll")] private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 
     [DllImport("shcore.dll")]

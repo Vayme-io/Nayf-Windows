@@ -14,7 +14,7 @@
     <Company>Vayme</Company>
     <!-- Shown on the panel's Settings page. Keep in step with MyAppVersion in
          installer\Nayf.iss so the app and the installer report the same build. -->
-    <Version>1.2.4</Version>
+    <Version>1.2.5</Version>
     <UseWinUI>true</UseWinUI>
     <WindowsPackageType>None</WindowsPackageType>
     <!-- Ship the Windows App SDK runtime inside the app rather than expecting it

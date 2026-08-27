@@ -521,17 +521,18 @@
             </StackPanel>
 
             <!-- ───────────── TOKENS PAGE ─────────────
-                 A checkout surface. Nothing is paid for here: picking a plan opens
+                 A checkout surface. Nothing is paid for here: naming an amount opens
                  Paddle's page in the browser, and Paddle's webhook credits the tokens.
                  The two views below are the before and after of that hand-off. -->
             <StackPanel x:Name="TokensPage" Padding="24,4,24,16"
                         Visibility="Collapsed" HorizontalAlignment="Stretch">
 
-                <!-- Plans. The cards are built in code from NayfPaddleProducts so the
-                     catalogue lives in one place instead of being restated in markup. -->
-                <StackPanel x:Name="TokensPlansView" Spacing="12">
+                <!-- Buying tokens. The user types what they want to spend; the shortcut
+                     chips are built in code from NayfTokenPricing so the amounts live in one
+                     place instead of being restated in markup. -->
+                <StackPanel x:Name="TokensBuyView" Spacing="12">
                     <StackPanel Spacing="7">
-                        <TextBlock Text="Monthly plans or one-time top-ups — tokens never expire."
+                        <TextBlock Text="100k free tokens every month. Buy any amount on top — tokens never expire."
                                    Foreground="{StaticResource TextSecondary}" FontSize="12.5"
                                    FontFamily="{StaticResource UiFont}" TextWrapping="Wrap"/>
                         <Border Background="{StaticResource SurfaceLow}" CornerRadius="11"
@@ -543,14 +544,83 @@
                     </StackPanel>
 
                     <StackPanel Spacing="7">
-                        <TextBlock Text="MONTHLY PLANS" Style="{StaticResource SectionLabel}"/>
-                        <StackPanel x:Name="SubscriptionsList" Spacing="8"/>
+                        <TextBlock Text="HOW MUCH TO SPEND" Style="{StaticResource SectionLabel}"/>
+
+                        <!-- The "$" is drawn beside the field rather than typed into it, so
+                             what the user edits is only ever a number. The hint to its right
+                             carries both halves of the feedback — what the amount buys, or
+                             why it won't go through — because they are never both true and
+                             two separate lines would leave a hole in the layout. -->
+                        <Border Background="{StaticResource SurfaceLow}" CornerRadius="12"
+                                Padding="14,10,14,10">
+                            <Grid ColumnSpacing="6">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="$" Foreground="{StaticResource TextSecondary}"
+                                           FontSize="22" FontWeight="SemiBold"
+                                           FontFamily="{StaticResource UiFont}"
+                                           VerticalAlignment="Center"/>
+                                <TextBox x:Name="AmountField" Grid.Column="1" Width="88"
+                                         Text="5.00" TextChanged="AmountField_TextChanged"
+                                         InputScope="Number" MaxLength="8"
+                                         Foreground="{StaticResource TextPrimary}"
+                                         FontSize="22" FontWeight="SemiBold"
+                                         FontFamily="{StaticResource UiFont}"
+                                         Background="Transparent" BorderThickness="0"
+                                         Padding="0" VerticalAlignment="Center"/>
+                                <TextBlock x:Name="AmountHintText" Grid.Column="2"
+                                           Foreground="{StaticResource TextTertiary}" FontSize="12"
+                                           FontFamily="{StaticResource UiFont}"
+                                           TextWrapping="Wrap" VerticalAlignment="Center"
+                                           HorizontalAlignment="Right" TextAlignment="Right"/>
+                            </Grid>
+                        </Border>
+
+                        <StackPanel x:Name="QuickPickRow" Orientation="Horizontal" Spacing="8"/>
                     </StackPanel>
 
-                    <StackPanel Spacing="7">
-                        <TextBlock Text="ONE-TIME TOP-UPS" Style="{StaticResource SectionLabel}"/>
-                        <StackPanel x:Name="TokenPacksList" Spacing="8"/>
-                    </StackPanel>
+                    <!-- Automatic top-up. The same amount on the recurring Paddle price
+                         instead of the one-time one, which is the only thing this changes. -->
+                    <Border Background="{StaticResource SurfaceLow}" CornerRadius="12"
+                            Padding="14,10,14,10">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel VerticalAlignment="Center" Spacing="2" Margin="0,0,12,0">
+                                <TextBlock Text="Top up automatically every month"
+                                           Foreground="{StaticResource TextPrimary}" FontSize="13"
+                                           FontWeight="SemiBold" FontFamily="{StaticResource UiFont}"
+                                           TextWrapping="Wrap"/>
+                                <TextBlock Text="Buys the same amount each month. Cancel any time."
+                                           Foreground="{StaticResource TextTertiary}" FontSize="11"
+                                           FontFamily="{StaticResource UiFont}" TextWrapping="Wrap"/>
+                            </StackPanel>
+                            <ToggleSwitch x:Name="AutoTopUpSwitch" Grid.Column="1"
+                                          OnContent="" OffContent="" MinWidth="0"
+                                          VerticalAlignment="Center"
+                                          Toggled="AutoTopUpSwitch_Toggled"/>
+                        </Grid>
+                    </Border>
+
+                    <Button x:Name="BuyButton" Click="BuyButton_Click"
+                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                            Foreground="White" FontSize="13" FontWeight="SemiBold"
+                            FontFamily="{StaticResource UiFont}" BorderThickness="0"
+                            CornerRadius="12" Padding="14,10,14,10"
+                            Background="{StaticResource AccentLink}">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <ProgressRing x:Name="BuySpinner" Width="15" Height="15"
+                                          IsActive="False" Visibility="Collapsed"
+                                          Foreground="White" VerticalAlignment="Center"/>
+                            <TextBlock x:Name="BuyButtonText" Text="Buy 1M tokens — $5.00"
+                                       VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
 
                     <TextBlock x:Name="CheckoutErrorText" Visibility="Collapsed"
                                Foreground="{StaticResource Danger}" FontSize="11.5"
@@ -655,8 +725,8 @@
                             FontFamily="{StaticResource UiFont}" BorderThickness="0"
                             CornerRadius="10" Padding="0,11,0,11"
                             Background="{StaticResource AccentLink}"/>
-                    <Button x:Name="BackToPlansButton" Content="Back to plans"
-                            Click="BackToPlansButton_Click" HorizontalAlignment="Center"
+                    <Button x:Name="BackToAmountButton" Content="Back"
+                            Click="BackToAmountButton_Click" HorizontalAlignment="Center"
                             Style="{StaticResource BarAction}"
                             Foreground="{StaticResource TextTertiary}" FontSize="11"
                             FontFamily="{StaticResource UiFont}"/>

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Globalization;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Runtime.CompilerServices;
@@ -11,41 +12,111 @@ using System.Threading.Tasks;
 
 namespace NayfWindows;
 
-/// <summary>A product the user can buy, priced and fulfilled by Paddle.</summary>
-/// <param name="Id">
-/// The Paddle price ID. It must exist in the Worker's PADDLE_PRICE_GRANTS map, which is
-/// what decides how many tokens the purchase grants — the counts below are display only.
-/// </param>
-public sealed record PaddleProduct(
-    string Id,
-    string DisplayName,
-    string DisplayPrice,
-    int TokenCount,
-    bool IsSubscription);
-
 /// <summary>
-/// The catalogue, mirroring NayfStoreManager.swift and the Worker's price map. Prices are
-/// shown as strings rather than computed, because Paddle localises what the user actually
-/// pays at checkout and any number formatted here would only be an approximation of it.
+/// Tokens are sold by the amount spent rather than as named packs and plans. This replaced
+/// a five-product catalogue (Starter / Standard / Pro packs plus Plus and Pro subscriptions)
+/// that charged a different price per token at every size and needed five Paddle prices kept
+/// in step with the Worker.
+///
+/// The user says how much they want to SPEND, so everything here works in CENTS — the
+/// smallest whole unit money has. A Paddle price carries a quantity, so the quantity simply
+/// is the amount in cents, which keeps $7.50 and $7.37 both exact with no snapping and no
+/// rounding surprise. Mirrors NayfTokenPricing in NayfStoreManager.swift.
 /// </summary>
-public static class NayfPaddleProducts
+public static class NayfTokenPricing
 {
-    /// <summary>Highlighted in each section as the one most people want.</summary>
-    public const string RecommendedSubscriptionId = "pri_01ksm2zm62mzzbdhys0np52cwd"; // Vayme Plus
-    public const string RecommendedPackId = "pri_01ksm2wmk1sednv65vh4733fg0";         // Standard Pack
+    /// <summary>
+    /// Tokens credited per cent spent — a flat $5 per million at every amount. Must match
+    /// TOKENS_PER_CENT in the Worker.
+    /// </summary>
+    public const int TokensPerCent = 2_000;
 
-    public static readonly IReadOnlyList<PaddleProduct> Subscriptions = new[]
-    {
-        new PaddleProduct(RecommendedSubscriptionId, "Vayme Plus", "$5.04/mo", 1_000_000, true),
-        new PaddleProduct("pri_01ksm30vg4a13jg6e50x981d7v", "Vayme Pro", "$13.12/mo", 3_000_000, true),
-    };
+    /// <summary>
+    /// Smallest purchase, in cents ($2). Mirrors MIN_CENTS_PER_CHECKOUT in the Worker, which
+    /// rejects anything below it with a 400.
+    /// </summary>
+    public const int MinimumCents = 200;
 
-    public static readonly IReadOnlyList<PaddleProduct> TokenPacks = new[]
+    /// <summary>Largest purchase, in cents ($100). Mirrors MAX_CENTS_PER_CHECKOUT.</summary>
+    public const int MaximumCents = 10_000;
+
+    /// <summary>What the amount field starts on: $5, which buys a round 1M tokens.</summary>
+    public const int DefaultCents = 500;
+
+    /// <summary>
+    /// The Paddle price ID for a one-off purchase. Must match the PADDLE_TOKEN_PRICES map in
+    /// the Worker, and the value in NayfStoreManager.swift.
+    /// </summary>
+    public const string OneTimePriceId = "pri_01m1124hbdhem9fcwpxaqywm8r";
+
+    /// <summary>
+    /// The same unit billed monthly, used when the user turns on automatic top-up.
+    /// </summary>
+    public const string MonthlyPriceId = "pri_01m112m5cw8wk75rfxxam78k41";
+
+    /// <summary>The shortcut amounts offered next to the field: $2 / $5 / $10 / $25.</summary>
+    public static readonly IReadOnlyList<int> QuickPickCents = new[] { 200, 500, 1_000, 2_500 };
+
+    /// <summary>Total tokens bought for a given amount.</summary>
+    public static int Tokens(int cents) => TokensPerCent * cents;
+
+    /// <summary>The amount formatted for display — "$7.50", always two decimals.</summary>
+    public static string FormattedPrice(int cents)
+        => string.Format(CultureInfo.InvariantCulture, "${0}.{1:00}", cents / 100, cents % 100);
+
+    /// <summary>
+    /// Token count in the same shape the rest of the panel shows balances — "1.5M" at or
+    /// above a million, "400k" below it, so the shortcut row reads as one series rather than
+    /// two. Invariant, because this sits beside a dollar amount and one string with two
+    /// different decimal separators in it reads as a bug.
+    /// </summary>
+    public static string FormattedTokens(int cents)
     {
-        new PaddleProduct("pri_01ksm2sptqr47rsr49whxk31dk", "Starter Pack", "$1.01", 150_000, false),
-        new PaddleProduct(RecommendedPackId, "Standard Pack", "$3.05", 500_000, false),
-        new PaddleProduct("pri_01ksm2y0fb1bp1tqkqmrd8t43j", "Pro Pack", "$8.15", 1_500_000, false),
-    };
+        int total = Tokens(cents);
+        // "0.#" drops a trailing zero by itself, so a round million reads "1M", not "1.0M".
+        return total >= 1_000_000
+            ? (total / 1_000_000.0).ToString("0.#", CultureInfo.InvariantCulture) + "M"
+            : (total / 1_000.0).ToString("0.#", CultureInfo.InvariantCulture) + "k";
+    }
+
+    /// <summary>
+    /// Parses what the user typed into a whole number of cents, or null if it isn't a usable
+    /// amount.
+    ///
+    /// Deliberately tolerant of how people actually type money: a leading "$", spaces, and —
+    /// because this ships from Sweden — a comma decimal separator. <c>decimal</c> rather than
+    /// <c>double</c>, so "7.50" cannot land on 749 cents through binary floating-point error.
+    ///
+    /// Range is NOT enforced here: the field has to accept "1" on the way to typing "12"
+    /// without the text vanishing. <see cref="IsValid"/> is the gate.
+    /// </summary>
+    public static int? CentsFromTypedAmount(string typedAmount)
+    {
+        string normalized = (typedAmount ?? "").Replace("$", "").Replace(',', '.').Trim();
+        if (normalized.Length == 0) return null;
+
+        // Invariant with only a decimal point allowed: the comma above has already been
+        // normalised into one, so letting the current culture read it as a group separator
+        // would turn "7,50" into 750 dollars rather than 750 cents.
+        if (!decimal.TryParse(
+                normalized,
+                NumberStyles.AllowDecimalPoint,
+                CultureInfo.InvariantCulture,
+                out decimal amount)
+            || amount < 0)
+        {
+            return null;
+        }
+
+        // Round to the nearest cent, so someone pasting "7.499" gets 750 rather than a
+        // rejection. Away from zero to match NSDecimalRound's .plain on the Mac.
+        decimal cents = Math.Round(amount * 100, 0, MidpointRounding.AwayFromZero);
+        if (cents > int.MaxValue) return null;
+        return (int)cents;
+    }
+
+    /// <summary>Whether an amount is inside the range the Worker will accept.</summary>
+    public static bool IsValid(int cents) => cents >= MinimumCents && cents <= MaximumCents;
 }
 
 /// <summary>
@@ -129,11 +200,20 @@ public sealed class NayfStoreManager : INotifyPropertyChanged
     // MARK: - Checkout
 
     /// <summary>
-    /// Asks the Worker for a Paddle checkout for this product and opens it in the user's
+    /// Asks the Worker for a Paddle checkout for this amount and opens it in the user's
     /// browser. Tokens are credited by Paddle's webhook once payment clears, so nothing
     /// here waits for or confirms the payment.
+    ///
+    /// The quantity sent is only a request. The Worker grants tokens from the quantity
+    /// Paddle reports as actually paid, never from what the client asked for, so this call
+    /// cannot inflate a balance.
     /// </summary>
-    public async Task OpenCheckoutAsync(PaddleProduct product)
+    /// <param name="cents">How much to spend, in cents.</param>
+    /// <param name="repeatsMonthly">
+    /// When true, buys the recurring price instead, so the same amount is topped up
+    /// automatically every month until the user cancels.
+    /// </param>
+    public async Task OpenCheckoutAsync(int cents, bool repeatsMonthly)
     {
         IsCreatingCheckout = true;
         CheckoutError = null;
@@ -146,11 +226,21 @@ public sealed class NayfStoreManager : INotifyPropertyChanged
                 return;
             }
 
+            // Clamped rather than trusted: the Worker rejects an out-of-range amount with a
+            // 400, and a UI bug should not reach the user dressed as a payment failure.
+            int centsToSpend = Math.Clamp(
+                cents, NayfTokenPricing.MinimumCents, NayfTokenPricing.MaximumCents);
+            string priceId = repeatsMonthly
+                ? NayfTokenPricing.MonthlyPriceId
+                : NayfTokenPricing.OneTimePriceId;
+
             using var request = new HttpRequestMessage(
                 HttpMethod.Post, $"{NayfConfig.WorkerBaseURL}/create-checkout");
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
             request.Content = new StringContent(
-                JsonSerializer.Serialize(new { price_id = product.Id }), Encoding.UTF8, "application/json");
+                JsonSerializer.Serialize(new { price_id = priceId, quantity = centsToSpend }),
+                Encoding.UTF8,
+                "application/json");
 
             using var response = await _httpClient.SendAsync(request);
             if (!response.IsSuccessStatusCode)
@@ -185,7 +275,7 @@ public sealed class NayfStoreManager : INotifyPropertyChanged
         }
     }
 
-    /// <summary>Returns the page to the plan list, after "Back to plans" or a finished purchase.</summary>
+    /// <summary>Returns the page to the amount field, after "Back" or a finished purchase.</summary>
     public void ResetCheckoutState()
     {
         HasBrowserCheckoutOpen = false;

@@ -72,7 +72,7 @@ public sealed partial class CompanionPanelWindow : Window
         // which took the focus and closed the panel on the way there.
         _companionManager.Store.PropertyChanged += (_, _) =>
             DispatcherQueue.TryEnqueue(UpdateTokensView);
-        BuildProductCards();
+        BuildQuickPicks();
         UpdateTokensView();
 
         // Updates run on a background loop and nearly always progress while the panel is
@@ -762,156 +762,92 @@ public sealed partial class CompanionPanelWindow : Window
 
     // MARK: - Tokens page
 
-    /// <summary>The product being bought, so only its card spins rather than all five.</summary>
-    private string? _pendingProductId;
-
     /// <summary>Whether the withdrawal control is showing its confirmation step.</summary>
     private bool _isConfirmingWithdrawal;
 
-    private readonly Dictionary<string, (Button Card, ProgressRing Spinner)> _productCards = new();
+    /// <summary>
+    /// What the amount field currently parses to, in cents, or null if it isn't a number at
+    /// all. Out-of-range values are kept rather than discarded: the user is told which bound
+    /// they crossed, which needs the number they typed.
+    /// </summary>
+    private int? _typedCents = NayfTokenPricing.DefaultCents;
+
+    private readonly Dictionary<int, Button> _quickPickChips = new();
 
     /// <summary>
-    /// Builds the five product cards from the catalogue rather than restating each one in
-    /// markup, so prices and token counts live in exactly one place — next to the Paddle
-    /// price IDs they belong to.
+    /// Builds the shortcut chips from the pricing constants rather than restating the
+    /// amounts in markup, so the row can never drift from what the field accepts.
     /// </summary>
-    private void BuildProductCards()
+    private void BuildQuickPicks()
     {
-        foreach (var product in NayfPaddleProducts.Subscriptions)
-            SubscriptionsList.Children.Add(
-                BuildProductCard(product, product.Id == NayfPaddleProducts.RecommendedSubscriptionId));
-
-        foreach (var product in NayfPaddleProducts.TokenPacks)
-            TokenPacksList.Children.Add(
-                BuildProductCard(product, product.Id == NayfPaddleProducts.RecommendedPackId));
-    }
-
-    private Button BuildProductCard(PaddleProduct product, bool isRecommended)
-    {
-        // From NayfFonts rather than the resource dictionary. The brushes below live in
-        // RootGrid.Resources, but the font faces are published on Application.Resources so
-        // that every window shares one answer - and this indexer only looks in the
-        // dictionary it is called on. Unlike {StaticResource}, it does not walk up to the
-        // application's, so asking RootGrid for "UiFont" throws.
-        var uiFont = new FontFamily(NayfFonts.UiFamily);
-        var primary = (Brush)RootGrid.Resources["TextPrimary"];
-        var tertiary = (Brush)RootGrid.Resources["TextTertiary"];
-        var accent = (Brush)RootGrid.Resources["AccentLink"];
-
-        var titleRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-        titleRow.Children.Add(new TextBlock
+        foreach (int cents in NayfTokenPricing.QuickPickCents)
         {
-            Text = product.DisplayName,
-            FontSize = 13,
-            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-            FontFamily = uiFont,
-            Foreground = primary,
-            VerticalAlignment = VerticalAlignment.Center
-        });
-
-        if (isRecommended)
-        {
-            titleRow.Children.Add(new Border
+            // From NayfFonts rather than the resource dictionary. The brushes below live in
+            // RootGrid.Resources, but the font faces are published on Application.Resources so
+            // that every window shares one answer - and this indexer only looks in the
+            // dictionary it is called on. Unlike {StaticResource}, it does not walk up to the
+            // application's, so asking RootGrid for "UiFont" throws.
+            var chip = new Button
             {
-                Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x26, 0x0A, 0x84, 0xFF)),
-                CornerRadius = new CornerRadius(5),
-                Padding = new Thickness(5, 1, 5, 1),
-                VerticalAlignment = VerticalAlignment.Center,
-                Child = new TextBlock
-                {
-                    Text = "POPULAR",
-                    FontSize = 8.5,
-                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-                    FontFamily = uiFont,
-                    CharacterSpacing = 60,
-                    Foreground = accent
-                }
-            });
+                Tag = cents,
+                Content = NayfTokenPricing.FormattedPrice(cents),
+                FontSize = 12,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                FontFamily = new FontFamily(NayfFonts.UiFamily),
+                BorderThickness = new Thickness(0),
+                CornerRadius = new CornerRadius(15),
+                Padding = new Thickness(14, 6, 14, 6)
+            };
+            chip.Click += QuickPick_Click;
+
+            _quickPickChips[cents] = chip;
+            QuickPickRow.Children.Add(chip);
         }
-
-        var details = new StackPanel { Spacing = 3 };
-        details.Children.Add(titleRow);
-        details.Children.Add(new TextBlock
-        {
-            Text = product.IsSubscription
-                ? $"{FormatTokenCount(product.TokenCount)} every month"
-                : $"{FormatTokenCount(product.TokenCount)}, one time",
-            FontSize = 11,
-            FontFamily = uiFont,
-            Foreground = tertiary
-        });
-
-        var spinner = new ProgressRing
-        {
-            Width = 15,
-            Height = 15,
-            IsActive = false,
-            Visibility = Visibility.Collapsed,
-            Foreground = accent,
-            VerticalAlignment = VerticalAlignment.Center
-        };
-
-        var trailing = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Spacing = 8,
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        trailing.Children.Add(spinner);
-        trailing.Children.Add(new TextBlock
-        {
-            Text = product.DisplayPrice,
-            FontSize = 13,
-            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-            FontFamily = uiFont,
-            Foreground = primary,
-            VerticalAlignment = VerticalAlignment.Center
-        });
-
-        var layout = new Grid();
-        layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        layout.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        layout.Children.Add(details);
-        Grid.SetColumn(trailing, 1);
-        layout.Children.Add(trailing);
-
-        var card = new Button
-        {
-            Tag = product,
-            Content = layout,
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            HorizontalContentAlignment = HorizontalAlignment.Stretch,
-            Background = (Brush)RootGrid.Resources["SurfaceLow"],
-            BorderThickness = new Thickness(0),
-            CornerRadius = new CornerRadius(12),
-            Padding = new Thickness(14, 11, 14, 11)
-        };
-        card.Click += ProductCard_Click;
-
-        _productCards[product.Id] = (card, spinner);
-        return card;
     }
 
-    private static string FormatTokenCount(int tokens)
-        => tokens >= 1_000_000
-            ? $"{tokens / 1_000_000.0:0.#}M tokens"
-            : $"{tokens / 1_000.0:0.#}k tokens";
+    /// <summary>
+    /// Writes the shortcut amount into the field rather than buying straight away, so the
+    /// chips and the field are never two different answers to the same question. The
+    /// resulting TextChanged repaints everything else.
+    /// </summary>
+    private void QuickPick_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: int cents }) return;
+        // Without the "$", which the field never contains - it is drawn beside it.
+        AmountField.Text = NayfTokenPricing.FormattedPrice(cents).TrimStart('$');
+        AmountField.SelectionStart = AmountField.Text.Length;
+    }
+
+    private void AmountField_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        // Off `sender`, not the field: this fires while the markup is still being parsed,
+        // when the starting text is applied, and at that point neither this TextBox's own
+        // generated field nor anything declared below it has been assigned yet. Repainting
+        // then would dereference a null button. The constructor paints once itself.
+        _typedCents = NayfTokenPricing.CentsFromTypedAmount(((TextBox)sender).Text);
+        if (BuyButtonText is null) return;
+
+        UpdateTokensView();
+    }
 
     /// <summary>
-    /// Sends the user to Paddle for this product. Nothing is charged here — the browser
-    /// takes the focus, which blur-dismisses the panel, and the tokens arrive by webhook.
+    /// Only ever changes which Paddle price the purchase uses, so nothing here needs to do
+    /// more than relabel the button.
     /// </summary>
-    private async void ProductCard_Click(object sender, RoutedEventArgs e)
+    private void AutoTopUpSwitch_Toggled(object sender, RoutedEventArgs e) => UpdateTokensView();
+
+    /// <summary>
+    /// Sends the user to Paddle for the amount they typed. Nothing is charged here — the
+    /// browser takes the focus, which blur-dismisses the panel, and the tokens arrive by
+    /// webhook once payment clears.
+    /// </summary>
+    private async void BuyButton_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is not Button { Tag: PaddleProduct product }) return;
-        if (_companionManager.Store.IsCreatingCheckout) return;
+        var store = _companionManager.Store;
+        if (store.IsCreatingCheckout) return;
+        if (_typedCents is not { } cents || !NayfTokenPricing.IsValid(cents)) return;
 
-        _pendingProductId = product.Id;
-        UpdateTokensView();
-
-        await _companionManager.Store.OpenCheckoutAsync(product);
-
-        _pendingProductId = null;
+        await store.OpenCheckoutAsync(cents, AutoTopUpSwitch.IsOn);
         UpdateTokensView();
     }
 
@@ -930,7 +866,7 @@ public sealed partial class CompanionPanelWindow : Window
         await _companionManager.FetchCreditBalanceAsync();
     }
 
-    private void BackToPlansButton_Click(object sender, RoutedEventArgs e)
+    private void BackToAmountButton_Click(object sender, RoutedEventArgs e)
     {
         _companionManager.Store.ResetCheckoutState();
         UpdateTokensView();
@@ -967,26 +903,59 @@ public sealed partial class CompanionPanelWindow : Window
     }
 
     /// <summary>
-    /// Paints the tokens page from the store. The page has two faces — the plan list, and
-    /// the "finish in the browser" state it switches to once checkout has been handed off —
-    /// and which one shows is the store's business, not the panel's, because the panel is
-    /// closed at the moment that changes.
+    /// Paints the tokens page from the store. The page has two faces — the amount to buy,
+    /// and the "finish in the browser" state it switches to once checkout has been handed
+    /// off — and which one shows is the store's business, not the panel's, because the panel
+    /// is closed at the moment that changes.
     /// </summary>
     private void UpdateTokensView()
     {
         var store = _companionManager.Store;
 
         bool handedOff = store.HasBrowserCheckoutOpen;
-        TokensPlansView.Visibility = handedOff ? Visibility.Collapsed : Visibility.Visible;
+        TokensBuyView.Visibility = handedOff ? Visibility.Collapsed : Visibility.Visible;
         TokensCheckoutView.Visibility = handedOff ? Visibility.Visible : Visibility.Collapsed;
 
-        foreach (var (id, card) in _productCards)
+        // The hint carries whichever of the two things is true: what the amount buys, or why
+        // it won't go through. An amount that isn't a number at all says neither, because
+        // "minimum $2.00" is the wrong answer to an empty field someone is still typing in.
+        bool isValidAmount = _typedCents is { } typed && NayfTokenPricing.IsValid(typed);
+        AmountHintText.Text = _typedCents switch
         {
-            bool busy = store.IsCreatingCheckout && id == _pendingProductId;
-            card.Spinner.IsActive = busy;
-            card.Spinner.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
-            card.Card.IsEnabled = !store.IsCreatingCheckout;
+            null => "Enter an amount",
+            { } c when c < NayfTokenPricing.MinimumCents
+                => $"minimum {NayfTokenPricing.FormattedPrice(NayfTokenPricing.MinimumCents)}",
+            { } c when c > NayfTokenPricing.MaximumCents
+                => $"maximum {NayfTokenPricing.FormattedPrice(NayfTokenPricing.MaximumCents)}",
+            { } c => $"{NayfTokenPricing.FormattedTokens(c)} tokens"
+        };
+        AmountHintText.Foreground = (Brush)RootGrid.Resources[
+            _typedCents is null || isValidAmount ? "TextTertiary" : "Danger"];
+
+        // A chip reads as selected only while the field says exactly what it would set, so
+        // typing an amount of your own visibly steps outside the shortcuts.
+        foreach (var (cents, chip) in _quickPickChips)
+        {
+            bool selected = _typedCents == cents;
+            chip.Background = selected
+                ? new SolidColorBrush(Windows.UI.Color.FromArgb(0x26, 0x0A, 0x84, 0xFF))
+                : (Brush)RootGrid.Resources["SurfaceLow"];
+            chip.Foreground = (Brush)RootGrid.Resources[selected ? "AccentLink" : "TextSecondary"];
+            chip.IsEnabled = !store.IsCreatingCheckout;
         }
+
+        // The button says what it is about to do, in the same words as the amount and the
+        // token count above it, so the two never have to be read together to be believed.
+        BuyButtonText.Text = isValidAmount && _typedCents is { } amount
+            ? AutoTopUpSwitch.IsOn
+                ? $"Get {NayfTokenPricing.FormattedTokens(amount)} tokens monthly — {NayfTokenPricing.FormattedPrice(amount)}/mo"
+                : $"Buy {NayfTokenPricing.FormattedTokens(amount)} tokens — {NayfTokenPricing.FormattedPrice(amount)}"
+            : "Buy tokens";
+        BuyButton.IsEnabled = isValidAmount && !store.IsCreatingCheckout;
+        BuySpinner.IsActive = store.IsCreatingCheckout;
+        BuySpinner.Visibility = store.IsCreatingCheckout ? Visibility.Visible : Visibility.Collapsed;
+        AmountField.IsEnabled = !store.IsCreatingCheckout;
+        AutoTopUpSwitch.IsEnabled = !store.IsCreatingCheckout;
 
         bool hasCheckoutError = !string.IsNullOrWhiteSpace(store.CheckoutError);
         CheckoutErrorText.Text = store.CheckoutError ?? "";

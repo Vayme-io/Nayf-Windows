@@ -22,7 +22,7 @@
 ; downloads the model itself if it ever finds itself without one.
 
 #define MyAppName "Vayme"
-#define MyAppVersion "1.2.5"
+#define MyAppVersion "1.2.6"
 #define MyAppPublisher "Vayme"
 #define MyAppExeName "NayfWindows.exe"
 #define MyAppId "{{28D4999F-2007-47C3-ADFA-AD5A1D0FA72D}"

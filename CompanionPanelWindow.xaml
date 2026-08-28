@@ -521,18 +521,18 @@
             </StackPanel>
 
             <!-- ───────────── TOKENS PAGE ─────────────
-                 A checkout surface. Nothing is paid for here: naming an amount opens
-                 Paddle's page in the browser, and Paddle's webhook credits the tokens.
+                 A checkout surface. Nothing is paid for here: picking an amount opens the
+                 payment provider's page in the browser, and its webhook credits the tokens.
                  The two views below are the before and after of that hand-off. -->
             <StackPanel x:Name="TokensPage" Padding="24,4,24,16"
                         Visibility="Collapsed" HorizontalAlignment="Stretch">
 
-                <!-- Buying tokens. The user types what they want to spend; the shortcut
-                     chips are built in code from NayfTokenPricing so the amounts live in one
-                     place instead of being restated in markup. -->
+                <!-- Buying tokens. The four amounts on sale are built in code from
+                     NayfTokenPricing so they live in one place instead of being restated in
+                     markup — and so no price id has to appear in the client at all. -->
                 <StackPanel x:Name="TokensBuyView" Spacing="12">
                     <StackPanel Spacing="7">
-                        <TextBlock Text="100k free tokens every month. Buy any amount on top — tokens never expire."
+                        <TextBlock Text="100k free tokens every month. Pick an amount on top — tokens never expire."
                                    Foreground="{StaticResource TextSecondary}" FontSize="12.5"
                                    FontFamily="{StaticResource UiFont}" TextWrapping="Wrap"/>
                         <Border Background="{StaticResource SurfaceLow}" CornerRadius="11"
@@ -543,14 +543,52 @@
                         </Border>
                     </StackPanel>
 
+                    <!-- A monthly top-up the user already has. Shown above the amounts,
+                         because "you are already paying for this" changes what the rest of
+                         the page means. Tinted rather than boxed in grey: it is the one
+                         thing here that is already true. -->
+                    <Border x:Name="ActiveSubscriptionCard" Visibility="Collapsed"
+                            Background="#1A0A84FF" BorderBrush="#590A84FF" BorderThickness="1"
+                            CornerRadius="12" Padding="14,10,14,10">
+                        <Grid ColumnSpacing="10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <FontIcon FontFamily="{StaticResource IconFont}" Glyph="&#xE72C;"
+                                      FontSize="14" VerticalAlignment="Center"
+                                      Foreground="{StaticResource AccentLink}"/>
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+                                <TextBlock x:Name="ActiveSubscriptionTitle"
+                                           Foreground="{StaticResource TextPrimary}" FontSize="13"
+                                           FontWeight="SemiBold" FontFamily="{StaticResource UiFont}"
+                                           TextWrapping="Wrap"/>
+                                <TextBlock x:Name="ActiveSubscriptionDetail"
+                                           Foreground="{StaticResource TextTertiary}" FontSize="11"
+                                           FontFamily="{StaticResource UiFont}" TextWrapping="Wrap"/>
+                                <TextBlock x:Name="ActiveSubscriptionNote" Visibility="Collapsed"
+                                           Text="Cancelled — you keep every token already added."
+                                           Foreground="{StaticResource TextTertiary}" FontSize="11"
+                                           FontFamily="{StaticResource UiFont}" TextWrapping="Wrap"/>
+                            </StackPanel>
+                            <Button x:Name="CancelSubscriptionButton" Grid.Column="2"
+                                    Content="Cancel" Click="CancelSubscriptionButton_Click"
+                                    VerticalAlignment="Center"
+                                    Foreground="{StaticResource TextSecondary}" FontSize="11.5"
+                                    FontWeight="SemiBold" FontFamily="{StaticResource UiFont}"
+                                    BorderThickness="0" CornerRadius="14" Padding="12,5,12,5"
+                                    Background="{StaticResource SurfaceMid}"/>
+                        </Grid>
+                    </Border>
+
                     <StackPanel Spacing="7">
                         <TextBlock Text="HOW MUCH TO SPEND" Style="{StaticResource SectionLabel}"/>
 
-                        <!-- The "$" is drawn beside the field rather than typed into it, so
-                             what the user edits is only ever a number. The hint to its right
-                             carries both halves of the feedback — what the amount buys, or
-                             why it won't go through — because they are never both true and
-                             two separate lines would leave a hole in the layout. -->
+                        <!-- What the picked amount buys, in the two units the decision is
+                             actually made in: tokens on the left, because that is what the
+                             user is short of, and the price on the right, because that is
+                             what they are about to spend. -->
                         <Border Background="{StaticResource SurfaceLow}" CornerRadius="12"
                                 Padding="14,10,14,10">
                             <Grid ColumnSpacing="6">
@@ -559,22 +597,20 @@
                                     <ColumnDefinition Width="Auto"/>
                                     <ColumnDefinition Width="*"/>
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Text="$" Foreground="{StaticResource TextSecondary}"
+                                <TextBlock x:Name="SelectedTokensText" Text="1M"
+                                           Foreground="{StaticResource TextPrimary}"
                                            FontSize="22" FontWeight="SemiBold"
                                            FontFamily="{StaticResource UiFont}"
-                                           VerticalAlignment="Center"/>
-                                <TextBox x:Name="AmountField" Grid.Column="1" Width="88"
-                                         Text="5.00" TextChanged="AmountField_TextChanged"
-                                         InputScope="Number" MaxLength="8"
-                                         Foreground="{StaticResource TextPrimary}"
-                                         FontSize="22" FontWeight="SemiBold"
-                                         FontFamily="{StaticResource UiFont}"
-                                         Background="Transparent" BorderThickness="0"
-                                         Padding="0" VerticalAlignment="Center"/>
-                                <TextBlock x:Name="AmountHintText" Grid.Column="2"
-                                           Foreground="{StaticResource TextTertiary}" FontSize="12"
+                                           VerticalAlignment="Bottom"/>
+                                <TextBlock Grid.Column="1" Text="tokens" Margin="0,0,0,2"
+                                           Foreground="{StaticResource TextSecondary}"
+                                           FontSize="12.5" FontFamily="{StaticResource UiFont}"
+                                           VerticalAlignment="Bottom"/>
+                                <TextBlock x:Name="SelectedPriceText" Grid.Column="2" Text="$5.00"
+                                           Foreground="{StaticResource AccentLink}"
+                                           FontSize="17" FontWeight="SemiBold"
                                            FontFamily="{StaticResource UiFont}"
-                                           TextWrapping="Wrap" VerticalAlignment="Center"
+                                           VerticalAlignment="Bottom"
                                            HorizontalAlignment="Right" TextAlignment="Right"/>
                             </Grid>
                         </Border>
@@ -582,8 +618,8 @@
                         <StackPanel x:Name="QuickPickRow" Orientation="Horizontal" Spacing="8"/>
                     </StackPanel>
 
-                    <!-- Automatic top-up. The same amount on the recurring Paddle price
-                         instead of the one-time one, which is the only thing this changes. -->
+                    <!-- Automatic top-up. The same amount on the recurring price instead of
+                         the one-off one, which is the only thing this changes. -->
                     <Border Background="{StaticResource SurfaceLow}" CornerRadius="12"
                             Padding="14,10,14,10">
                         <Grid>
@@ -648,7 +684,7 @@
                             <TextBlock Text="Withdraw from a recent purchase"
                                        Foreground="{StaticResource TextPrimary}" FontSize="13"
                                        FontWeight="SemiBold" FontFamily="{StaticResource UiFont}"/>
-                            <TextBlock Text="If you bought within the last 14 days, you can withdraw and request a full refund. You'll get an automatic confirmation of receipt; we then review it and issue any refund through Paddle. Tokens already used may affect the amount."
+                            <TextBlock Text="If you bought within the last 14 days, you can withdraw and request a full refund. You'll get an automatic confirmation of receipt; we then review it and issue any refund through Stripe. Tokens already used may affect the amount."
                                        Foreground="{StaticResource TextTertiary}" FontSize="11"
                                        FontFamily="{StaticResource UiFont}" TextWrapping="Wrap"/>
                             <TextBlock x:Name="WithdrawalErrorText" Visibility="Collapsed"
@@ -699,7 +735,7 @@
                         </StackPanel>
                     </Border>
 
-                    <TextBlock Text="Payments processed securely by Paddle. You have a 14-day right of withdrawal on purchases."
+                    <TextBlock Text="Payments processed securely by Stripe. You have a 14-day right of withdrawal on purchases."
                                Foreground="{StaticResource TextTertiary}" FontSize="10"
                                FontFamily="{StaticResource UiFont}" TextWrapping="Wrap"/>
                 </StackPanel>

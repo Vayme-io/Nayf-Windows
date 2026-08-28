@@ -369,7 +369,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
     /// </summary>
     public NayfIntegrationsManager Integrations { get; }
 
-    /// <summary>Buying more tokens. Payment happens in the browser, through Paddle.</summary>
+    /// <summary>Buying more tokens. Payment happens in the browser, through Stripe.</summary>
     public NayfStoreManager Store { get; }
 
     /// <summary>

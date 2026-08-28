@@ -68,8 +68,8 @@ public sealed partial class CompanionPanelWindow : Window
             DispatcherQueue.TryEnqueue(UpdateConnectionsView);
         UpdateConnectionsView();
 
-        // Same reasoning for checkout: it finishes on Paddle's page in the browser,
-        // which took the focus and closed the panel on the way there.
+        // Same reasoning for checkout: it finishes on the payment provider's page in the
+        // browser, which took the focus and closed the panel on the way there.
         _companionManager.Store.PropertyChanged += (_, _) =>
             DispatcherQueue.TryEnqueue(UpdateTokensView);
         BuildQuickPicks();
@@ -765,23 +765,26 @@ public sealed partial class CompanionPanelWindow : Window
     /// <summary>Whether the withdrawal control is showing its confirmation step.</summary>
     private bool _isConfirmingWithdrawal;
 
+    /// <summary>The amount the user has picked, in cents.</summary>
+    private int _selectedCents = NayfTokenPricing.DefaultBundle.Cents;
+
     /// <summary>
-    /// What the amount field currently parses to, in cents, or null if it isn't a number at
-    /// all. Out-of-range values are kept rather than discarded: the user is told which bound
-    /// they crossed, which needs the number they typed.
+    /// The bundle currently picked. Falls back to the default one rather than throwing: an
+    /// amount that is no longer on sale can only come from a build older than this list.
     /// </summary>
-    private int? _typedCents = NayfTokenPricing.DefaultCents;
+    private TokenBundle SelectedBundle => NayfTokenPricing.BundleForCents(_selectedCents);
 
     private readonly Dictionary<int, Button> _quickPickChips = new();
 
     /// <summary>
-    /// Builds the shortcut chips from the pricing constants rather than restating the
-    /// amounts in markup, so the row can never drift from what the field accepts.
+    /// Builds the amount chips from NayfTokenPricing rather than restating the amounts in
+    /// markup, so the row can never drift from what the Worker will actually sell.
     /// </summary>
     private void BuildQuickPicks()
     {
-        foreach (int cents in NayfTokenPricing.QuickPickCents)
+        foreach (var bundle in NayfTokenPricing.Bundles)
         {
+            int cents = bundle.Cents;
             // From NayfFonts rather than the resource dictionary. The brushes below live in
             // RootGrid.Resources, but the font faces are published on Application.Resources so
             // that every window shares one answer - and this indexer only looks in the
@@ -790,7 +793,7 @@ public sealed partial class CompanionPanelWindow : Window
             var chip = new Button
             {
                 Tag = cents,
-                Content = NayfTokenPricing.FormattedPrice(cents),
+                Content = bundle.FormattedPrice,
                 FontSize = 12,
                 FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
                 FontFamily = new FontFamily(NayfFonts.UiFamily),
@@ -806,55 +809,52 @@ public sealed partial class CompanionPanelWindow : Window
     }
 
     /// <summary>
-    /// Writes the shortcut amount into the field rather than buying straight away, so the
-    /// chips and the field are never two different answers to the same question. The
-    /// resulting TextChanged repaints everything else.
+    /// Picks an amount. Deliberately does not buy: the chip and the card above it are two
+    /// halves of one choice, and a chip that charged money would make the card a label for
+    /// something that had already happened.
     /// </summary>
     private void QuickPick_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button { Tag: int cents }) return;
-        // Without the "$", which the field never contains - it is drawn beside it.
-        AmountField.Text = NayfTokenPricing.FormattedPrice(cents).TrimStart('$');
-        AmountField.SelectionStart = AmountField.Text.Length;
-    }
-
-    private void AmountField_TextChanged(object sender, TextChangedEventArgs e)
-    {
-        // Off `sender`, not the field: this fires while the markup is still being parsed,
-        // when the starting text is applied, and at that point neither this TextBox's own
-        // generated field nor anything declared below it has been assigned yet. Repainting
-        // then would dereference a null button. The constructor paints once itself.
-        _typedCents = NayfTokenPricing.CentsFromTypedAmount(((TextBox)sender).Text);
-        if (BuyButtonText is null) return;
-
+        _selectedCents = cents;
         UpdateTokensView();
     }
 
     /// <summary>
-    /// Only ever changes which Paddle price the purchase uses, so nothing here needs to do
+    /// Only ever changes whether the recurring price is used, so nothing here needs to do
     /// more than relabel the button.
     /// </summary>
     private void AutoTopUpSwitch_Toggled(object sender, RoutedEventArgs e) => UpdateTokensView();
 
     /// <summary>
-    /// Sends the user to Paddle for the amount they typed. Nothing is charged here — the
-    /// browser takes the focus, which blur-dismisses the panel, and the tokens arrive by
-    /// webhook once payment clears.
+    /// Sends the user to the checkout page for the amount they picked. Nothing is charged
+    /// here — the browser takes the focus, which blur-dismisses the panel, and the tokens
+    /// arrive by webhook once payment clears.
     /// </summary>
     private async void BuyButton_Click(object sender, RoutedEventArgs e)
     {
         var store = _companionManager.Store;
         if (store.IsCreatingCheckout) return;
-        if (_typedCents is not { } cents || !NayfTokenPricing.IsValid(cents)) return;
 
-        await store.OpenCheckoutAsync(cents, AutoTopUpSwitch.IsOn);
+        await store.OpenCheckoutAsync(SelectedBundle, AutoTopUpSwitch.IsOn);
         UpdateTokensView();
     }
 
     /// <summary>
-    /// Confirms the purchase finished. Paddle's webhook credits the account a moment after
-    /// payment clears, so the balance is read twice — once now, once after it has had time
-    /// to land — rather than leaving the user looking at a stale number.
+    /// Stops the monthly top-up at the end of the month already paid for. Nothing is taken
+    /// away, so this asks for no second confirmation — the row says what happens, and the
+    /// user can start a new top-up from the same page.
+    /// </summary>
+    private async void CancelSubscriptionButton_Click(object sender, RoutedEventArgs e)
+    {
+        await _companionManager.Store.CancelSubscriptionAsync();
+        UpdateTokensView();
+    }
+
+    /// <summary>
+    /// Confirms the purchase finished. The provider's webhook credits the account a moment
+    /// after payment clears, so the balance is read twice — once now, once after it has had
+    /// time to land — rather than leaving the user looking at a stale number.
     /// </summary>
     private async void PurchaseCompletedButton_Click(object sender, RoutedEventArgs e)
     {
@@ -864,6 +864,10 @@ public sealed partial class CompanionPanelWindow : Window
         await _companionManager.FetchCreditBalanceAsync();
         await Task.Delay(TimeSpan.FromSeconds(4));
         await _companionManager.FetchCreditBalanceAsync();
+
+        // Same webhook, same delay: if what they just bought was a monthly top-up, the row
+        // saying so only exists once the provider has told the Worker about it.
+        await _companionManager.Store.RefreshSubscriptionStatusAsync();
     }
 
     private void BackToAmountButton_Click(object sender, RoutedEventArgs e)
@@ -903,6 +907,21 @@ public sealed partial class CompanionPanelWindow : Window
     }
 
     /// <summary>
+    /// The line under the top-up's title: what the month buys and when it next happens,
+    /// joined with a middle dot. Either half is dropped when the Worker didn't report it,
+    /// so the row never shows a dangling separator or a date that isn't there.
+    /// </summary>
+    private static string DescribeSubscription(ActiveTokenSubscription subscription)
+    {
+        var parts = new List<string>();
+        if (subscription.Tokens is { } tokens)
+            parts.Add($"{NayfTokenPricing.FormatTokens(tokens)} tokens each month");
+        if (subscription.FormattedNextCharge is { } date)
+            parts.Add(subscription.CancelsAtPeriodEnd ? $"ends {date}" : $"next charge {date}");
+        return string.Join(" · ", parts);
+    }
+
+    /// <summary>
     /// Paints the tokens page from the store. The page has two faces — the amount to buy,
     /// and the "finish in the browser" state it switches to once checkout has been handed
     /// off — and which one shows is the store's business, not the panel's, because the panel
@@ -916,27 +935,39 @@ public sealed partial class CompanionPanelWindow : Window
         TokensBuyView.Visibility = handedOff ? Visibility.Collapsed : Visibility.Visible;
         TokensCheckoutView.Visibility = handedOff ? Visibility.Visible : Visibility.Collapsed;
 
-        // The hint carries whichever of the two things is true: what the amount buys, or why
-        // it won't go through. An amount that isn't a number at all says neither, because
-        // "minimum $2.00" is the wrong answer to an empty field someone is still typing in.
-        bool isValidAmount = _typedCents is { } typed && NayfTokenPricing.IsValid(typed);
-        AmountHintText.Text = _typedCents switch
+        // A top-up the user already has, above the amounts. Absent is the normal case, so
+        // the row is only ever built when there is one to describe.
+        var subscription = store.ActiveSubscription;
+        ActiveSubscriptionCard.Visibility =
+            subscription != null ? Visibility.Visible : Visibility.Collapsed;
+        if (subscription is { } active)
         {
-            null => "Enter an amount",
-            { } c when c < NayfTokenPricing.MinimumCents
-                => $"minimum {NayfTokenPricing.FormattedPrice(NayfTokenPricing.MinimumCents)}",
-            { } c when c > NayfTokenPricing.MaximumCents
-                => $"maximum {NayfTokenPricing.FormattedPrice(NayfTokenPricing.MaximumCents)}",
-            { } c => $"{NayfTokenPricing.FormattedTokens(c)} tokens"
-        };
-        AmountHintText.Foreground = (Brush)RootGrid.Resources[
-            _typedCents is null || isValidAmount ? "TextTertiary" : "Danger"];
+            // "ending" rather than "active" once cancelled: it is still charging nothing and
+            // still running, and calling that active would read as the cancel not having
+            // taken.
+            ActiveSubscriptionTitle.Text = active.CancelsAtPeriodEnd
+                ? $"{active.FormattedPrice} monthly top-up ending"
+                : $"{active.FormattedPrice} monthly top-up active";
+            ActiveSubscriptionDetail.Text = DescribeSubscription(active);
+            ActiveSubscriptionNote.Visibility =
+                active.CancelsAtPeriodEnd ? Visibility.Visible : Visibility.Collapsed;
 
-        // A chip reads as selected only while the field says exactly what it would set, so
-        // typing an amount of your own visibly steps outside the shortcuts.
+            // Nothing left to cancel once it is already ending.
+            CancelSubscriptionButton.Visibility =
+                active.CancelsAtPeriodEnd ? Visibility.Collapsed : Visibility.Visible;
+            CancelSubscriptionButton.Content =
+                store.IsCancellingSubscription ? "Cancelling…" : "Cancel";
+            CancelSubscriptionButton.IsEnabled = !store.IsCancellingSubscription;
+        }
+
+        // What the picked amount buys, in both units, above the chips that set it.
+        var bundle = SelectedBundle;
+        SelectedTokensText.Text = bundle.FormattedTokens;
+        SelectedPriceText.Text = bundle.FormattedPrice;
+
         foreach (var (cents, chip) in _quickPickChips)
         {
-            bool selected = _typedCents == cents;
+            bool selected = _selectedCents == cents;
             chip.Background = selected
                 ? new SolidColorBrush(Windows.UI.Color.FromArgb(0x26, 0x0A, 0x84, 0xFF))
                 : (Brush)RootGrid.Resources["SurfaceLow"];
@@ -946,15 +977,12 @@ public sealed partial class CompanionPanelWindow : Window
 
         // The button says what it is about to do, in the same words as the amount and the
         // token count above it, so the two never have to be read together to be believed.
-        BuyButtonText.Text = isValidAmount && _typedCents is { } amount
-            ? AutoTopUpSwitch.IsOn
-                ? $"Get {NayfTokenPricing.FormattedTokens(amount)} tokens monthly — {NayfTokenPricing.FormattedPrice(amount)}/mo"
-                : $"Buy {NayfTokenPricing.FormattedTokens(amount)} tokens — {NayfTokenPricing.FormattedPrice(amount)}"
-            : "Buy tokens";
-        BuyButton.IsEnabled = isValidAmount && !store.IsCreatingCheckout;
+        BuyButtonText.Text = AutoTopUpSwitch.IsOn
+            ? $"Get {bundle.FormattedTokens} tokens monthly — {bundle.FormattedPrice}/mo"
+            : $"Buy {bundle.FormattedTokens} tokens — {bundle.FormattedPrice}";
+        BuyButton.IsEnabled = !store.IsCreatingCheckout;
         BuySpinner.IsActive = store.IsCreatingCheckout;
         BuySpinner.Visibility = store.IsCreatingCheckout ? Visibility.Visible : Visibility.Collapsed;
-        AmountField.IsEnabled = !store.IsCreatingCheckout;
         AutoTopUpSwitch.IsEnabled = !store.IsCreatingCheckout;
 
         bool hasCheckoutError = !string.IsNullOrWhiteSpace(store.CheckoutError);
@@ -1093,11 +1121,14 @@ public sealed partial class CompanionPanelWindow : Window
         if (page == PanelPage.Connections)
             _ = _companionManager.Integrations.RefreshStatusAsync();
 
-        // Likewise for the balance: a purchase made in the browser is credited by
-        // Paddle's webhook, with nothing on screen at the time to hear about it.
+        // Likewise for the balance: a purchase made in the browser is credited by the
+        // provider's webhook, with nothing on screen at the time to hear about it. The
+        // monthly top-up is re-asked for the same reason, and because it can also have been
+        // cancelled from the provider's own portal.
         if (page == PanelPage.Tokens)
         {
             _ = _companionManager.FetchCreditBalanceAsync();
+            _ = _companionManager.Store.RefreshSubscriptionStatusAsync();
             UpdateTokensView();
         }
 

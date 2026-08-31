@@ -26,6 +26,19 @@ public sealed class ElevenLabsTTSClient : IDisposable
     private readonly HttpClient _httpClient;
     private IWavePlayer? _waveOut;
     private Mp3FileReader? _mp3Reader;
+    private MemoryStream? _audioStream;
+
+    /// <summary>
+    /// Guards the three playback fields above and <see cref="_speechGeneration"/>. Held only
+    /// across state changes — never across the fetch, which takes seconds.
+    /// </summary>
+    private readonly object _playbackLock = new();
+
+    /// <summary>
+    /// Stamped onto every utterance. A fetch that comes back to find this moved on has been
+    /// superseded and throws its audio away rather than talking over whatever replaced it.
+    /// </summary>
+    private int _speechGeneration;
 
     public ElevenLabsTTSClient(string proxyUrl)
     {
@@ -44,7 +57,15 @@ public sealed class ElevenLabsTTSClient : IDisposable
     public async Task SpeakAsync(string text, string? authorizationToken = null,
         CancellationToken cancellationToken = default)
     {
-        StopPlayback();
+        // Each call supersedes the one before it. The fetch takes seconds, so without a
+        // generation stamp two calls that overlap in that window both reach PlayAudio and
+        // both play — two voices at once, and only the newer one reachable by StopPlayback.
+        int generation;
+        lock (_playbackLock)
+        {
+            generation = ++_speechGeneration;
+            StopPlaybackLocked();
+        }
 
         try
         {
@@ -55,13 +76,24 @@ public sealed class ElevenLabsTTSClient : IDisposable
             Logger.Log("ElevenLabs",
                 $"audio fetched in {fetchClock.Elapsed.TotalSeconds:F1}s for {text.Length} chars");
 
-            if (audioBytes.Length == 0)
+            bool nothingCameBack = false;
+            lock (_playbackLock)
             {
-                // No audio came back — let the state machine recover.
-                PlaybackStopped?.Invoke();
-                return;
+                // Something newer started while this was in flight. Its audio is the one the
+                // user should hear; drop ours rather than talking over it.
+                if (generation != _speechGeneration)
+                {
+                    Logger.Log("ElevenLabs", $"discarded superseded audio (gen {generation})");
+                    return;
+                }
+
+                if (audioBytes.Length == 0) nothingCameBack = true;
+                else PlayAudioLocked(audioBytes, generation);
             }
-            PlayAudio(audioBytes, cancellationToken);
+
+            // Raised outside the lock: a subscriber is free to call straight back in here,
+            // and none of them should be doing that while this thread holds it.
+            if (nothingCameBack) PlaybackStopped?.Invoke();  // let the state machine recover
         }
         catch (OperationCanceledException)
         {
@@ -77,6 +109,30 @@ public sealed class ElevenLabsTTSClient : IDisposable
 
     public void StopPlayback()
     {
+        bool wasSpeaking;
+        lock (_playbackLock)
+        {
+            // A barge-in must also cancel audio that hasn't arrived yet, or it lands a second
+            // later and starts talking over the user's new request.
+            _speechGeneration++;
+            wasSpeaking = StopPlaybackLocked();
+        }
+
+        // That bump silences the stopped player's own PlaybackStopped — right when a newer
+        // clip is on its way, wrong here, where this is genuinely the end of the speech.
+        // Whoever is waiting on it (the acknowledgment, the state machine) has to be told.
+        if (wasSpeaking) PlaybackStopped?.Invoke();
+    }
+
+    /// <summary>
+    /// Tears down the current player and everything it reads from. Returns whether it
+    /// interrupted audio that was still playing, which the caller needs in order to decide
+    /// whether a <see cref="PlaybackStopped"/> is owed.
+    /// </summary>
+    private bool StopPlaybackLocked()
+    {
+        bool wasSpeaking = _waveOut is { PlaybackState: not PlaybackState.Stopped };
+
         if (_waveOut != null)
         {
             _waveOut.Stop();
@@ -85,6 +141,12 @@ public sealed class ElevenLabsTTSClient : IDisposable
         }
         _mp3Reader?.Dispose();
         _mp3Reader = null;
+        // Owned by the reader in every other respect, but disposing the reader doesn't close
+        // it — held in a field purely so it can be released here rather than left to the GC.
+        _audioStream?.Dispose();
+        _audioStream = null;
+
+        return wasSpeaking;
     }
 
     private async Task<byte[]> FetchAudioAsync(string text, string? authorizationToken,
@@ -132,9 +194,21 @@ public sealed class ElevenLabsTTSClient : IDisposable
     // Short SSML pauses inserted at deliberate stops. multilingual_v2 (and every model
     // except v3) supports <break>; ElevenLabs warns that *excessive* breaks cause
     // instability, so these are short and only land at real boundaries. Tune here.
-    private const string SentencePause = "0.15s";   // between sentences ("... done. Next ...")
+    //
+    // No break is inserted at sentence boundaries. The model already pauses at a full stop,
+    // and this was the one substitution that scaled with response length — a long answer
+    // carried a dozen tags, which is the "excessive breaks" case ElevenLabs warns degrades
+    // into slurred, run-together speech.
     private const string ClausePause = "0.4s";      // where the writer put an ellipsis
     private const string ParagraphPause = "0.4s";   // across line breaks
+
+    /// <summary>
+    /// Above this many break tags in one utterance, ElevenLabs' prosody becomes unstable and
+    /// the result is slurred rather than well-paced. Past the cap the pauses are dropped
+    /// rather than risking the whole answer being unintelligible — losing a beat between
+    /// paragraphs is a far smaller loss than losing the words.
+    /// </summary>
+    private const int MaxBreakTags = 4;
 
     private static readonly Regex MarkdownLinkPattern = new(@"\[([^\]]+)\]\([^)]+\)");
     private static readonly Regex LineLeadingMarkPattern =
@@ -142,13 +216,12 @@ public sealed class ElevenLabsTTSClient : IDisposable
     private static readonly Regex EllipsisPattern = new(@"\s*(?:…|\.\.\.+)\s*");
     private static readonly Regex LineBreakPattern = new(@"\s*\n+\s*");
     private static readonly Regex RepeatedSpacePattern = new(@"[ \t]{2,}");
-    private static readonly Regex SentenceBoundaryPattern =
-        new("([.!?])\\s+(?=[\"'“‘A-Z0-9])");
+    private static readonly Regex BreakTagPattern = new(@"\s*<break\s+time=""[^""]*""\s*/>\s*");
 
     /// <summary>
     /// Turns raw model text into something ElevenLabs speaks naturally: strips Markdown/emoji
-    /// that would be mispronounced or read literally, collapses whitespace, and inserts short
-    /// <c>&lt;break&gt;</c> pauses so words and sentences don't run together. Mirrors
+    /// that would be mispronounced or read literally, collapses whitespace, and marks the
+    /// pauses the writer intended with short <c>&lt;break&gt;</c> tags. Mirrors
     /// <c>prepareForSpeech(_:)</c> in <c>ElevenLabsTTSClient.swift</c>.
     ///
     /// <para>Without this the model is handed the answer exactly as it was written for the
@@ -177,14 +250,27 @@ public sealed class ElevenLabsTTSClient : IDisposable
         // 4. Collapse runs of spaces/tabs left over from the substitutions.
         text = RepeatedSpacePattern.Replace(text, " ");
 
-        // 5. A short beat between sentences so they don't run together. The lookahead
-        //    requires the next sentence to actually start (capital/quote/digit), which
-        //    skips most in-word/decimal periods; the "s\"/>" in a break tag has no space
-        //    after its dot, so earlier breaks are never re-matched.
-        text = SentenceBoundaryPattern.Replace(text, $"$1 <break time=\"{SentencePause}\"/> ");
+        // 5. Even the two remaining kinds add up in a long structured answer, so the total
+        //    is capped before it reaches the model.
+        text = CapBreakTags(text);
 
         string result = text.Trim();
         return result.Length == 0 ? raw.Trim() : result;
+    }
+
+    /// <summary>
+    /// Drops every pause once there are more of them than <see cref="MaxBreakTags"/> —
+    /// all of them, not the surplus, because which ones to keep is not a judgement this can
+    /// make and an answer paced by the model alone still sounds right.
+    /// </summary>
+    private static string CapBreakTags(string text)
+    {
+        var matches = BreakTagPattern.Matches(text);
+        if (matches.Count <= MaxBreakTags) return text;
+
+        Logger.Log("ElevenLabs",
+            $"stripped {matches.Count} break tags (cap {MaxBreakTags}) to protect prosody");
+        return BreakTagPattern.Replace(text, " ").Trim();
     }
 
     /// <summary>
@@ -217,10 +303,20 @@ public sealed class ElevenLabsTTSClient : IDisposable
         return builder.ToString();
     }
 
-    private void PlayAudio(byte[] mp3Bytes, CancellationToken cancellationToken)
+    /// <summary>
+    /// Starts playing <paramref name="mp3Bytes"/>. Call with <see cref="_playbackLock"/> held:
+    /// it replaces all three playback fields, and the reader and player it creates have to be
+    /// the ones the next stop tears down.
+    /// </summary>
+    private void PlayAudioLocked(byte[] mp3Bytes, int generation)
     {
-        var ms = new MemoryStream(mp3Bytes);
-        _mp3Reader = new Mp3FileReader(ms);
+        // Whatever was here goes first. Assigning over these fields without disposing them
+        // left the previous WaveOutEvent playing and unreachable — a second voice nothing
+        // could stop, and a leaked device handle with it.
+        StopPlaybackLocked();
+
+        _audioStream = new MemoryStream(mp3Bytes);
+        _mp3Reader = new Mp3FileReader(_audioStream);
         _waveOut = new WaveOutEvent();
         _waveOut.Init(_mp3Reader);
 
@@ -245,6 +341,13 @@ public sealed class ElevenLabsTTSClient : IDisposable
             else
                 Logger.Log("ElevenLabs", $"playback finished ({expected.TotalSeconds:F1}s)");
 
+            // A player left behind by a superseded call must not tell the state machine that
+            // speech has ended — the current one is still going, or is a moment from starting.
+            // An explicit StopPlayback raises this itself, for the same reason in reverse.
+            lock (_playbackLock)
+            {
+                if (generation != _speechGeneration) return;
+            }
             PlaybackStopped?.Invoke();
         };
 
@@ -256,7 +359,13 @@ public sealed class ElevenLabsTTSClient : IDisposable
 
     public void Dispose()
     {
-        StopPlayback();
+        // Not StopPlayback: the app is going away, and announcing that speech stopped at this
+        // point only wakes a state machine that is being torn down alongside it.
+        lock (_playbackLock)
+        {
+            _speechGeneration++;
+            StopPlaybackLocked();
+        }
         _httpClient.Dispose();
     }
 }

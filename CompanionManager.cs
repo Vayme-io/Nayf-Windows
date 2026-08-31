@@ -1789,7 +1789,16 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
             else
             {
                 Logger.Log("CompanionManager", "Starting TTS playback");
-                _ = _elevenLabsTTSClient.SpeakAsync(ttsText, authToken, ct);
+                // Deliberately not awaited — the turn is done, and what follows is driven by
+                // the playback events rather than by this task. A task nobody observes also
+                // swallows whatever went wrong inside it, so faults are logged here instead.
+                _ = _elevenLabsTTSClient.SpeakAsync(ttsText, authToken, ct)
+                    .ContinueWith(
+                        t => Logger.Log("CompanionManager",
+                            $"TTS task faulted: {t.Exception?.GetBaseException().Message}"),
+                        CancellationToken.None,
+                        TaskContinuationOptions.OnlyOnFaulted,
+                        TaskScheduler.Default);
             }
         }
         catch (OperationCanceledException)

@@ -357,7 +357,7 @@ public sealed class NayfActionToast : IDisposable
         _topmostTimer = new System.Threading.Timer(_ =>
         {
             if (_hwnd != IntPtr.Zero && _isWindowShown)
-                NativeMethods.SetWindowPos(_hwnd, NativeMethods.HWND_TOPMOST, 0, 0, 0, 0,
+                NativeMethods.SetWindowPos(_hwnd, OverlayZOrder.InsertAfter(), 0, 0, 0, 0,
                     NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE);
         }, null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
 
@@ -425,7 +425,7 @@ public sealed class NayfActionToast : IDisposable
 
         // Paint before the first ShowWindow, so the chip never flashes empty.
         if (!_isWindowShown)
-            NativeMethods.SetWindowPos(_hwnd, NativeMethods.HWND_TOPMOST,
+            NativeMethods.SetWindowPos(_hwnd, OverlayZOrder.InsertAfter(),
                 _windowX, _windowY, _bitmapWidth, _bitmapHeight,
                 NativeMethods.SWP_NOACTIVATE);
 

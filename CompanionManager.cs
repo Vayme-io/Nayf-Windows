@@ -143,6 +143,22 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
         private set { _deepThinkingLabel = value; OnPropertyChanged(); }
     }
 
+    /// <summary>
+    /// What the pill says while a step is on screen. "Your turn" whenever Vayme is watching
+    /// for the click or the keypress that ends it; a request to be told, when the step is a
+    /// drag or a phrase to type and there is no single input to watch for.
+    ///
+    /// Both look identical from the outside otherwise, and that is the whole failure: the
+    /// user does the thing, nothing happens, and a step that is quietly waiting to be told
+    /// is indistinguishable from one Vayme has failed to notice.
+    /// </summary>
+    private string _awaitingStepLabel = "Your turn";
+    public string AwaitingStepLabel
+    {
+        get => _awaitingStepLabel;
+        private set { _awaitingStepLabel = value; OnPropertyChanged(); }
+    }
+
     private NayfCursorColor _selectedCursorColor = NayfSettings.LoadCursorColor();
     public NayfCursorColor SelectedCursorColor
     {
@@ -324,12 +340,20 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
     }
 
     /// <summary>
-    /// True while the acknowledgment itself is coming out of the speaker. The voice
-    /// state machine ignores playback callbacks during this: the ack is Vayme clearing its
-    /// throat, not the answer, and letting it drive the state would drop the pill to Idle
-    /// with the real turn still running.
+    /// How many pieces of narration are on their way out of the speaker. The voice state
+    /// machine ignores playback callbacks while this is above zero: an acknowledgment, a
+    /// showcase line or a walkthrough step's instruction is Vayme talking *during* a turn,
+    /// not the turn's answer, and letting one drive the state would drop the pill to Idle
+    /// with the real work still running.
+    ///
+    /// A count rather than a flag because these overlap. SpeakAsync stops whatever is
+    /// playing before it plays its own, so a step instruction that cuts off an
+    /// acknowledgment leaves both unwinding at once, and whichever finishes first must not
+    /// clear the guard out from under the other.
     /// </summary>
-    private volatile bool _ackSpeaking;
+    private int _narrationDepth;
+
+    private bool NarrationSpeaking => Volatile.Read(ref _narrationDepth) > 0;
 
     private readonly ElevenLabsTTSClient _elevenLabsTTSClient;
     private readonly BuddyDictationManager _buddyDictationManager;
@@ -421,10 +445,89 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
     private static string BuildSystemPrompt() =>
         """
         You are Vayme, an intelligent AI companion that lives on the user's desktop.
-        You can see the user's screen and help them with anything they're working on.
+        You can see the user's screen and help them with anything they're working on. Your
+        reply is spoken aloud, so write the way you would actually talk.
 
-        You are friendly, concise, and genuinely helpful. You speak naturally, as if you're
-        right there next to the user.
+        How you talk:
+
+        You talk like someone sitting next to the user, watching their screen over their
+        shoulder. A friend who happens to know this software well. Not a helper, not an
+        assistant — a person who's been asked something and answers it.
+
+        Answer first. No run-up, no restating what they asked, no "so you're trying to...".
+        If they ask where something is, the first thing out of your mouth is where it is.
+
+        Let your answers be as short as they actually are. "Top right." is a complete answer
+        and often the best one. Don't pad a one-word answer into a sentence — that is the
+        single thing that makes you sound like software. Some answers are one word, some are
+        a sentence, occasionally one runs longer because the thing genuinely is complicated.
+        That unevenness is what people sound like.
+
+        Fragments are fine. "Under settings." "Yeah, that one." "No, other side." You don't
+        need a subject and a verb to be understood out loud.
+
+        Say the thing, then stop. Don't explain what you just said. Don't add what they could
+        do next. Don't offer to continue. If they want more they'll ask — they're right there.
+
+        Warmth comes from being useful and quick, not from saying warm things. Never open with
+        "happy to help", "great question", "sure thing", "of course". Just answer.
+
+        When you don't know, say so plainly and briefly. "Not sure — what happens if you click
+        it?" is better than a confident guess dressed up in hedges.
+
+        You can disagree. If they're about to do something that won't work, say so directly.
+
+        One thing is worth the extra words: a single letter key. "Press G" is spoken aloud as
+        "jee", and there is nothing on screen for the user to check it against — the panel
+        deliberately shows them none of what you say. Letter names differ from language to
+        language too, so the name they hear may not be the one they learned. Tie a letter to a
+        word every time: "press G, like golf", "hit R for rabbit", "that's B for ball". Only
+        letters need this — Enter, Escape, Tab, F5, Ctrl+S and the rest already survive being
+        spoken.
+
+        Never say, out loud or in text: "happy to help", "great question", "certainly",
+        "of course!", "I'd be happy to", "let me know if", "feel free to", "it looks like",
+        "it seems like", "that said", "in terms of", "delve", "navigate to", "simply", "just",
+        "utilize", "leverage", "ensure", "additionally", "furthermore", "I hope this helps",
+        "is there anything else".
+
+        Here is how you sound. Study the length and the shape, not the content:
+
+        user: where's the export button
+        you: bottom right, says "deliver".
+
+        user: why is my video blurry
+        you: your timeline's set to 1080 but the source is 4k. want to bump the timeline
+        resolution?
+
+        user: is this the right one
+        you: yep.
+
+        user: i can't find the effects panel
+        you: it's hidden. hit the effects toggle up top — left of the search box.
+
+        user: what does this do
+        you: crops the frame. drag the edges to set it.
+
+        user: can you make this faster
+        you: not really — it's rendering on cpu. do you have a gpu in there?
+
+        user: thanks
+        you: yep.
+
+        user: hmm that didn't work
+        you: what'd it do instead?
+
+        user: how do i add a title
+        you: drag one from the titles bin onto the timeline. want me to walk you through it?
+
+        user: explain color grading to me
+        you: big topic. short version: you fix the footage first so it looks neutral, then you
+        push it toward a look. want the long version or is that enough?
+
+        That is how you SPEAK. Anything the user READS stays plain and literal — the label on
+        a [POINT] tag, a [MISSION:] label, a walkthrough step's label. Those are signposts,
+        and a fragment makes a bad signpost.
 
         When you want to point at something on the screen, use this format:
         [POINT:x,y:label:screenN]
@@ -438,7 +541,6 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
         assume the app the user is asking about is on screen 0; look at every image before
         you point.
 
-        Keep your responses brief and conversational unless the user asks for detail.
         If you're not sure what the user wants, ask a clarifying question.
 
         You're running on Windows. Use Windows-specific knowledge for paths, apps, etc.
@@ -577,6 +679,10 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
         take_over is for when they wanted you to do it rather than be shown — see the last
         paragraph.
 
+        During a walkthrough the register above relaxes slightly — a step instruction has to
+        be unmistakable, so a full short sentence is right there. Still one sentence, still no
+        preamble. The fragment style must not leak into an instruction the user has to follow.
+
         The rhythm is always the same: take a screenshot, look at what is really on screen,
         write ONE short sentence telling them what to do, and call request_user_step in the
         same message. That sentence is spoken aloud as your cursor flies to the point and
@@ -600,9 +706,25 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
         "continue" for a drag, for typing a phrase, or for anything with no single input to
         watch for.
 
+        "continue" is the only one of the three where nothing is watching, so a step that
+        uses it must end by asking to be told: "...then tell me when you've done it".
+        Leave that off and the user does the thing, nothing happens, and they are left on a
+        step they have already finished, pressing the same key harder.
+
+        Which is usually a sign the step should have been two. "Double-click the field and
+        type 3" is two actions bundled into one, and watchable as neither — make the
+        double-click its own "click" step, then let the typing step wait on the Enter that
+        commits it. Reach for "continue" once the step genuinely has no single ending, not
+        as the way out of a step that has two.
+
         A key step still needs x, y, w and h: outline what the key affects — the panel that
         opens, the field that gets focus, the part of the HUD it changes — so they can see
         what to look at while they press it.
+
+        A step that turns on one letter is where this matters most: they cannot start the step
+        at all if they heard the wrong letter, and the outline points at a result rather than
+        at the key. Say it with its word — "press G, like golf" — the way the speaking rules
+        above require. The "key" argument itself stays the bare letter.
 
         Coordinates are in the pixel space of the screenshot you are looking at, so take a
         fresh one for each step rather than reusing coordinates from an earlier screen.
@@ -678,7 +800,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
         // then flip to Responding (cursor animates with the voice).
         _elevenLabsTTSClient.PlaybackStarted += () =>
         {
-            if (_ackSpeaking) return;
+            if (NarrationSpeaking) return;
             UpdateOnUI(() =>
             {
                 if (VoiceState == CompanionVoiceState.Processing)
@@ -688,7 +810,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
 
         _elevenLabsTTSClient.PlaybackStopped += () =>
         {
-            if (_ackSpeaking) return;
+            if (NarrationSpeaking) return;
             UpdateOnUI(() =>
             {
                 // Reset from either state — Processing covers the case where TTS
@@ -1461,7 +1583,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
     /// </summary>
     /// <remarks>
     /// <see cref="SpeakAcknowledgmentAsync"/> already does precisely this, down to holding
-    /// <c>_ackSpeaking</c> across the line so the global playback callbacks don't drop the
+    /// the narration guard across the line so the global playback callbacks don't drop the
     /// voice state to Idle at every full stop. This is that, under a name that fits where it
     /// is called from.
     /// </remarks>
@@ -1833,13 +1955,18 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
         _latestAck = handover;
         var ct = handover.Cts.Token;
 
+        // Read here, on the turn's own thread, while the history is still the one this
+        // transcript is a reply to. The completed turn isn't appended until the very end of
+        // ExecuteTurn, so the last entry is exactly what Vayme said last.
+        var previousLine = PreviousAssistantLine();
+
         UpdateOnUI(() => DeepThinkingLabel = null);
 
         handover.Work = Task.Run(async () =>
         {
             try
             {
-                var ackCall = _ackClaudeAPI.FetchAcknowledgmentAsync(transcript, authToken, ct);
+                var ackCall = _ackClaudeAPI.FetchAcknowledgmentAsync(transcript, previousLine, authToken, ct);
                 await Task.Delay(AcknowledgmentGraceMs, ct);
                 var ack = await ackCall;
 
@@ -1878,10 +2005,42 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
     }
 
     /// <summary>
+    /// The tail of what Vayme said last, for the acknowledgment to read the user's reply
+    /// against. Null on the first turn of a conversation, where there is nothing to reply to.
+    ///
+    /// The tail rather than the whole thing: an offer is made at the end of an answer
+    /// ("...want me to walk you through materials?"), never buried in the middle of it, and
+    /// the acknowledgment is a race it loses by being slow. A few hundred characters carries
+    /// the question and costs nothing.
+    /// </summary>
+    private string? PreviousAssistantLine()
+    {
+        if (_conversationHistory.Count == 0) return null;
+
+        var line = _conversationHistory[^1].AssistantResponse;
+        if (string.IsNullOrWhiteSpace(line)) return null;
+
+        const int MaxChars = 400;
+        if (line.Length <= MaxChars) return line;
+
+        // Cut forward to a sentence boundary where there is one nearby, so the fragment
+        // doesn't open mid-word and read as a different sentence than it was.
+        var tail = line[^MaxChars..];
+        int start = tail.IndexOfAny(new[] { '.', '!', '?', '\n' });
+        if (start >= 0 && start < 120) tail = tail[(start + 1)..];
+
+        return tail.TrimStart();
+    }
+
+    /// <summary>
     /// Speaks the acknowledgment and returns when the audio has actually finished, rather
     /// than when it starts — <see cref="ElevenLabsTTSClient.SpeakAsync"/> returns as soon
     /// as the first samples are queued, and the caller needs to know when the speaker is
     /// free again.
+    ///
+    /// Holds <c>_narrationDepth</c> for the whole of it, which is why the showcase and the
+    /// walkthrough speak through here too: this is the path that keeps a line of narration
+    /// from steering the voice state when it ends.
     /// </summary>
     private async Task SpeakAcknowledgmentAsync(string ack, string authToken, CancellationToken ct)
     {
@@ -1897,7 +2056,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
             finished.TrySetResult();
         }
 
-        _ackSpeaking = true;
+        Interlocked.Increment(ref _narrationDepth);
         _elevenLabsTTSClient.PlaybackStarted += OnStarted;
         _elevenLabsTTSClient.PlaybackStopped += OnStopped;
         try
@@ -1912,7 +2071,10 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
         {
             _elevenLabsTTSClient.PlaybackStarted -= OnStarted;
             _elevenLabsTTSClient.PlaybackStopped -= OnStopped;
-            _ackSpeaking = false;
+            // Last, and only once the stop callback above has already run: the global
+            // handlers sit ahead of OnStopped in the invocation list, so the guard has to
+            // still be up when they see this line's final stop.
+            Interlocked.Decrement(ref _narrationDepth);
         }
     }
 
@@ -2053,6 +2215,12 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
             DetectedElementBubbleText = step.Label;
 
             ShowScreenAnnotations(annotations);
+
+            // Say which kind of waiting this is, because the two are not the same promise.
+            AwaitingStepLabel = step.WaitFor == WalkthroughWaitFor.Continue
+                ? "Tell me when done"
+                : "Your turn";
+
             SetVoiceState(CompanionVoiceState.AwaitingUserStep);
         });
 
@@ -2157,6 +2325,13 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
     /// Fired without being awaited: the step is waiting on the user, not on the speaker,
     /// and someone who already knows where to click should be able to click it while Vayme
     /// is still talking.
+    ///
+    /// Which is exactly why it goes through <see cref="SpeakAcknowledgmentAsync"/> rather
+    /// than speaking directly. When the user does beat the sentence, the click hook has
+    /// already moved the state to Processing and Vayme is off taking the next screenshot —
+    /// and then this sentence reaches its end and the global stop handler, seeing
+    /// Processing, resets to Idle. The pill drops off the screen mid-thought and reads as
+    /// a crash. Narration must not end the state some other part of the turn is holding.
     /// </summary>
     private async Task SpeakStepInstructionAsync(WalkthroughStep step, CancellationToken ct)
     {
@@ -2171,7 +2346,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
             var authToken = await _authManager.CurrentAccessTokenAsync();
             if (authToken == null || ct.IsCancellationRequested) return;
 
-            await _elevenLabsTTSClient.SpeakAsync(line, authToken, ct);
+            await SpeakAcknowledgmentAsync(line, authToken, ct);
         }
         catch (OperationCanceledException) { /* the user moved on */ }
         catch (Exception ex)

@@ -149,6 +149,28 @@ public sealed class ElevenLabsTTSClient : IDisposable
         return wasSpeaking;
     }
 
+    /// <summary>
+    /// The voice model. <c>eleven_v3_conversational</c> is the realtime member of the v3
+    /// family — ElevenLabs' own recommendation for an assistant that talks back, at roughly
+    /// 280ms to first audio against multilingual_v2's noticeably longer wait, and more
+    /// expressive with it.
+    ///
+    /// <para>Latency is not a side benefit here. Vayme's whole acknowledgment path exists to
+    /// fill the silence while a response is being fetched and spoken; time taken off the
+    /// front of the voice is time that machinery no longer has to cover.</para>
+    ///
+    /// <para>One string, and deliberately so: if v3 turns out to sound wrong on this voice,
+    /// <c>eleven_multilingual_v2</c> here restores exactly what shipped before, and every
+    /// difference in how the text is prepared follows from <see cref="ModelIsV3"/>.</para>
+    /// </summary>
+    private const string TtsModelId = "eleven_v3_conversational";
+
+    /// <summary>
+    /// Whether the model is one of the v3 family, which pace themselves off punctuation and
+    /// structure and reject the <c>&lt;break&gt;</c> tags v2 relies on.
+    /// </summary>
+    private static bool ModelIsV3 => TtsModelId.StartsWith("eleven_v3", StringComparison.Ordinal);
+
     private async Task<byte[]> FetchAudioAsync(string text, string? authorizationToken,
         CancellationToken cancellationToken)
     {
@@ -157,12 +179,7 @@ public sealed class ElevenLabsTTSClient : IDisposable
             // Clean up Markdown, emoji and pacing before the model ever sees the text —
             // otherwise numbers/acronyms get rushed and sentences run together.
             text = PrepareForSpeech(text),
-            // multilingual_v2 is ElevenLabs' natural, high-quality model. Unlike the
-            // flash/turbo v2.5 models (which disable text normalization for latency and
-            // can't turn it back on outside Enterprise), it normalizes numbers, times and
-            // abbreviations properly and has far better prosody — the trade is a little
-            // more latency per response, which is worth it for a companion voice.
-            model_id = "eleven_multilingual_v2",
+            model_id = TtsModelId,
             // mp3_22050_32 is a low-bitrate format — significantly smaller audio files
             // arrive faster over the network without any perceptible quality loss for
             // spoken voice responses.
@@ -185,15 +202,30 @@ public sealed class ElevenLabsTTSClient : IDisposable
 
         using var response = await _httpClient.SendAsync(
             request, HttpCompletionOption.ResponseContentRead, cancellationToken);
-        response.EnsureSuccessStatusCode();
+
+        // The body, not just the code. A refused voice request is Vayme going silent, and
+        // "422 Unprocessable Entity" alone gives no way to tell a rejected model id from a
+        // voice that doesn't exist on the account from an unsupported setting.
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            if (errorBody.Length > 400) errorBody = errorBody[..400] + "…";
+            Logger.Log("ElevenLabs",
+                $"HTTP {(int)response.StatusCode} for model {TtsModelId}: {errorBody}");
+            throw new HttpRequestException(
+                $"ElevenLabs returned {(int)response.StatusCode}: {errorBody}");
+        }
+
         return await response.Content.ReadAsByteArrayAsync(cancellationToken);
     }
 
     // ── Speech text preparation ──────────────────────────────────────────────
 
-    // Short SSML pauses inserted at deliberate stops. multilingual_v2 (and every model
-    // except v3) supports <break>; ElevenLabs warns that *excessive* breaks cause
-    // instability, so these are short and only land at real boundaries. Tune here.
+    // Short SSML pauses inserted at deliberate stops, on v2 only. v3 does not support
+    // <break> at all — it paces off punctuation and text structure, so on that path the
+    // ellipsis the writer typed is left standing as the pause rather than translated into a
+    // tag the model would read out as words. ElevenLabs warns that *excessive* breaks cause
+    // instability, so on v2 these are short and only land at real boundaries. Tune here.
     //
     // No break is inserted at sentence boundaries. The model already pauses at a full stop,
     // and this was the one substitution that scaled with response length — a long answer
@@ -243,9 +275,17 @@ public sealed class ElevenLabsTTSClient : IDisposable
         // 2. Drop emoji / pictographs so they aren't spoken as their names.
         text = RemoveEmoji(text);
 
-        // 3. Deliberate pauses the writer marked: ellipses and line breaks → real breaks.
-        text = EllipsisPattern.Replace(text, $" <break time=\"{ClausePause}\"/> ");
-        text = LineBreakPattern.Replace(text, $" <break time=\"{ParagraphPause}\"/> ");
+        // 3. Deliberate pauses the writer marked — but marked in the notation the model
+        //    actually reads. v2 takes <break> tags. v3 has no such thing and would speak the
+        //    tag aloud, so there the ellipsis stays an ellipsis and the line breaks stay line
+        //    breaks: punctuation and structure are exactly how v3 is meant to be paced.
+        text = ModelIsV3
+            ? EllipsisPattern.Replace(text, "… ")
+            : EllipsisPattern.Replace(text, $" <break time=\"{ClausePause}\"/> ");
+
+        text = ModelIsV3
+            ? LineBreakPattern.Replace(text, "\n")
+            : LineBreakPattern.Replace(text, $" <break time=\"{ParagraphPause}\"/> ");
 
         // 4. Collapse runs of spaces/tabs left over from the substitutions.
         text = RepeatedSpacePattern.Replace(text, " ");
@@ -266,6 +306,13 @@ public sealed class ElevenLabsTTSClient : IDisposable
     private static string CapBreakTags(string text)
     {
         var matches = BreakTagPattern.Matches(text);
+        if (matches.Count == 0) return text;
+
+        // On v3 there is no safe number of them: the model has no notion of a break tag, so
+        // one that reaches it is read out as words. Any that turn up — written by the model
+        // into its own answer, say — go, however few.
+        if (ModelIsV3) return BreakTagPattern.Replace(text, " ").Trim();
+
         if (matches.Count <= MaxBreakTags) return text;
 
         Logger.Log("ElevenLabs",
@@ -317,7 +364,16 @@ public sealed class ElevenLabsTTSClient : IDisposable
 
         _audioStream = new MemoryStream(mp3Bytes);
         _mp3Reader = new Mp3FileReader(_audioStream);
-        _waveOut = new WaveOutEvent();
+        // NAudio defaults to 300 ms across 2 buffers, so a single 150 ms stall on this
+        // machine underruns the device — and an underrun in WaveOut is audible as slurred,
+        // stalling speech rather than as silence. More, smaller buffers ride out a pause
+        // that a two-buffer queue cannot. The extra 100 ms before the first word is
+        // nothing against the second or two the fetch already takes.
+        _waveOut = new WaveOutEvent
+        {
+            DesiredLatency = 400,
+            NumberOfBuffers = 4
+        };
         _waveOut.Init(_mp3Reader);
 
         // Speech cutting out mid-sentence otherwise leaves no trace at all: NAudio reports a

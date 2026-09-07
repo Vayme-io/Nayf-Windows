@@ -1,4 +1,7 @@
 using System;
+using System.Drawing;
+using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
 using System.IO;
 using System.Runtime.InteropServices;
 using Microsoft.UI.Windowing;
@@ -25,13 +28,20 @@ public sealed partial class AnchorWindow : Window
     public event Action? TaskbarActivated;
 
     /// <summary>
+    /// Raised when the user closes Vayme from its taskbar button — the right-click menu's
+    /// "Close window". Vayme has no visible window there to close, so this means the same
+    /// thing as Quit in the tray, and the app routes it to the same place.
+    /// </summary>
+    public event Action? CloseRequested;
+
+    /// <summary>
     /// Lets this window close. Set by the app when the user has actually asked Vayme to
     /// quit, and only then.
     ///
-    /// Closing is refused by default so a stray Alt+F4 or a taskbar "Close" doesn't take
-    /// Vayme down with it. But <c>Application.Exit()</c> shuts the app down by asking every
-    /// window to close, and a window that always refuses refuses that too — which is why
-    /// quitting used to do nothing at all.
+    /// Closing is refused by default so nothing can shut Vayme down behind the user's back.
+    /// But <c>Application.Exit()</c> shuts the app down by asking every window to close, and
+    /// a window that always refuses refuses that too — which is why quitting used to do
+    /// nothing at all.
     /// </summary>
     public bool AllowClose { get; set; }
 
@@ -39,9 +49,20 @@ public sealed partial class AnchorWindow : Window
     private readonly SubclassProc _subclassProc;
 
     private const uint WM_SYSCOMMAND = 0x0112;
+    private const uint WM_CLOSE = 0x0010;
     private const int SC_RESTORE = 0xF120;
     private const int SC_MINIMIZE = 0xF020;
+    private const int SC_CLOSE = 0xF060;
     private const int SC_MASK = 0xFFF0; // low 4 bits of wParam are reserved by the system
+
+    // Hovering a taskbar button shows a preview of the window behind it. This window is 1x1
+    // and parked off-screen, so DWM had nothing to capture and the preview came up empty —
+    // beside every other app's it read as Vayme being broken. A window with nothing worth
+    // showing can hand DWM its own bitmap instead of being captured, which is what these are.
+    private const uint WM_DWMSENDICONICTHUMBNAIL = 0x0323;
+    private const int DWMWA_FORCE_ICONIC_REPRESENTATION = 7;
+    private const int DWMWA_HAS_ICONIC_BITMAP = 10;
+    private const int DWMWA_DISALLOW_PEEK = 11;
 
     public AnchorWindow()
     {
@@ -59,6 +80,15 @@ public sealed partial class AnchorWindow : Window
         // program. This window is what the button belongs to.
         appWindow.IsShownInSwitchers = true;
         appWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "NayfIcon.ico"));
+
+        // Draw our own taskbar preview rather than letting DWM capture this window, which is
+        // 1x1 and off-screen and so previewed as an empty popup. Peek is turned off in the
+        // same breath: it dims the desktop to reveal the real window, and revealing a 1x1
+        // window at -32000,-32000 would just blank the screen for as long as the hover lasts.
+        int on = 1;
+        NativeMethods.DwmSetWindowAttribute(hwnd, DWMWA_FORCE_ICONIC_REPRESENTATION, ref on, sizeof(int));
+        NativeMethods.DwmSetWindowAttribute(hwnd, DWMWA_HAS_ICONIC_BITMAP, ref on, sizeof(int));
+        NativeMethods.DwmSetWindowAttribute(hwnd, DWMWA_DISALLOW_PEEK, ref on, sizeof(int));
 
         // Remove title bar and border
         var presenter = OverlappedPresenter.Create();
@@ -95,6 +125,28 @@ public sealed partial class AnchorWindow : Window
     private IntPtr TaskbarButtonSubclass(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam,
         IntPtr idSubclass, IntPtr refData)
     {
+        // "Close window" in the taskbar button's right-click menu, which arrives either as
+        // WM_CLOSE or as the system-menu command behind it. Both used to be swallowed by the
+        // blanket refusal below, so the menu item did nothing whatsoever — the user picked
+        // Close and Vayme just carried on. Picking it is as deliberate as picking Quit in the
+        // tray, so it now means the same thing and goes to the same shutdown.
+        if (!AllowClose &&
+            (msg == WM_CLOSE ||
+             (msg == WM_SYSCOMMAND && (int)(wParam.ToInt64() & SC_MASK) == SC_CLOSE)))
+        {
+            CloseRequested?.Invoke();
+            return IntPtr.Zero;
+        }
+
+        // DWM asking what this window looks like, because we told it not to bother capturing.
+        // HIWORD is the widest bitmap it will take, LOWORD the tallest.
+        if (msg == WM_DWMSENDICONICTHUMBNAIL)
+        {
+            long size = lParam.ToInt64();
+            SendIconicThumbnail(hwnd, (int)((size >> 16) & 0xFFFF), (int)(size & 0xFFFF));
+            return IntPtr.Zero;
+        }
+
         if (msg == WM_SYSCOMMAND)
         {
             int command = (int)(wParam.ToInt64() & SC_MASK);
@@ -114,6 +166,101 @@ public sealed partial class AnchorWindow : Window
         return DefSubclassProc(hwnd, msg, wParam, lParam);
     }
 
+    /// <summary>
+    /// Paints Vayme's mark on a dark card and hands it to DWM as this window's taskbar
+    /// preview, at the size DWM asked for.
+    ///
+    /// It has to be a 32-bit top-down DIB section — DWM will not take the device-dependent
+    /// bitmap <c>Bitmap.GetHbitmap()</c> hands back — which is the same kind of surface the
+    /// overlay windows draw into.
+    /// </summary>
+    private static void SendIconicThumbnail(IntPtr hwnd, int maxWidth, int maxHeight)
+    {
+        if (maxWidth <= 0 || maxHeight <= 0) return;
+
+        // Fill the box DWM asked for rather than fitting a shape inside it: it already asks
+        // in the proportions the taskbar preview wants, and anything smaller is letterboxed.
+        int width = maxWidth;
+        int height = maxHeight;
+
+        IntPtr screenDC = NativeMethods.GetDC(IntPtr.Zero);
+        IntPtr dib = IntPtr.Zero;
+        try
+        {
+            var header = new BITMAPINFOHEADER
+            {
+                biSize = (uint)Marshal.SizeOf<BITMAPINFOHEADER>(),
+                biWidth = width,
+                // Negative height = top-down rows, the order GDI+ writes in. A bottom-up
+                // DIB would come out mirrored.
+                biHeight = -height,
+                biPlanes = 1,
+                biBitCount = 32,
+                biCompression = 0 // BI_RGB
+            };
+
+            dib = CreateDIBSection(screenDC, ref header, 0 /* DIB_RGB_COLORS */,
+                out IntPtr pixels, IntPtr.Zero, 0);
+            if (dib == IntPtr.Zero || pixels == IntPtr.Zero)
+            {
+                Logger.Log("Taskbar", "CreateDIBSection failed for the taskbar preview");
+                return;
+            }
+
+            DrawIconicThumbnail(pixels, width, height);
+            GdiFlush(); // GDI+ buffers; make sure every pixel has landed before DWM reads them
+
+            int hr = DwmSetIconicThumbnail(hwnd, dib, 0);
+            if (hr != 0) Logger.Log("Taskbar", $"DwmSetIconicThumbnail failed: 0x{hr:X8}");
+        }
+        catch (Exception ex)
+        {
+            // A missing icon or a failed allocation is not worth taking the app down for —
+            // the worst case is the empty preview we already had.
+            Logger.Log("Taskbar", $"Taskbar preview failed: {ex.Message}");
+        }
+        finally
+        {
+            // DWM copies the bitmap, so it is ours to free either way.
+            if (dib != IntPtr.Zero) DeleteObject(dib);
+            NativeMethods.ReleaseDC(IntPtr.Zero, screenDC);
+        }
+    }
+
+    private static void DrawIconicThumbnail(IntPtr pixels, int width, int height)
+    {
+        using var surface = new Bitmap(width, height, width * 4,
+            PixelFormat.Format32bppPArgb, pixels);
+        using var g = Graphics.FromImage(surface);
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+
+        // The panel's own ground, so the preview looks like the app it opens.
+        var bounds = new Rectangle(0, 0, width, height);
+        using (var ground = new LinearGradientBrush(bounds,
+                   Color.FromArgb(255, 28, 28, 30), Color.FromArgb(255, 16, 16, 18), 90f))
+        {
+            g.FillRectangle(ground, bounds);
+        }
+
+        using (var hairline = new Pen(Color.FromArgb(20, 255, 255, 255)))
+        {
+            g.DrawRectangle(hairline, 0, 0, width - 1, height - 1);
+        }
+
+        string iconPath = Path.Combine(AppContext.BaseDirectory, "Assets", "NayfIcon.ico");
+        if (!File.Exists(iconPath)) return;
+
+        int side = Math.Max(16, (int)(Math.Min(width, height) * 0.5));
+
+        // Take the largest frame in the .ico and scale it down, rather than asking for the
+        // frame nearest the size we want: the mark lands between the sizes stored in the
+        // file, and scaling one up from 48px is visibly soft at preview size.
+        using var icon = new Icon(iconPath, 256, 256);
+        using var mark = icon.ToBitmap();
+        g.DrawImage(mark, (width - side) / 2, (height - side) / 2, side, side);
+    }
+
     private delegate IntPtr SubclassProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam,
         IntPtr idSubclass, IntPtr refData);
 
@@ -123,4 +270,30 @@ public sealed partial class AnchorWindow : Window
 
     [DllImport("comctl32.dll")]
     private static extern IntPtr DefSubclassProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmSetIconicThumbnail(IntPtr hwnd, IntPtr hbitmap, uint flags);
+
+    [DllImport("gdi32.dll")] private static extern bool DeleteObject(IntPtr h);
+    [DllImport("gdi32.dll")] private static extern bool GdiFlush();
+
+    [DllImport("gdi32.dll")]
+    private static extern IntPtr CreateDIBSection(IntPtr hdc, ref BITMAPINFOHEADER pbmi,
+        uint usage, out IntPtr ppvBits, IntPtr hSection, uint offset);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct BITMAPINFOHEADER
+    {
+        public uint biSize;
+        public int biWidth;
+        public int biHeight;
+        public ushort biPlanes;
+        public ushort biBitCount;
+        public uint biCompression;
+        public uint biSizeImage;
+        public int biXPelsPerMeter;
+        public int biYPelsPerMeter;
+        public uint biClrUsed;
+        public uint biClrImportant;
+    }
 }

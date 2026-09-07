@@ -197,6 +197,9 @@ public partial class App : Application
                         };
                     _companionPanelWindow?.ShowNearTray(anchor);
                 });
+            // "Close window" on the taskbar button. Same shutdown as the tray's Quit, so it
+            // can't skip the teardown and leave a dead tray icon or a keyboard hook behind.
+            _anchorWindow.CloseRequested += QuitApp;
             _anchorWindow.ShowAsTaskbarButton();
             Log("Step", "AnchorWindow created");
 

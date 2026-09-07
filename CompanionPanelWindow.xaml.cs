@@ -169,6 +169,10 @@ public sealed partial class CompanionPanelWindow : Window
         NativeMethods.SetWindowLong(hwnd, NativeMethods.GWL_EXSTYLE,
             exStyle | NativeMethods.WS_EX_TOOLWINDOW);
 
+        // The overlays draw over every other window on the screen; this is one of the two
+        // they have to stay under. Registered before the Ask box, which opens over it.
+        OverlayZOrder.RegisterInteractive(hwnd);
+
         // Remove title bar using AppWindow presenter
         var appWindow = AppWindow.GetFromWindowId(Microsoft.UI.Win32Interop.GetWindowIdFromWindow(hwnd));
         var presenter = OverlappedPresenter.Create();

@@ -300,7 +300,7 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
                 {
                     type = "string",
                     @enum = new[] { "click", "key", "continue" },
-                    description = "\"click\" when the step is a single click on (x, y) — that click is noticed and the walkthrough carries on by itself. \"key\" when the step is one keystroke, like pressing M or Enter — send the key in \"key\" and that press is noticed the same way. \"continue\" for a drag, for typing a phrase, or for anything with no single input to watch for; the user says when they're done."
+                    description = "\"click\" when the step is a single click on (x, y) — that click is noticed and the walkthrough carries on by itself. \"key\" when the step is one keystroke, like pressing M or Enter — send the key in \"key\" and that press is noticed the same way. \"continue\" for a drag, for typing a phrase, or for anything with no single input to watch for. Nothing is watching on a \"continue\" step, so its sentence must ask the user to tell you when they have done it — and before reaching for it, check whether the step is really two steps, each of which could wait on a click or a key."
                 },
                 key = new
                 {
@@ -428,10 +428,34 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
         var lastAssistantText = "";
         var executedAnyTool = false;
 
+        // Two limits, guarding two different things. The budget is the runaway guard, and it
+        // counts iterations since the user last did something — a model going round on its
+        // own is cut off just as fast as before, while a walkthrough the user is actually
+        // working through never runs out, because every step they complete is proof that
+        // nothing has run away. The ceiling is the flat backstop underneath it.
         int maxIterations = IterationBudget(toolMode);
+        int sinceUserStep = 0;
+        int iteration = 0;
+        bool hitTheLimit = false;
+        bool endedOnUserStep = false;
 
-        for (int iteration = 0; iteration < maxIterations; iteration++)
+        // Where the screenshots sit in the message list, each paired with the same message
+        // with its pixels dropped. See the pruning at the bottom of the loop.
+        var screenshotMessages = new List<(int Index, object WithoutImages)>();
+
+        while (true)
         {
+            if (sinceUserStep >= maxIterations || iteration >= AbsoluteIterationCeiling)
+            {
+                hitTheLimit = true;
+                Logger.Log("AgentLoop",
+                    $"stopped at the limit after {iteration} iterations ({sinceUserStep} since the last user step)");
+                break;
+            }
+
+            iteration++;
+            sinceUserStep++;
+
             cancellationToken.ThrowIfCancellationRequested();
 
             AgentTurnResult turnResult;
@@ -503,6 +527,11 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
 
             var toolResults = new List<object>();
 
+            // The same results with any screenshot swapped for a note. Built as we go so a
+            // stale one can be dropped out of the history later without rebuilding it.
+            var resultsWithoutImages = new List<object>();
+            var carriedScreenshots = false;
+
             foreach (var toolCall in turnResult.ToolCalls)
             {
                 // The model saying it was handed the job, not asked about it. Handled here
@@ -522,12 +551,14 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
                     maxIterations = Math.Max(maxIterations, IterationBudget(toolMode));
                     Logger.Log("AgentLoop", "escalated to AgentTask via take_over");
 
-                    toolResults.Add(new
+                    var grant = new
                     {
                         type = "tool_result",
                         tool_use_id = toolCall.ToolUseId,
                         content = "You can now act on the user's machine. Do the task."
-                    });
+                    };
+                    toolResults.Add(grant);
+                    resultsWithoutImages.Add(grant);
                     continue;
                 }
 
@@ -565,6 +596,14 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
                     _runningToolLabel = null;
                 }
 
+                // The user just did a thing, so this loop is demonstrably not running away —
+                // it is being paced by a person, one step at a time. Give the budget back.
+                // Without this a lesson with any real length to it hits the guard partway
+                // through and stops, which is the one thing a walkthrough must never do:
+                // teaching Blender is thirty steps before it is anything useful.
+                if (isUserStep) sinceUserStep = 0;
+                endedOnUserStep = isUserStep;
+
                 // Screenshots must go back as image blocks so Claude can see them;
                 // everything else is plain text.
                 if (toolResult.Screenshots.Count > 0)
@@ -595,28 +634,81 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
                         tool_use_id = toolCall.ToolUseId,
                         content = content.ToArray()
                     });
+
+                    resultsWithoutImages.Add(new
+                    {
+                        type = "tool_result",
+                        tool_use_id = toolCall.ToolUseId,
+                        content = "[An earlier screenshot, dropped now that the screen has " +
+                                  $"moved on. {toolResult.Text}]"
+                    });
+                    carriedScreenshots = true;
                 }
                 else
                 {
-                    toolResults.Add(new
+                    var plain = new
                     {
                         type = "tool_result",
                         tool_use_id = toolCall.ToolUseId,
                         content = toolResult.Text
-                    });
+                    };
+                    toolResults.Add(plain);
+                    resultsWithoutImages.Add(plain);
                 }
             }
 
             messages.Add(new { role = "user", content = toolResults });
+            if (carriedScreenshots)
+                screenshotMessages.Add(
+                    (messages.Count - 1, new { role = "user", content = resultsWithoutImages }));
+
+            // Every step adds a fresh look at the screen, and each one of those is a couple
+            // of thousand tokens that will never be looked at again — the screen it shows
+            // stopped existing several steps ago. Left in, they are what actually ends a long
+            // walkthrough: the request grows past the context window and comes back a flat
+            // 400, mid-lesson, with no way to carry on. So only the last few stay whole.
+            //
+            // Two rather than one, because a step's result asks the model to take a fresh
+            // screenshot and see what changed — which needs the one before it to compare to.
+            //
+            // Swept in batches rather than trimmed every step, because rewriting a message
+            // invalidates the prompt cache from that message onward, and the cache is now
+            // what makes a long walkthrough affordable. Trimming on every step would rewrite
+            // history on every step and leave nothing to read back — the tidier behaviour
+            // costs far more than the pixels it saves. Sweeping seldom means one cold
+            // request and then several cheap ones behind it.
+            if (screenshotMessages.Count >= PruneScreenshotsAt)
+            {
+                while (screenshotMessages.Count > KeepFullScreenshots)
+                {
+                    var stale = screenshotMessages[0];
+                    screenshotMessages.RemoveAt(0);
+                    messages[stale.Index] = stale.WithoutImages;
+                }
+            }
         }
 
-        // If we hit the step limit without a clean finish, still say something so
-        // the user isn't left with silence.
+        // No clean finish, so say something rather than leaving the user in silence.
         if (string.IsNullOrWhiteSpace(fullFinalText))
         {
-            fullFinalText = string.IsNullOrWhiteSpace(lastAssistantText)
-                ? "I couldn't quite finish that — it took more steps than I could complete. Want me to keep going?"
-                : lastAssistantText;
+            if (hitTheLimit && endedOnUserStep)
+            {
+                // Deliberately not lastAssistantText here. While teaching, that text has
+                // already been spoken as the step's own instruction, so reusing it means
+                // Vayme repeats the last thing it said and then stops — which reads as a
+                // fault rather than a pause. Say where we are and how to carry on.
+                fullFinalText = "That's a good chunk done — say keep going and I'll pick up from here.";
+            }
+            else if (hitTheLimit)
+            {
+                fullFinalText = "That's as far as I can take it in one go. Want me to keep going?";
+            }
+            else
+            {
+                fullFinalText = string.IsNullOrWhiteSpace(lastAssistantText)
+                    ? "I couldn't quite finish that one. Want me to keep going?"
+                    : lastAssistantText;
+            }
         }
 
         // The Mac chimes as its "task done" pill drops in. Windows has no such pill, so
@@ -632,15 +724,44 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
     }
 
     /// <summary>
-    /// How many times round the loop a mode is allowed to go.
+    /// How many times round the loop a mode may go <em>without the user doing anything</em>.
     ///
-    /// A walkthrough spends two iterations on every step — look, then hand the step over —
-    /// so the agent-task limit would cut one off after seven steps. That limit is a runaway
-    /// guard for a loop nobody is watching; a walkthrough is paced by the user, who is right
-    /// there and can stop it by saying so.
+    /// The count resets every time a step is completed, which is what makes the limit mean
+    /// what it is for. It exists to stop a model looping on its own; a walkthrough is not
+    /// that — it is paced by a person, who is right there and can end it by saying so, and
+    /// whose lesson may well be forty steps long. Counted flat, this cut those off partway
+    /// through, and a lesson that stops in the middle is worse than one never started.
+    ///
+    /// A walkthrough gets the wider budget because a stretch of it legitimately runs longer:
+    /// a look at the screen, a think, sometimes a second look, then the handover.
     /// </summary>
     private static int IterationBudget(NayfToolMode mode)
-        => mode == NayfToolMode.GuidedWalkthrough ? 40 : 15;
+        => mode == NayfToolMode.GuidedWalkthrough ? 50 : 15;
+
+    /// <summary>
+    /// The flat backstop under the budget, since that one resets. Nothing should reach this:
+    /// at two iterations a step it is around 250 steps, far past where any real lesson ends.
+    /// It is here so that a pathological loop which happens to include user steps still
+    /// terminates.
+    /// </summary>
+    private const int AbsoluteIterationCeiling = 500;
+
+    /// <summary>
+    /// How many screenshots stay in the message history as actual pixels once a sweep
+    /// runs. Everything older keeps its text and loses its image.
+    /// </summary>
+    private const int KeepFullScreenshots = 2;
+
+    /// <summary>
+    /// How many screenshots may pile up before that sweep happens.
+    ///
+    /// Deliberately well above <see cref="KeepFullScreenshots"/>. Stripping images rewrites
+    /// history, and rewriting history drops the prompt cache from that point on — so this is
+    /// worth doing seldom and in bulk rather than neatly on every step. Eight full captures
+    /// at peak is a few tens of thousands of tokens, comfortably inside the context window,
+    /// which is the only thing the limit is really there to protect.
+    /// </summary>
+    private const int PruneScreenshotsAt = 8;
 
     /// <summary>
     /// Hands one step to the user and waits. This is the pause in the middle of a

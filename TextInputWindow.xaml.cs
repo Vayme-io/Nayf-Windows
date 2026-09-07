@@ -72,6 +72,9 @@ public sealed partial class TextInputWindow : Window
         NativeMethods.SetWindowLong(hwnd, NativeMethods.GWL_EXSTYLE,
             exStyle | NativeMethods.WS_EX_TOOLWINDOW);
 
+        // Keeps the overlays off the box the user is typing into.
+        OverlayZOrder.RegisterInteractive(hwnd);
+
         var appWindow = AppWindow.GetFromWindowId(Win32Interop.GetWindowIdFromWindow(hwnd));
         var presenter = OverlappedPresenter.Create();
         presenter.IsAlwaysOnTop = true;

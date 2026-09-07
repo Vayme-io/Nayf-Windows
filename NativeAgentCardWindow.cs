@@ -407,7 +407,7 @@ public sealed class NativeAgentCardWindow : IDisposable
             _isWindowShown = true;
         }
 
-        NativeMethods.SetWindowPos(_hwnd, NativeMethods.HWND_TOPMOST, 0, 0, 0, 0,
+        NativeMethods.SetWindowPos(_hwnd, OverlayZOrder.InsertAfter(), 0, 0, 0, 0,
             NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE);
     }
 

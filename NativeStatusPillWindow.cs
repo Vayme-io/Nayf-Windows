@@ -231,7 +231,7 @@ public sealed class NativeStatusPillWindow : IDisposable
         _topmostTimer = new System.Threading.Timer(_ =>
         {
             if (_hwnd != IntPtr.Zero && _isWindowShown)
-                NativeMethods.SetWindowPos(_hwnd, NativeMethods.HWND_TOPMOST, 0, 0, 0, 0,
+                NativeMethods.SetWindowPos(_hwnd, OverlayZOrder.InsertAfter(), 0, 0, 0, 0,
                     NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE);
         }, null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
 
@@ -312,7 +312,7 @@ public sealed class NativeStatusPillWindow : IDisposable
 
         // Paint before the first ShowWindow, so the pill never flashes empty.
         if (!_isWindowShown)
-            NativeMethods.SetWindowPos(_hwnd, NativeMethods.HWND_TOPMOST,
+            NativeMethods.SetWindowPos(_hwnd, OverlayZOrder.InsertAfter(),
                 _windowX, _windowY, _bitmapWidth, _bitmapHeight,
                 NativeMethods.SWP_NOACTIVATE);
 
@@ -494,7 +494,9 @@ public sealed class NativeStatusPillWindow : IDisposable
                 CompanionVoiceState.Listening => "Listening",
                 CompanionVoiceState.Processing => "Thinking",
                 CompanionVoiceState.Responding => "Speaking",
-                CompanionVoiceState.AwaitingUserStep => "Your turn",
+                // Not always "Your turn": a step with nothing to watch for has to ask to be
+                // told, or it reads as one Vayme missed.
+                CompanionVoiceState.AwaitingUserStep => _companionManager.AwaitingStepLabel,
                 _ => ""
             };
 

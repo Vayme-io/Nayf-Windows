@@ -36,6 +36,20 @@ public sealed class NativeOverlayWindow : IDisposable
     // First-launch "hey! I'm Vayme" welcome bubble — matches Mac's
     // OverlayWindow welcome sequence timing.
     private const string WelcomeMessage = "hey! I'm Vayme";
+    private const double WelcomeBubbleStart   = 2.0;
+    private const double WelcomeFadeIn        = 0.4;
+    private const double WelcomeCharInterval  = 0.03;
+    private const double WelcomeHold          = 2.0;
+    private const double WelcomeFadeOut       = 0.5;
+
+    /// <summary>
+    /// When the welcome sequence is completely over. Derived from the timeline above rather
+    /// than written out, because the frame-skip test has to keep compositing until the last
+    /// frame of the bubble has been drawn — and a longer message moves that moment.
+    /// </summary>
+    private static readonly double WelcomeSequenceSeconds =
+        WelcomeBubbleStart + WelcomeMessage.Length * WelcomeCharInterval + WelcomeHold + WelcomeFadeOut;
+
     private readonly DateTimeOffset _startTime = DateTimeOffset.UtcNow;
 
     private IntPtr _hwnd = IntPtr.Zero;
@@ -79,6 +93,24 @@ public sealed class NativeOverlayWindow : IDisposable
     private System.Threading.Timer? _renderTimer;
     private System.Threading.Timer? _topmostTimer;
     private int _renderGuard; // prevents overlapping render ticks (GDI+ isn't reentrant)
+
+    // Allocated once and reused. At 520×300×4 a per-frame bitmap is 624 KB, well past the
+    // 85 KB Large Object Heap threshold, so allocating one every 16 ms put roughly 37 MB/s
+    // onto the LOH and forced gen2 collections. Those are stop-the-world, and a pause long
+    // enough to starve the audio thread is heard as slurred, stalling speech — which is
+    // what the garbled playback actually was. AnnotationOverlayWindow already does this.
+    private Bitmap? _surface;
+    private Graphics? _graphics;
+
+    // What the last composited frame looked like, or null while something is animating and
+    // there is nothing settled to compare against. See NeedsComposite.
+    private Appearance? _lastComposited;
+
+    /// <summary>
+    /// Everything a settled frame's appearance depends on, quantised to 1/1000 so the voice
+    /// EMA — which decays toward zero without ever arriving — eventually compares equal.
+    /// </summary>
+    private readonly record struct Appearance(int Intensity, int Opacity, int Scale, int Color);
 
     private const int WS_EX_LAYERED     = 0x00080000;
     private const int WS_EX_TRANSPARENT = 0x00000020;
@@ -137,8 +169,14 @@ public sealed class NativeOverlayWindow : IDisposable
         if (_hwnd == IntPtr.Zero) return;
 
         ShowWindow(_hwnd, 4 /* SW_SHOWNOACTIVATE */);
-        NativeMethods.SetWindowPos(_hwnd, NativeMethods.HWND_TOPMOST, 0, 0, 0, 0,
+        NativeMethods.SetWindowPos(_hwnd, OverlayZOrder.InsertAfter(), 0, 0, 0, 0,
             NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE);
+
+        // Surface state, not per-frame state — set once here rather than on every tick.
+        _surface = new Bitmap(BW, BH, PixelFormat.Format32bppArgb);
+        _graphics = Graphics.FromImage(_surface);
+        _graphics.SmoothingMode     = SmoothingMode.AntiAlias;
+        _graphics.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
 
         RenderFrame();
 
@@ -154,7 +192,7 @@ public sealed class NativeOverlayWindow : IDisposable
         _topmostTimer = new System.Threading.Timer(_ =>
         {
             if (_hwnd != IntPtr.Zero)
-                NativeMethods.SetWindowPos(_hwnd, NativeMethods.HWND_TOPMOST, 0, 0, 0, 0,
+                NativeMethods.SetWindowPos(_hwnd, OverlayZOrder.InsertAfter(), 0, 0, 0, 0,
                     NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE);
         }, null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
 
@@ -179,21 +217,16 @@ public sealed class NativeOverlayWindow : IDisposable
         // ── 2. Move the window so the anchor sits on the buddy position ───────
         int wx = (int)(_buddyX - ANCHOR_X);
         int wy = (int)(_buddyY - ANCHOR_Y);
-        NativeMethods.SetWindowPos(_hwnd, NativeMethods.HWND_TOPMOST,
+        NativeMethods.SetWindowPos(_hwnd, OverlayZOrder.InsertAfter(),
             wx, wy, 0, 0,
             NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE);
-
-        // ── 3. Draw the small bitmap ──────────────────────────────────────────
-        using var bitmap = new Bitmap(BW, BH, PixelFormat.Format32bppArgb);
-        using var g = Graphics.FromImage(bitmap);
-        g.SmoothingMode     = SmoothingMode.AntiAlias;
-        g.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
-        g.Clear(Color.Transparent);
 
         var state = _companionManager.VoiceState;
 
         // Smooth the raw audio power level toward a 0-1 intensity, matching
         // Mac's asymmetric EMA (fast attack while listening, slow decay otherwise).
+        // Runs on every tick even when nothing is redrawn — it is what decides whether
+        // the next frame looks any different.
         UpdateVoiceIntensity(state);
 
         // ── Welcome sequence timeline — matches Mac's OverlayWindow ───────────
@@ -201,6 +234,14 @@ public sealed class NativeOverlayWindow : IDisposable
         double elapsed = (DateTimeOffset.UtcNow - _startTime).TotalSeconds;
         double cursorT = Math.Clamp(elapsed / 2.0, 0.0, 1.0);
         float cursorOpacity = (float)(cursorT * cursorT);
+
+        // ── 3. Draw the small bitmap, unless it would come out identical ──────
+        if (!NeedsComposite(state, elapsed, cursorOpacity)) return;
+
+        var bitmap = _surface;
+        var g = _graphics;
+        if (bitmap is null || g is null) return;
+        g.Clear(Color.Transparent);
 
         // The breathing circle cursor cross-fades out while processing,
         // replaced by the spinner — matches Mac's BlueCursorView.
@@ -230,6 +271,44 @@ public sealed class NativeOverlayWindow : IDisposable
         }
 
         ApplyLayeredWindow(bitmap, wx, wy);
+    }
+
+    /// <summary>
+    /// Whether this frame would actually look different from the one already on screen.
+    ///
+    /// A layered window keeps the last bitmap it was handed, and the SetWindowPos above moves
+    /// that bitmap with the buddy — so a frame whose drawing is unchanged can skip the GDI+
+    /// composite entirely and the cursor still tracks the mouse without a stutter. Worth
+    /// skipping: compositing is the expensive half of the frame, and this timer runs at 60 fps
+    /// from launch to exit whether or not anything is moving.
+    ///
+    /// The three time-driven animations have no settled state, so they always redraw: the
+    /// processing spinner and the pointing sonar ring both take their phase from the wall
+    /// clock, and the welcome bubble types itself out over its first five seconds. Everything
+    /// else drawn here is a pure function of intensity, opacity, scale and the cursor colour.
+    /// </summary>
+    private bool NeedsComposite(CompanionVoiceState state, double elapsed, float cursorOpacity)
+    {
+        if (state == CompanionVoiceState.Processing ||
+            _buddyMode == BuddyMode.Pointing ||
+            elapsed < WelcomeSequenceSeconds)
+        {
+            // Nothing settled to compare the next static frame against — and it must composite
+            // once more regardless, to clear whatever the animation left on screen.
+            _lastComposited = null;
+            return true;
+        }
+
+        var appearance = new Appearance(
+            (int)(_smoothedVoiceIntensity * 1000f),
+            (int)(cursorOpacity * 1000f),
+            (int)(_buddyFlightScale * 1000f),
+            CursorBlue.ToArgb());
+
+        if (_lastComposited == appearance) return false;
+
+        _lastComposited = appearance;
+        return true;
     }
 
     // ── Buddy navigation ─────────────────────────────────────────────────────
@@ -488,11 +567,11 @@ public sealed class NativeOverlayWindow : IDisposable
     /// </summary>
     private static void DrawWelcomeBubble(Graphics g, float anchorX, float anchorY, double elapsed)
     {
-        const double bubbleStart    = 2.0;
-        const double fadeInDuration = 0.4;
-        const double charInterval   = 0.03;
-        const double holdDuration   = 2.0;
-        const double fadeOutDuration = 0.5;
+        const double bubbleStart     = WelcomeBubbleStart;
+        const double fadeInDuration  = WelcomeFadeIn;
+        const double charInterval    = WelcomeCharInterval;
+        const double holdDuration    = WelcomeHold;
+        const double fadeOutDuration = WelcomeFadeOut;
 
         double t = elapsed - bubbleStart;
         if (t < 0) return;
@@ -630,14 +709,35 @@ public sealed class NativeOverlayWindow : IDisposable
 
     public void Dispose()
     {
+        // Cleared first so a frame already in flight stops drawing into a window that is
+        // about to be destroyed.
+        IntPtr hwnd = _hwnd;
+        _hwnd = IntPtr.Zero;
+
         _renderTimer?.Dispose();
+        _renderTimer = null;
         _topmostTimer?.Dispose();
-        if (_hwnd != IntPtr.Zero)
+        _topmostTimer = null;
+
+        // Timer.Dispose doesn't wait for a callback already running, and the surface is now
+        // shared between frames instead of allocated inside one — so let the frame in flight
+        // finish before freeing what it is drawing into.
+        while (Interlocked.CompareExchange(ref _renderGuard, 1, 0) == 1) Thread.Sleep(1);
+        ReleaseDrawingSurface();
+
+        if (hwnd != IntPtr.Zero)
         {
-            NativeMethods.DestroyWindow(_hwnd);
+            NativeMethods.DestroyWindow(hwnd);
             NativeMethods.PostQuitMessage(0);
-            _hwnd = IntPtr.Zero;
         }
+    }
+
+    private void ReleaseDrawingSurface()
+    {
+        _graphics?.Dispose();
+        _graphics = null;
+        _surface?.Dispose();
+        _surface = null;
     }
 
     [DllImport("user32.dll")]

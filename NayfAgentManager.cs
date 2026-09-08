@@ -299,8 +299,8 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
                 wait_for = new
                 {
                     type = "string",
-                    @enum = new[] { "click", "key", "continue" },
-                    description = "\"click\" when the step is a single click on (x, y) — that click is noticed and the walkthrough carries on by itself. \"key\" when the step is one keystroke, like pressing M or Enter — send the key in \"key\" and that press is noticed the same way. \"continue\" for a drag, for typing a phrase, or for anything with no single input to watch for. Nothing is watching on a \"continue\" step, so its sentence must ask the user to tell you when they have done it — and before reaching for it, check whether the step is really two steps, each of which could wait on a click or a key."
+                    @enum = new[] { "click", "right_click", "hover", "key", "continue" },
+                    description = "\"click\" when the step is a single left click on (x, y) — that click is noticed and the walkthrough carries on by itself. \"right_click\" when the step is a right click, which is nearly always opening a context menu; the right button is what is watched for and a left click will not finish the step. \"hover\" when the step is to point at something WITHOUT clicking it — a menu that opens on hover, a tooltip, a preview — and the cursor coming to rest on the target is what carries the walkthrough on. \"key\" when the step is one keystroke, like pressing M or Enter — send the key in \"key\" and that press is noticed the same way. \"continue\" for a drag, for typing a phrase, or for anything with no single input to watch for. Nothing is watching on a \"continue\" step, so its sentence must ask the user to tell you when they have done it — and before reaching for it, check whether the step is really two steps, each of which could wait on one of the others."
                 },
                 key = new
                 {
@@ -820,6 +820,17 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
                 $"The user pressed {step.WaitKey}. Take a fresh screenshot to see what changed, " +
                 "then give the next step.",
 
+            WalkthroughResumeReason.RightClicked =>
+                "The user right-clicked the spot you pointed at. Take a fresh screenshot before " +
+                "the next step — there is probably a context menu open, and where it opened is " +
+                "something only the screenshot can tell you.",
+
+            WalkthroughResumeReason.Hovered =>
+                "The user is hovering over the spot you pointed at, without having clicked it. " +
+                "Take a fresh screenshot to see what appeared, then give the next step — and " +
+                "remember the cursor is being held there, so the next step is whatever follows " +
+                "from that, not a repeat of it.",
+
             _ =>
                 $"The user said: \"{reply.Transcript}\". " +
                 "If they indicate they are done, take a fresh screenshot and give the next step. " +
@@ -876,6 +887,13 @@ public sealed class NayfAgentManager : INotifyPropertyChanged, IDisposable
         {
             "continue" => WalkthroughWaitFor.Continue,
             "key" => WalkthroughWaitFor.Key,
+            "hover" => WalkthroughWaitFor.Hover,
+
+            // Spelt three ways because the model writes it three ways, and the fallback here
+            // is "click" — which for a right-click step means the user opens the context menu,
+            // nothing notices, and the only way on is to left-click the thing instead.
+            "right_click" or "rightclick" or "right-click" => WalkthroughWaitFor.RightClick,
+
             _ => WalkthroughWaitFor.Click
         };
 

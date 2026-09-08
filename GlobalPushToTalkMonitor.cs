@@ -46,10 +46,24 @@ public sealed class GlobalPushToTalkMonitor : IDisposable
 
     /// <summary>
     /// Where the user let go of the left mouse button, in virtual-screen pixels. Raised
-    /// only between <see cref="StartWatchingClicks"/> and <see cref="StopWatchingClicks"/>,
+    /// only between <see cref="StartWatchingClicks"/> and <see cref="StopWatchingMouse"/>,
     /// and never in place of the click — the app underneath still receives it.
     /// </summary>
     public event Action<System.Drawing.Point>? MouseClicked;
+
+    /// <summary>
+    /// The same for the right button. Separate rather than a button argument on
+    /// <see cref="MouseClicked"/> so that a step waiting on one of them cannot be finished by
+    /// the other: a right-click is a different instruction, not a click with a flag on it.
+    /// </summary>
+    public event Action<System.Drawing.Point>? MouseRightClicked;
+
+    /// <summary>
+    /// The cursor has come to rest inside the box passed to <see cref="WatchForHover"/> and
+    /// stayed there. No point comes with it — by the time this is raised the only thing worth
+    /// saying is that the target is being hovered, which is what was asked for.
+    /// </summary>
+    public event Action? MouseHovered;
 
     /// <summary>
     /// The one key a walkthrough step is waiting for has been pressed. Raised only between
@@ -150,6 +164,30 @@ public sealed class GlobalPushToTalkMonitor : IDisposable
 
     private readonly DispatcherQueueTimer _hookHealthTimer;
 
+    /// <summary>
+    /// The box a hover step is waiting for the cursor to settle inside, in virtual-screen
+    /// pixels. Empty when no step is waiting on a hover, which is also what keeps the hook
+    /// from looking at mouse *moves* the rest of the time.
+    ///
+    /// A box rather than a callback the way <see cref="_watchedKeyCode"/> is a code rather
+    /// than a predicate: the test runs inside the hook, and the rule there is that nothing
+    /// outside this class gets called from in there.
+    /// </summary>
+    private System.Drawing.Rectangle _hoverBounds;
+
+    /// <summary>
+    /// How long the cursor has to stay on the target before it counts as hovering.
+    ///
+    /// This is the whole difference between hovering over something and passing across it on
+    /// the way somewhere else. Long enough that crossing the target does not advance the
+    /// walkthrough, short enough that a user who is doing exactly what was asked is not left
+    /// wondering whether it worked — and shorter than the delay most menus take to open on
+    /// hover themselves, so Vayme is not the thing they are waiting for.
+    /// </summary>
+    private static readonly TimeSpan HoverDwell = TimeSpan.FromMilliseconds(450);
+
+    private readonly DispatcherQueueTimer _hoverDwellTimer;
+
     public GlobalPushToTalkMonitor()
     {
         _dispatcherQueue = DispatcherQueue.GetForCurrentThread();
@@ -168,6 +206,11 @@ public sealed class GlobalPushToTalkMonitor : IDisposable
         _regionHoldTimer.Interval = RegionHoldDelay;
         _regionHoldTimer.IsRepeating = false;
         _regionHoldTimer.Tick += (_, _) => OnRegionHoldElapsed();
+
+        _hoverDwellTimer = _dispatcherQueue.CreateTimer();
+        _hoverDwellTimer.Interval = HoverDwell;
+        _hoverDwellTimer.IsRepeating = false;
+        _hoverDwellTimer.Tick += (_, _) => OnHoverDwellElapsed();
 
         _hookHealthTimer = _dispatcherQueue.CreateTimer();
         _hookHealthTimer.Interval = HookHealthInterval;
@@ -248,9 +291,11 @@ public sealed class GlobalPushToTalkMonitor : IDisposable
 
     public void Stop()
     {
-        // Directly, not via StopWatchingClicks: Stop runs at shutdown, and by then the
+        // Directly, not via StopWatchingMouse: Stop runs at shutdown, and by then the
         // dispatcher may never get round to a queued item.
         UnhookMouse();
+        _hoverDwellTimer.Stop();
+        _hoverBounds = System.Drawing.Rectangle.Empty;
 
         _hookHealthTimer.Stop();
 
@@ -270,38 +315,74 @@ public sealed class GlobalPushToTalkMonitor : IDisposable
     }
 
     /// <summary>
-    /// Starts reporting clicks through <see cref="MouseClicked"/>.
+    /// Starts reporting clicks through <see cref="MouseClicked"/> and
+    /// <see cref="MouseRightClicked"/>.
     ///
     /// The hook is installed only while something is actually waiting for a click. A
     /// low-level mouse hook is called for every mouse *move* on the machine as well, and
     /// there is no reason for Vayme's process to be woken thousands of times a minute for
     /// the rest of the session.
     /// </summary>
-    public void StartWatchingClicks()
+    public void StartWatchingClicks() => _dispatcherQueue.TryEnqueue(() => InstallMouseHook());
+
+    /// <summary>
+    /// Starts watching for the cursor to settle inside <paramref name="bounds"/>, and reports
+    /// that once through <see cref="MouseHovered"/>.
+    ///
+    /// The same hook as the clicks, told to look at moves as well — which is the one case
+    /// worth waking the process for every move, because there is no other moment to notice.
+    /// Passing an empty rectangle watches for nothing.
+    /// </summary>
+    public void WatchForHover(System.Drawing.Rectangle bounds)
     {
-        // The hook's callback runs on whichever thread installed it, which has to be one
-        // that pumps messages — so it is installed from the dispatcher like the keyboard
-        // one, whoever calls this.
         _dispatcherQueue.TryEnqueue(() =>
         {
-            if (_mouseHookHandle != IntPtr.Zero) return;
+            _hoverBounds = bounds;
+            _hoverDwellTimer.Stop();
 
-            _mouseHookHandle = NativeMethods.SetWindowsHookEx(
-                NativeMethods.WH_MOUSE_LL,
-                _mouseHookCallback,
-                NativeMethods.GetModuleHandle(null),
-                0
-            );
+            if (bounds.IsEmpty) return;
 
-            if (_mouseHookHandle == IntPtr.Zero)
-                Logger.Log("GlobalPTT", $"Failed to install mouse hook, error={Marshal.GetLastWin32Error()}");
-            else
-                Logger.Log("GlobalPTT", "Mouse hook installed");
+            InstallMouseHook();
+            Logger.Log("GlobalPTT", $"Watching for hover over {bounds}");
+
+            // The cursor may be sitting on the target already — after a click step on the same
+            // control it usually is. Nothing would move, so nothing would ever be reported, and
+            // the step would wait out the whole walkthrough on something that was true before
+            // it started.
+            if (NativeMethods.GetCursorPos(out var pt) && bounds.Contains(pt.X, pt.Y))
+                _hoverDwellTimer.Start();
         });
     }
 
-    /// <summary>Stops reporting clicks and takes the hook back out.</summary>
-    public void StopWatchingClicks() => _dispatcherQueue.TryEnqueue(UnhookMouse);
+    /// <summary>Stops reporting clicks and hovers, and takes the hook back out.</summary>
+    public void StopWatchingMouse() => _dispatcherQueue.TryEnqueue(() =>
+    {
+        _hoverBounds = System.Drawing.Rectangle.Empty;
+        _hoverDwellTimer.Stop();
+        UnhookMouse();
+    });
+
+    /// <summary>
+    /// Puts the low-level mouse hook in, if it isn't already. Must run on the dispatcher: the
+    /// hook's callback runs on whichever thread installed it, and that has to be one which
+    /// pumps messages.
+    /// </summary>
+    private void InstallMouseHook()
+    {
+        if (_mouseHookHandle != IntPtr.Zero) return;
+
+        _mouseHookHandle = NativeMethods.SetWindowsHookEx(
+            NativeMethods.WH_MOUSE_LL,
+            _mouseHookCallback,
+            NativeMethods.GetModuleHandle(null),
+            0
+        );
+
+        if (_mouseHookHandle == IntPtr.Zero)
+            Logger.Log("GlobalPTT", $"Failed to install mouse hook, error={Marshal.GetLastWin32Error()}");
+        else
+            Logger.Log("GlobalPTT", "Mouse hook installed");
+    }
 
     /// <summary>
     /// Starts reporting one key through <see cref="WatchedKeyPressed"/>.
@@ -379,23 +460,64 @@ public sealed class GlobalPushToTalkMonitor : IDisposable
     }
 
     /// <summary>
-    /// Watches for the click that finishes a walkthrough step.
+    /// Watches for the click, right-click or hover that finishes a walkthrough step.
     ///
     /// It never swallows anything. The click is the user operating their own application —
     /// the whole point of the step — and Vayme is only noting that it happened.
     /// </summary>
     private IntPtr MouseHookCallback(int nCode, IntPtr wParam, IntPtr lParam)
     {
-        if (nCode >= 0 && (int)wParam == (int)NativeMethods.WM_LBUTTONUP)
+        if (nCode >= 0)
         {
-            var mouseStruct = Marshal.PtrToStructure<NativeMethods.MSLLHOOKSTRUCT>(lParam);
-            var point = new System.Drawing.Point(mouseStruct.pt.X, mouseStruct.pt.Y);
+            uint message = (uint)wParam;
 
-            // Same rule as the text chord: never call out from inside a hook.
-            _dispatcherQueue.TryEnqueue(() => MouseClicked?.Invoke(point));
+            if (message == NativeMethods.WM_LBUTTONUP || message == NativeMethods.WM_RBUTTONUP)
+            {
+                var point = MousePointOf(lParam);
+                bool isRight = message == NativeMethods.WM_RBUTTONUP;
+
+                // Same rule as the text chord: never call out from inside a hook.
+                _dispatcherQueue.TryEnqueue(() =>
+                {
+                    if (isRight) MouseRightClicked?.Invoke(point);
+                    else MouseClicked?.Invoke(point);
+                });
+            }
+            else if (message == NativeMethods.WM_MOUSEMOVE && !_hoverBounds.IsEmpty)
+            {
+                // Entering the target starts the clock and leaving stops it. Holding still
+                // sends no further moves at all, which is exactly the case being timed: the
+                // silence after the last move inside the box is the hover.
+                if (_hoverBounds.Contains(MousePointOf(lParam)))
+                {
+                    if (!_hoverDwellTimer.IsRunning) _hoverDwellTimer.Start();
+                }
+                else
+                {
+                    _hoverDwellTimer.Stop();
+                }
+            }
         }
 
         return NativeMethods.CallNextHookEx(_mouseHookHandle, nCode, wParam, lParam);
+    }
+
+    private static System.Drawing.Point MousePointOf(IntPtr lParam)
+    {
+        var mouseStruct = Marshal.PtrToStructure<NativeMethods.MSLLHOOKSTRUCT>(lParam);
+        return new System.Drawing.Point(mouseStruct.pt.X, mouseStruct.pt.Y);
+    }
+
+    /// <summary>
+    /// The cursor has stayed on the hover target for <see cref="HoverDwell"/>. Raised from the
+    /// timer rather than the hook, so this is already off the hook's stack.
+    /// </summary>
+    private void OnHoverDwellElapsed()
+    {
+        if (_hoverBounds.IsEmpty) return;
+
+        Logger.Log("GlobalPTT", "Hover target held");
+        MouseHovered?.Invoke();
     }
 
     private IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
@@ -866,6 +988,7 @@ public static class NativeMethods
     public const uint NIM_SETVERSION = 0x04;
     public const uint NOTIFYICON_VERSION_4 = 4;
     public const uint WM_APP_TRAY = 0x8001;
+    public const uint WM_MOUSEMOVE = 0x0200;
     public const uint WM_LBUTTONUP = 0x0202;
     public const uint WM_RBUTTONUP = 0x0205;
     public const uint NIN_SELECT = 0x0400;

@@ -694,19 +694,29 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
         and never describe a step you have not shown.
 
         What each mark means, so use the one that matches:
-        - The cursor flying to a point means "click exactly here".
+        - The cursor flying to a point means "this exact spot". What to do there is carried by
+          your sentence and by wait_for, not by the mark.
         - The outline means "this is the thing". Give w and h as the target's visual bounds
           including its padding — the whole button, not just its text — because the outline
           is traced in exactly those bounds and a wrong size looks wrong on screen.
         - An arrow means "drag from here to there", so send to_x and to_y only for a drag.
 
-        Use wait_for "click" when the step is a single click on the point you gave. Use "key"
+        Use wait_for "click" when the step is a single left click on the point you gave.
+        "right_click" when it is a right click — opening a context menu, almost always.
+        "hover" when the step is to point at something and NOT click it, because what you want
+        them to see is what happens on hover: a submenu opening, a tooltip, a preview. "key"
         when the step is one keystroke — "press M to open the map", "hit Enter" — and put that
         key in the "key" argument; the press is noticed the same way a click is. Use
         "continue" for a drag, for typing a phrase, or for anything with no single input to
         watch for.
 
-        "continue" is the only one of the three where nothing is watching, so a step that
+        Say in the sentence which one you mean — "right-click the layer", "just rest your
+        cursor on File, don't click". The mark on screen looks the same either way, so the
+        sentence is the only thing that tells them which button, or whether to press one at
+        all, and a user who clicks a hover step has already lost the thing you were showing
+        them.
+
+        "continue" is the only one where nothing is watching, so a step that
         uses it must end by asking to be told: "...then tell me when you've done it".
         Leave that off and the user does the thing, nothing happens, and they are left on a
         step they have already finished, pressing the same key harder.
@@ -779,6 +789,8 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
         _pushToTalkMonitor.PushToTalkPressed += OnPushToTalkPressed;
         _pushToTalkMonitor.PushToTalkReleased += OnPushToTalkReleased;
         _pushToTalkMonitor.MouseClicked += OnMouseClicked;
+        _pushToTalkMonitor.MouseRightClicked += OnMouseRightClicked;
+        _pushToTalkMonitor.MouseHovered += OnMouseHovered;
         _pushToTalkMonitor.WatchedKeyPressed += OnWatchedKeyPressed;
 
         _pushToTalkMonitor.RegionFocusStarted += _regionFocusController.Begin;
@@ -2224,12 +2236,25 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
             SetVoiceState(CompanionVoiceState.AwaitingUserStep);
         });
 
-        // Only for a step that ends in a click. Everything else is finished by the user
-        // saying so, and a hook watching for a click nobody is waiting for is pure cost.
-        if (step.WaitFor == WalkthroughWaitFor.Click)
-            _pushToTalkMonitor.StartWatchingClicks();
-        else if (step.WaitFor == WalkthroughWaitFor.Key && step.WaitKeyCode != 0)
-            _pushToTalkMonitor.WatchForKey(step.WaitKeyCode);
+        // Only for a step whose ending Vayme can actually see. Everything else is finished by
+        // the user saying so, and a hook watching for an input nobody is waiting for is pure
+        // cost — which is why the hover case, the one that has to look at every mouse move,
+        // is armed for that step alone and taken straight back out below.
+        switch (step.WaitFor)
+        {
+            case WalkthroughWaitFor.Click:
+            case WalkthroughWaitFor.RightClick:
+                _pushToTalkMonitor.StartWatchingClicks();
+                break;
+
+            case WalkthroughWaitFor.Hover:
+                _pushToTalkMonitor.WatchForHover(HoverBoundsFor(step));
+                break;
+
+            case WalkthroughWaitFor.Key when step.WaitKeyCode != 0:
+                _pushToTalkMonitor.WatchForKey(step.WaitKeyCode);
+                break;
+        }
 
         _ = SpeakStepInstructionAsync(step, ct);
 
@@ -2242,7 +2267,7 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
         {
             // Also on the cancelled path: an interrupted walkthrough must not leave a hook
             // installed or an outline drawn around a step nobody is on any more.
-            _pushToTalkMonitor.StopWatchingClicks();
+            _pushToTalkMonitor.StopWatchingMouse();
             _pushToTalkMonitor.StopWatchingKeys();
             UpdateOnUI(() =>
             {
@@ -2386,9 +2411,41 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
     {
         var pending = _pendingStep;
         if (pending == null || pending.Step.WaitFor != WalkthroughWaitFor.Click) return;
-        if (!IsClickOnTarget(pending.Step, point)) return;
+        if (!IsPointOnTarget(pending.Step, point)) return;
 
         TryResumeWalkthrough(WalkthroughResumeReason.Clicked);
+    }
+
+    /// <summary>
+    /// A right-click landed somewhere while a step was waiting for one.
+    ///
+    /// Deliberately not folded in with the left button. A step that says "right-click the
+    /// layer" is not finished by left-clicking it — that opens nothing, and advancing on it
+    /// would leave the walkthrough describing a context menu the user never opened.
+    /// </summary>
+    private void OnMouseRightClicked(System.Drawing.Point point)
+    {
+        var pending = _pendingStep;
+        if (pending == null || pending.Step.WaitFor != WalkthroughWaitFor.RightClick) return;
+        if (!IsPointOnTarget(pending.Step, point)) return;
+
+        Logger.Log("Walkthrough", $"right-clicked '{pending.Step.Label}' — step done");
+        TryResumeWalkthrough(WalkthroughResumeReason.RightClicked);
+    }
+
+    /// <summary>
+    /// The cursor has come to rest on the thing a hover step pointed at.
+    ///
+    /// No target test, unlike a click: the monitor was handed the box and only reports a
+    /// hover inside it, so there is nothing left to check by the time it gets here.
+    /// </summary>
+    private void OnMouseHovered()
+    {
+        var pending = _pendingStep;
+        if (pending == null || pending.Step.WaitFor != WalkthroughWaitFor.Hover) return;
+
+        Logger.Log("Walkthrough", $"hovered '{pending.Step.Label}' — step done");
+        TryResumeWalkthrough(WalkthroughResumeReason.Hovered);
     }
 
     /// <summary>
@@ -2407,20 +2464,50 @@ public sealed class CompanionManager : INotifyPropertyChanged, IScreenAnnotation
     }
 
     /// <summary>
-    /// True when a click is close enough to count as the step being done: inside the
-    /// target's bounds, or near the point Vayme pointed at when it was given no bounds.
+    /// How far off the point a click may land and still count, when the step came with no
+    /// bounds to test against.
     /// </summary>
-    private static bool IsClickOnTarget(WalkthroughStep step, System.Drawing.Point point)
-    {
-        const float clickProximityRadius = 40f;
+    private const float ClickProximityRadius = 40f;
 
+    /// <summary>
+    /// True when a click or right-click is close enough to count as the step being done:
+    /// inside the target's bounds, or near the point Vayme pointed at when it was given no
+    /// bounds.
+    /// </summary>
+    private static bool IsPointOnTarget(WalkthroughStep step, System.Drawing.Point point)
+    {
         if (step.TargetBounds is { Width: > 1, Height: > 1 } bounds &&
             bounds.Contains(point.X, point.Y))
             return true;
 
         float dx = point.X - step.ClickPoint.X;
         float dy = point.Y - step.ClickPoint.Y;
-        return MathF.Sqrt(dx * dx + dy * dy) <= clickProximityRadius;
+        return MathF.Sqrt(dx * dx + dy * dy) <= ClickProximityRadius;
+    }
+
+    /// <summary>
+    /// The box the cursor has to settle inside for a hover step to count.
+    ///
+    /// The same target the click test uses, squared off — the monitor tests containment from
+    /// inside the mouse hook, on every move, and a rectangle is the cheapest honest shape for
+    /// that — but grown to a floor, which the click test has no need of. A click is a moment
+    /// and lands where the user aimed; a hover has to be *held*, and holding a cursor inside a
+    /// 16px toolbar icon for half a second is a steadiness test nobody asked to take.
+    /// </summary>
+    private static System.Drawing.Rectangle HoverBoundsFor(WalkthroughStep step)
+    {
+        var target = step.TargetBounds is { Width: > 1, Height: > 1 } bounds
+            ? bounds
+            : new System.Drawing.RectangleF(step.ClickPoint.X, step.ClickPoint.Y, 0, 0);
+
+        // The floor is the click test's own fallback: a target smaller than that ends up with
+        // exactly the box a step carrying no bounds at all would have got.
+        const float floor = ClickProximityRadius * 2;
+        target.Inflate(
+            MathF.Max(0, floor - target.Width) / 2,
+            MathF.Max(0, floor - target.Height) / 2);
+
+        return System.Drawing.Rectangle.Round(target);
     }
 
     /// <summary>

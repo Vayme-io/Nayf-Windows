@@ -100,6 +100,25 @@ public enum WalkthroughWaitFor
     Click,
 
     /// <summary>
+    /// The step is a right-click on a known spot — opening a context menu, nearly always.
+    ///
+    /// Watched the same way as <see cref="Click"/> and separately from it, so that the button
+    /// the user was asked for is the button that finishes the step. Right-clicking used to be
+    /// invisible: the hook only ever matched the left button, so the step sat on "your turn"
+    /// with the context menu already open in front of it.
+    /// </summary>
+    RightClick,
+
+    /// <summary>
+    /// The step is to point at something without clicking it — a menu that opens on hover, a
+    /// tooltip, a preview — so Vayme watches for the cursor coming to rest on the target.
+    ///
+    /// Separate from <see cref="Click"/> because a hover step used to fall into it, and then
+    /// the only way past was to click the very thing the user had just been told not to click.
+    /// </summary>
+    Hover,
+
+    /// <summary>
     /// The step is one keystroke — "press M to open the map" — so Vayme watches for that one
     /// key and carries on by itself.
     ///
@@ -171,6 +190,12 @@ public enum WalkthroughResumeReason
 
     /// <summary>The user pressed the key the step asked for.</summary>
     Pressed,
+
+    /// <summary>The user right-clicked the thing that was pointed at.</summary>
+    RightClicked,
+
+    /// <summary>The user rested the cursor on the thing that was pointed at, without clicking.</summary>
+    Hovered,
 
     Spoke,
     Typed
